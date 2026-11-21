@@ -37,7 +37,8 @@ Restart the SITL container (`docker restart hope-sitl`) between runs.
   and update PRD section 5 at the same time.
 - Every flight command goes through `edge/safety.py`. Never add a path to the vehicle that
   skips the gate. `stop` and `land` are always allowed; landing beats stop.
-- Code under `edge/` and `shared/` must run on QNX's Python 3.11: stdlib + pymavlink + numpy
+- Code under `edge/` and `shared/` must run on the Pi's **Python 3.14** (QNX 8; the suite passes on
+  3.14 and 3.11): stdlib + pymavlink + numpy
   + OpenCV only. No new pip dependencies there without checking they install on QNX.
 - Safety limits live in `edge/config.py`. Tune them there, not inline.
 - Keep `docs/STATUS.md` current at the end of every work session: done, verified, next.

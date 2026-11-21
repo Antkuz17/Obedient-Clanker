@@ -25,7 +25,7 @@ These resolve conflicts between the earlier docs. Change them only by agreement.
 | D3 | **Forward camera = second webcam on the Pi.** The Pi streams it to the laptop. The iPhone XR is a fallback video source only. | One pose-synced video source; no phone mounting problem. |
 | D4 | **The Edge exposes a small, safe flight API of primitives.** The Brain turns speech into `mission()` and then into a sequence of primitives. The Edge never trusts the Brain: every primitive passes the safety gate. | A clean contract between the layers. |
 | D5 | **Laptop ↔ Pi link = newline-delimited JSON over TCP on Wi-Fi**, using only the Python stdlib on the Pi. The ESP8266 bridge becomes a backup telemetry link for Mission Planner only. | Fewest QNX dependencies; fewest unknowns. |
-| D6 | **Python 3.11 everywhere.** Pi: stdlib + pymavlink + numpy + OpenCV + tflite-runtime (all available through `apk`/pip on QNX). Laptop/cloud: anything. | Matches the QNX image. |
+| D6 | **Python 3.14 on the Pi** (verified image), 3.11+ elsewhere. Pi: stdlib + pymavlink + numpy + OpenCV + tflite-runtime (all installed and verified, see qnx.md). Laptop/cloud: anything. | Matches the QNX image. |
 | D7 | One task at a time. A new command cancels the running one. `stop` always wins. | Matches the README scope. |
 
 ## 3. Users and core flows

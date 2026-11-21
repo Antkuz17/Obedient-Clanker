@@ -34,9 +34,15 @@ position (altitude used to sag about 0.1 m per command).
    Provider: Vultr Serverless Inference (OpenAI-compatible); keep it swappable.
 4. **Voice loop**: mic → VAD → Whisper → brain → TTS → Nest Mini.
 5. **Vultr cloud + dashboard** (`cloud/`).
-6. **QNX port**: copy `edge/` and `shared/` to the Pi, install pymavlink (`--no-deps`; check
-   pyserial on QNX), run with `--rt-prio`, restart on kill, jitter graph from
-   `EdgeServer.loop_stats`.
+6. **QNX port** (Pi facts in qnx.md, "Verified on our Pi"): copy `edge/` and `shared/` to the Pi
+   and run with `--rt-prio`.
+   - **FC link:** the console is on the debug connector, so GPIO pins 8/10 should be free. Try
+     the UART path first (`/dev/ser1`; pymavlink serial needs pyserial, so check it imports on
+     QNX). If that fails, write a pyusb CDC-ACM transport for `MavVehicle` (must run as root;
+     there's no `devc-serusb`).
+   - **No HAM:** write `tools/supervisor.py`, which restarts the vision/flow processes when
+     `slay`-ed and logs restart events.
+   - Jitter graph from `EdgeServer.loop_stats`.
 
 ## Open questions / known gaps
 
