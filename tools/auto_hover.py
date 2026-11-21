@@ -20,15 +20,20 @@ import time
 
 from shared.client import CommandRejected, EdgeClient
 
+GROUND_M = 0.12
 
-def height_disagrees(t: dict, tol: float = 0.35) -> str | None:
-    """The FC's height vs the rangefinder (the real distance to the floor). None when they agree
-    or the rangefinder has no echo. A big gap means the FC's height is wrong."""
+
+def height_disagrees(t: dict, ground_m: float = 0.12, tol: float = 0.2) -> str | None:
+    """The FC's height vs the rangefinder (the real distance to the floor). The rangefinder
+    reads ground_m with the drone on the floor, so height above ground = range - ground_m.
+    None when they agree or there's no echo. A big gap means the FC's height is wrong."""
     r, alt = t.get("range_m"), t.get("alt")
     if r is None or alt is None or r > 1.9:  # 2.01 = no echo
         return None
-    if abs(alt - r) > tol:
-        return f"FC height {alt:.2f} m but rangefinder {r:.2f} m: FC height is wrong, landing"
+    real = r - ground_m
+    if abs(alt - real) > tol:
+        return (f"FC height {alt:.2f} m but rangefinder says {real:.2f} m above the floor: "
+                "FC height is wrong, landing")
     return None
 
 
@@ -43,6 +48,11 @@ async def main(a) -> int:
     await asyncio.sleep(1.5)
     t = edge.telemetry or {}
     print("before:", pos(t), f"battery={t.get('battery_v')} flow_q={t.get('flow_quality')}")
+    global GROUND_M
+    GROUND_M = a.ground if a.ground is not None else (t.get("range_m") or 0.12)
+    if GROUND_M > 0.5:
+        print(f"rangefinder reads {GROUND_M} m on the ground: not pointing at the floor? not flying")
+        return 1
     try:
         print(f"takeoff to {a.alt} m ...")
         d = await edge.run("takeoff", alt=a.alt, timeout=40)
@@ -51,7 +61,7 @@ async def main(a) -> int:
             await edge.run("land", timeout=60)
             return 1
         print("airborne:", pos(edge.telemetry))
-        bad = height_disagrees(edge.telemetry)
+        bad = height_disagrees(edge.telemetry, GROUND_M)
         if bad:  # first try: EKF (baro) said 0.4 m while the rangefinder said 0.16 m: on the ground
             print("ABORT: " + bad)
             return 1
@@ -63,7 +73,7 @@ async def main(a) -> int:
             t = edge.telemetry
             alts.append(t["alt"])
             drift.append(math.hypot(t["n"] - n0, t["e"] - e0))
-            bad = height_disagrees(t)
+            bad = height_disagrees(t, GROUND_M)
             if bad:
                 disagree += 1
                 if disagree >= 4:  # 2 s
@@ -106,6 +116,8 @@ if __name__ == "__main__":
     ap.add_argument("--host", default=os.environ.get("EDGE_HOST", "192.168.68.131"))
     ap.add_argument("--alt", type=float, default=0.5)
     ap.add_argument("--hold", type=float, default=15.0)
+    ap.add_argument("--ground", type=float, default=None,
+                    help="rangefinder reading on the floor (default: measured before takeoff)")
     ap.add_argument("--move", help="e.g. right=0.5, left=0.5, back=0.5, up=0.2 (forward is "
                     "refused on the real drone until person detection runs)")
     raise SystemExit(asyncio.run(main(ap.parse_args())))
