@@ -17,7 +17,8 @@
  * MAVLink goes to the USB relay's aux port (tools/usb_relay.py --aux 127.0.0.1:14556), which
  * writes it to the FC. MAVLink v1 frames, sysid 255 (the GCS id ArduPilot's failsafe watches).
  *
- * Build:  cc -O2 -o edge/hbwd/hbwd edge/hbwd/hbwd.c -lpthread   (QNX on the Pi, Linux, macOS)
+ * Build:  cc -O2 -o edge/hbwd/hbwd edge/hbwd/hbwd.c -lsocket   (QNX on the Pi: sockets live in libsocket)
+ *         cc -O2 -o edge/hbwd/hbwd edge/hbwd/hbwd.c -lpthread  (Linux, macOS)
  * Run:    ./edge/hbwd/hbwd -p 60 -c 3                       (as root for FIFO + pinning)
  *         python3 -m edge --mav udpin:127.0.0.1:14555 --hbwd 127.0.0.1:14560 ...
  */

@@ -73,7 +73,7 @@ def main() -> None:
 
     if a.build:
         run("cc -O2 -o edge/camgrab/camgrab edge/camgrab/camgrab.c -lcamapi && echo camgrab ok;"
-            " [ -f edge/hbwd/hbwd.c ] && cc -O2 -o edge/hbwd/hbwd edge/hbwd/hbwd.c && echo hbwd ok")
+            " [ -f edge/hbwd/hbwd.c ] && cc -O2 -o edge/hbwd/hbwd edge/hbwd/hbwd.c -lsocket && echo hbwd ok")
     if a.run:
         run(f"env {PYPATH} {a.run}")
 
