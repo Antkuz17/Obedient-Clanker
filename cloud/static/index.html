@@ -444,7 +444,7 @@ function renderTurn() {
   } else planWrap.hidden = true;
 
   // 3) Jarvis's spoken replies (last two)
-  const said = T ? T.replies.filter((r) => !(T.verdict === 'refused' && /^Safety says no/i.test(r))) : [];  // the verdict says it
+  const said = T ? T.replies.filter((r) => !(T.verdict === 'refused' && (/^Safety says no/i.test(r) || sameLine(r, T.reason)))) : [];  // the verdict says it
   $('#replies').textContent = said.length ? 'Jarvis: ' + said.slice(-2).map((r) => `“${r}”`).join('  ') : '';
   $('#latency').hidden = !(T && T.latency); $('#latency').textContent = T && T.latency ? T.latency : '';
 
@@ -536,7 +536,8 @@ function onLog({ t, who, text }) {
     if (S.phase === 'thinking') setPhase('idle');
   } else if (who === 'edge' || who === 'qnx') {
     // edge events arrive as "<kind>: <detail>", e.g. "safety_reject: move_body: above ceiling 1.5 m"
-    const rej = text.match(/^safety_reject\s*:\s*(?:(\w+)\s*:\s*)?(.*)$/i);
+    // demo mode: "safety_reject: yaw (demo): I'd love to turn around..."
+    const rej = text.match(/^safety_reject\s*:\s*(?:(\w+)(?:\s*\(demo\))?\s*:\s*)?(.*)$/i);
     if (rej) { setVerdict('refused', rej[2], rej[1]); return; }
     if (/^safety_ok\b/i.test(text)) { setVerdict('approved'); return; }
     if (/failsafe|pilot|override|manual|link/i.test(text)) { S.edgeAlert = { text, at: Date.now() }; updateAlerts(); }
@@ -552,6 +553,9 @@ function onLog({ t, who, text }) {
   }
   renderTurn();
 }
+
+// a demo refusal is spoken as the edge's own line: don't show it twice (reply + verdict)
+function sameLine(a, b) { const n = (x) => (x || '').trim().replace(/\.$/, '').toLowerCase(); return !!b && n(a) === n(b); }
 
 // "mission_done: read 'Exit'" -> "Mission done: read 'Exit'"
 function prettifyEdge(t) { return t.replace(/^(\w+)(:)/, (_, w, c) => w.replace(/_/g, ' ').replace(/^./, (x) => x.toUpperCase()) + c); }

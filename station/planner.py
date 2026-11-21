@@ -39,6 +39,8 @@ OnPhoto = Callable[[Frame, str], Awaitable[None]]
 
 
 POINTING = re.compile(r"point")
+# plans starting with one of these send a flight step first: the reply waits for its verdict
+DEFER_REPLY = ("takeoff", "move", "home", "stop", "land")
 
 
 class PlanAborted(Exception):
@@ -89,23 +91,31 @@ class Planner:
         self._task: asyncio.Task | None = None
         self._urgent: set[asyncio.Task] = set()  # running stop / land plans
         self._accepted = False  # the last primitive _prim sent was accepted by the edge
+        self._reply: str | None = None  # brain reply held until the edge accepts a step
         self.log: list[str] = []  # human-readable trace, for the dashboard and tests
         self.home: tuple[float, float] | None = None  # first takeoff point (the edge's fence)
 
     # --- public ------------------------------------------------------------------------------
-    def submit(self, actions: list[dict]) -> asyncio.Task | None:
+    def submit(self, actions: list[dict], reply: str | None = None) -> asyncio.Task | None:
+        """Run `actions`; `reply` is the brain's line ("On it."). When the plan starts with a
+        flight step, the reply waits for the edge's verdict on it: spoken once accepted, dropped
+        if refused, so a refusal is one line ("I'd love to turn around, but...") instead of
+        "On it." followed by "Safety says no: ...". Other plans say it at once."""
         if not actions:
             return None
+        if reply and actions[0]["kind"] not in DEFER_REPLY:
+            asyncio.ensure_future(self.say(reply))  # scheduled before the plan's own lines
+            reply = None
         if actions[0]["kind"] in ("stop", "land"):
             self.cancel()
             # asyncio only keeps a weak reference to tasks: hold this one until it finishes, or a
             # garbage collection could drop a STOP mid-flight
-            t = asyncio.create_task(self._run(actions))
+            t = asyncio.create_task(self._run(actions, reply))
             self._urgent.add(t)
             t.add_done_callback(self._urgent.discard)
             return t
         self.cancel()
-        self._task = asyncio.create_task(self._run(actions))
+        self._task = asyncio.create_task(self._run(actions, reply))
         return self._task
 
     def cancel(self) -> None:
@@ -133,20 +143,52 @@ class Planner:
             except Exception as e:  # speech must never break a plan
                 log.warning("say failed: %s", e)
 
-    async def _run(self, actions: list[dict]) -> None:
+    async def _flush_reply(self) -> None:
+        if r := self._reply:
+            self._reply = None
+            await self.say(r)
+
+    async def _run(self, actions: list[dict], reply: str | None = None) -> None:
+        self._reply = reply
         try:
             for a in actions:
                 await getattr(self, f"_do_{a['kind']}")(a)
+            await self._flush_reply()
         except asyncio.CancelledError:
             self.log.append("plan cancelled")
             raise
         except CommandRejected as e:
-            await self.say(f"Safety says no: {e}.")
+            self._reply = None  # "On it." then a refusal reads as two answers: just the refusal
+            reason = str(e).rstrip(".")
+            if await self._demo_line(e):
+                await self.say(f"{reason[:1].upper()}{reason[1:]}.")
+            else:
+                await self.say(f"Safety says no: {reason}.")
         except PlanAborted as e:
+            self._reply = None
             await self.say(str(e))
         except Exception as e:
             log.exception("plan failed")
+            self._reply = None
             await self.say(f"Something went wrong: {e}.")
+
+    async def _demo_line(self, e: CommandRejected) -> bool:
+        """The edge in demo mode cleared the step and refused it with a sarcastic line that
+        already says the safety checks passed ("I'd love to turn around, and my safety checks
+        agree, but..."): no "Safety says no:" in front. Its `safety_reject` event carries
+        "(demo)"; the ack that raised `e` arrives just before it, so give it a moment."""
+        if "safety check" not in str(e).lower():
+            return False  # a real gate reason (demo mode or not): keep the prefix
+        events = getattr(self.edge, "events", None)
+        if events is None:
+            return False
+        for _ in range(10):
+            for ev in reversed(events[-5:]):
+                if (ev.get("kind") == "safety_reject" and "(demo)" in str(ev.get("detail", ""))
+                        and str(e).rstrip(".") in str(ev.get("detail", ""))):
+                    return True
+            await asyncio.sleep(0.02)
+        return False
 
     async def _prim(self, op: str, **args) -> dict:
         self.log.append(f"{op} {args}" if args else op)
@@ -157,6 +199,8 @@ class Planner:
         if not ack["ok"]:
             raise CommandRejected(ack["reason"])
         self._accepted = True
+        if self._reply:  # the edge took the first step: now "On it." is true (don't block on TTS)
+            asyncio.ensure_future(self._flush_reply())
         if self.on_approved:
             try:
                 self.on_approved(op)

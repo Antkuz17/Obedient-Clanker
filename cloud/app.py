@@ -279,7 +279,10 @@ class Hub:
         reply = r.reply if sent else "I'd love to, but the drone isn't connected."
         if r.actions:
             await self.log_line("plan", json.dumps(r.actions))
-        self.spawn(self.speak(reply))
+        if not (r.actions and sent):
+            self.spawn(self.speak(reply))
+        # else the station's planner says the reply once the edge accepts the first step, or
+        # only the refusal if it doesn't (one line, not "On it." + "Safety says no: ...")
         return {"ok": sent, "reply": reply, "actions": r.actions, "source": r.source}
 
     async def op(self, op: str, cid: str) -> None:

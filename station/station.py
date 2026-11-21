@@ -110,7 +110,8 @@ class Station:
         t = m.get("type")
         if t == "actions":
             log.info("actions %s", m.get("actions"))
-            self.planner.submit(m.get("actions") or [])
+            # the cloud left the reply to us: it waits for the edge's verdict on the first step
+            self.planner.submit(m.get("actions") or [], m.get("reply") or None)
         elif t == "audio":
             self.speaker.play(base64.b64decode(m.get("mp3", "")))
         elif t == "memory_result" and (f := self._mem_wait.pop(m.get("req"), None)):
@@ -311,8 +312,10 @@ class Station:
     async def handle_text(self, text: str) -> None:
         r = await self.brain.think(text, self.edge.telemetry)
         print(f"  [{r.source}] {r.actions}")
-        await self.say(r.reply)
-        self.planner.submit(r.actions)
+        if r.actions:
+            self.planner.submit(r.actions, r.reply)  # spoken once the edge takes the first step
+        else:
+            await self.say(r.reply)
 
     async def local_repl(self, mic: bool = False) -> None:
         loop = asyncio.get_running_loop()

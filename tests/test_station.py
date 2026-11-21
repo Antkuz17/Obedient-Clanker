@@ -356,6 +356,23 @@ async def test_planner_reports_gate_verdicts(rig):
     assert said[-1].startswith("Safety says no") and approved == ["takeoff"]  # into the ground
 
 
+async def test_reply_waits_for_the_gate(rig):
+    """A refused first step is one line (the refusal), not "On it." + "Safety says no: ..."."""
+    sim, edge = rig
+    p, said, _ = make_planner(sim, edge)
+    p.submit([{"kind": "takeoff", "alt": 1.0}], "Lifting off.")
+    await asyncio.wait_for(p.wait(), 40)
+    assert said == ["Lifting off."]
+    said.clear()
+    p.submit([{"kind": "move", "fwd": 0.0, "right": 0.0, "up": -5.0, "yaw_deg": 0.0}], "On it.")
+    await asyncio.wait_for(p.wait(), 40)
+    assert len(said) == 1 and said[0].startswith("Safety says no")
+    said.clear()
+    p.submit([{"kind": "recall", "query": "keys", "fly_there": False}], "Let me think back.")
+    await asyncio.wait_for(p.wait(), 40)
+    assert said[0] == "Let me think back."  # no flight step first: said at once
+
+
 async def test_mission_scans_until_found(rig):
     sim, edge = rig
     p, said, _ = make_planner(sim, edge)
@@ -445,6 +462,8 @@ def test_cloud_relays_commands_to_station(tmp_path):
             assert r["ok"] and r["actions"][0]["kind"] == "takeoff"
             m = st.receive_json()
             assert m["type"] == "actions" and m["actions"][0]["kind"] == "takeoff"
+            assert m["reply"] == "Lifting off."  # the station says it once the edge accepts
+            st.send_json({"type": "say", "text": "Lifting off."})
             assert st.receive_json() == {"type": "audio", "mp3": "bXAzOkxpZnRpbmcgb2ZmLg==",
                                          "text": "Lifting off."}
             # another viewer can't steal the controls, but can always hit STOP
@@ -811,6 +830,18 @@ def test_rule_parse_ignores_stray_direction_words(text):
     """review3 #9: everyday words used to move the drone in the no-key fallback."""
     r = rule_parse(text, {"armed": True})
     assert not any(a["kind"] == "move" for a in r.actions), r.actions
+
+
+@pytest.mark.parametrize("text,key,want", [
+    ("go forward 50 cm", "fwd", 0.5), ("move 30 centimetres left", "right", -0.3),
+    ("move back 20cm please", "fwd", -0.2), ("fly up fifty centimeters", "up", 0.5)])
+def test_rule_parse_reads_centimetres(text, key, want):
+    a = rule_parse(text, {"armed": True}).actions
+    assert len(a) == 1 and a[0][key] == pytest.approx(want)
+
+
+def test_rule_parse_takeoff_in_centimetres():
+    assert rule_parse("take off to 80 cm").actions == [{"kind": "takeoff", "alt": 0.8}]
 
 
 def test_rule_parse_back_up_a_bit():

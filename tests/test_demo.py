@@ -76,3 +76,32 @@ def test_describe():
     assert demo.describe("move_body", {"fwd": 2, "right": -1}) == "fly forward 2 metres and left 1 metre"
     assert demo.describe("yaw", {"deg": -90, "relative": True}) == "turn left 90 degrees"
     assert demo.describe("return_home", {}) == "fly back to where I took off"
+
+
+async def test_demo_refusal_is_spoken_as_one_line(demo_rig):
+    """Planner + demo edge: the sarcastic line alone (no "On it.", no "Safety says no:"); a
+    real gate reason keeps the prefix."""
+    from station.planner import Planner
+
+    srv, sim, edge = demo_rig
+    said = []
+
+    async def say(t):
+        said.append(t)
+
+    async def locate(*a, **k):
+        return None
+
+    p = Planner(edge, None, locate=locate, say=say)
+    p.submit([{"kind": "takeoff", "alt": 1.0}], "Lifting off.")
+    await asyncio.wait_for(p.wait(), 10)
+    assert len(said) == 1 and "take off to 1 metre" in said[0].lower()
+    assert not said[0].startswith("Safety says no") and said[0][0].isupper()
+    said.clear()
+    for _ in range(50):  # telemetry shows the pretend hover, so no takeoff goes in front
+        if (edge.telemetry or {}).get("armed"):
+            break
+        await asyncio.sleep(0.05)
+    p.submit([{"kind": "move", "fwd": -3.0, "right": 0.0, "up": 0.0, "yaw_deg": 0.0}], "On it.")
+    await asyncio.wait_for(p.wait(), 10)
+    assert len(said) == 1 and said[0].startswith("Safety says no") and "2.0 m limit" in said[0]
