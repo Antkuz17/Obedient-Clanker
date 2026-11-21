@@ -21,7 +21,7 @@ These resolve conflicts between the earlier docs. Change them only by agreement.
 | # | Decision | Why |
 |---|---|---|
 | D1 | **Positioning = onboard software optical flow (down webcam) + HC-SR04 height**, per [flight-setup.md](flight-setup.md). The README's ArUco outside-in setup is the **fallback** behind the same interface. | Newest plan; it puts the QNX Pi *on* the drone, which is the strongest QNX story. |
-| D2 | **The QNX Pi 5 rides on the drone** and is the only thing that talks MAVLink to the flight controller (GPIO UART to `SERIAL1`). | Safety AI must run on embedded hardware ([qnx.md](qnx.md)). |
+| D2 | **The QNX Pi 5 rides on the drone** and is the only thing that talks MAVLink to the flight controller, over **USB** (verified; pyusb CDC-ACM as root, `tools/fc_usb_probe.py`). GPIO UART to `SERIAL1` only if we can solder later. | Safety AI must run on embedded hardware ([qnx.md](qnx.md)). |
 | D3 | **Forward camera = second webcam on the Pi.** The Pi streams it to the laptop. The iPhone XR is a fallback video source only. | One pose-synced video source; no phone mounting problem. |
 | D4 | **The Edge exposes a small, safe flight API of primitives.** The Brain turns speech into `mission()` and then into a sequence of primitives. The Edge never trusts the Brain: every primitive passes the safety gate. | A clean contract between the layers. |
 | D5 | **Laptop ↔ Pi link = newline-delimited JSON over TCP on Wi-Fi**, using only the Python stdlib on the Pi. The ESP8266 bridge becomes a backup telemetry link for Mission Planner only. | Fewest QNX dependencies; fewest unknowns. |
@@ -58,7 +58,7 @@ Flows that must work in the demo:
                                               flight API, safety gate, watchdog,
                                               real-time [A]; optical flow,
                                               TFLite person + palm [B]
-                                                        │  MAVLink, UART
+                                                        │  MAVLink, USB
                                                         ▼
                                               Matek H743 / ArduPilot 4.7.2 → F450
 ```
@@ -159,7 +159,7 @@ fair share of hardware chores.
 | A3 | Voice loop: mic → VAD → Whisper on Vultr → reply → TTS → Nest Mini. Latency under 3 s | M | Vultr |
 | A4 | **LLM + planner**: speech → `mission(where, what, after)` tool call with personality and refusals → a primitive sequence, including scan-until-found, approach and come back. *Hard logic.* | H | Vultr |
 | A5 | **Vultr deployment + phone dashboard**: live video relay, telemetry, command box, flight log, a command queue with one active user, the cloud ↔ station link | H | Vultr |
-| A6 | Hardware: FC params, compass + `COMPASS_MOT` calibration, Pi UART wiring, Nest pairing, Vultr account and GPU check | M | both |
+| A6 | Hardware: FC params, compass + `COMPASS_MOT` calibration, Pi ↔ FC USB link, Nest pairing, Vultr account and GPU check | M | both |
 
 ### Person B: Perception + Memory
 
@@ -213,7 +213,7 @@ Land switch.
 | Risk | Mitigation |
 |---|---|
 | Flow is unstable on the venue floor | Patterned mat, bright light; ArUco fallback behind the same interface |
-| QNX blocks something (camera, UART, tflite) | Prototype on Linux/Mac with `--sim`; Pi 4 Linux fallback (weaker for the track) |
+| QNX blocks something (camera grabber, USB link, tflite) | Prototype on Linux/Mac with `--sim`; Pi 4 Linux fallback (weaker for the track) |
 | Vultr has no GPU | Vultr Serverless Inference for the LLM/Whisper; vision on the GPU laptop |
 | Wi-Fi at the venue | Phone hotspot; the watchdog covers drops |
 | 10" props, no guards | Cleared area, people behind a line, pilot on the Land switch, SITL first |

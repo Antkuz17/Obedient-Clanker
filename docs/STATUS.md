@@ -36,10 +36,13 @@ position (altitude used to sag about 0.1 m per command).
 5. **Vultr cloud + dashboard** (`cloud/`).
 6. **QNX port** (Pi facts in qnx.md, "Verified on our Pi"): copy `edge/` and `shared/` to the Pi
    and run with `--rt-prio`.
-   - **FC link:** the console is on the debug connector, so GPIO pins 8/10 should be free. Try
-     the UART path first (`/dev/ser1`; pymavlink serial needs pyserial, so check it imports on
-     QNX). If that fails, write a pyusb CDC-ACM transport for `MavVehicle` (must run as root;
-     there's no `devc-serusb`).
+   - **FC link: USB, verified.** UART needs soldering. Write a pyusb CDC-ACM transport for
+     `MavVehicle` from `tools/fc_usb_probe.py` (two-way MAVLink proven on the Pi; must run as
+     root), e.g. `--mav usb`.
+   - **Camera grabber: required, and blocks B's flow and the real video server.** OpenCV can't
+     open the C270 on QNX; frames come only from QNX's camera API (unit 5, 640×480 @ 30 fps,
+     verified). Write a small C helper on `libcamapi` that streams frames to Python (pipe or
+     shared memory), and use it in `edge/video.py` and `edge/flow/`.
    - **No HAM:** write `tools/supervisor.py`, which restarts the vision/flow processes when
      `slay`-ed and logs restart events.
    - Jitter graph from `EdgeServer.loop_stats`.

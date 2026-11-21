@@ -53,7 +53,18 @@ Use real-time priorities (`SCHED_FIFO`): watchdog and safety first, flow next, A
   talk to the flight controller's USB CDC-ACM endpoints directly. This **must run as root**;
   as `qnxuser`, libusb segfaults. Load it with
   `get_backend(find_library=lambda _: "/usr/lib/libusb-1.0.so.0")`.
-- USB camera support (`qnx-sf-camera-usb`, Sensor Framework unit 5) is installed.
+- **Flight controller over USB: verified.** The Pi enumerates it as `0x1209:0x5740` (ArduPilot
+  MatekH743). `tools/fc_usb_probe.py` gets two-way MAVLink: heartbeats, a `COMMAND_ACK` to
+  `SET_MESSAGE_INTERVAL`, and ATTITUDE at about 30 Hz. No soldering needed.
+- **C270 on QNX: verified.** It enumerates as `0x046d:0x0825` and is Sensor Framework camera
+  unit 5. `camera_example1_callback -u 5` streams 640×480 @ 30 fps. Frame types: YCbYCr,
+  NV12, NV21, CbYCrY, YCbCr420P, YCrCb420P, RGB8888.
+  - **OpenCV can't open it:** `cv2.VideoCapture(0)` fails; the only backends are GStreamer and
+    uEye, and there's no QNX camera source. Frames have to come from QNX's camera API (C,
+    `libcamapi`), so we need a small grabber that hands frames to Python.
+  - For a one-off still, `camera_example4_record -u 5 -f mov -c none -t CbYCrY` (it needs a
+    terminal; press a key to start, then to stop) writes an uncompressed MOV to
+    `/data/share/sensor/`, and OpenCV on a laptop can read it. The MP4/AVC1 path segfaults.
 - **HAM and adaptive partitioning are not available.** For demo 3 we write our own supervisor
   that restarts a crashed process; for demo 4 we use `SCHED_FIFO` priorities.
 - Wi-Fi config the Pi actually reads: `/data/var/etc/settings/wpa_supplicant.conf` (seeded from
@@ -70,15 +81,21 @@ Use real-time priorities (`SCHED_FIFO`): watchdog and safety first, flow next, A
 - **Packages:** `apk`. Fix the clock first (`ntpdate`), then run:
   `apk update && apk add opencv-dev tflite-runtime tflite-runtime-dev python3-numpy`.
   The preinstalled list is in `/etc/apk/world`.
-- **Python:** 3.11. Add pip with `python -m ensurepip --upgrade`. Install pymavlink with
-  `pip install --no-deps pymavlink` (it falls back to a pure-Python CRC).
+- **Python:** 3.14, and pip is preinstalled. Install pymavlink with
+  `pip install --user --no-deps --break-system-packages pymavlink` (it falls back to a
+  pure-Python CRC).
 - **Camera:** QNX's AI workshop has verified the C270 and C920. A USB camera is
   Sensor Framework unit 5. Start from github.com/qnx/QNX-AI-workshop (C++).
 
 ## Link to the flight controller
 
-- **Primary: Pi 5 GPIO UART → flight controller UART7 pads (`Tx7`/`Rx7`, `SERIAL1`).**
-  Both sides are 3.3 V. Wire Pi TX → `Rx7`, Pi RX → `Tx7`, GND → `G`.
+- **Primary: USB cable** (Pi USB-A → flight controller USB-C). **Verified 2026-11-21**, no
+  soldering. There's no `devc-serusb`, so `libusb` + `pyusb` drive the CDC-ACM endpoints directly
+  (data interface 1, bulk IN `0x82`, OUT `0x02`; set DTR with `SET_CONTROL_LINE_STATE`). It
+  runs as root. See `tools/fc_usb_probe.py`. MAVLink over USB uses ArduPilot's `SERIAL0`.
+- **Later, if we can solder: GPIO UART → flight controller UART7 pads (`Tx7`/`Rx7`,
+  `SERIAL1`).** Both sides are 3.3 V. Wire Pi TX → `Rx7`, Pi RX → `Tx7`, GND → `G`. The console
+  is on the debug connector, so GPIO pins 8/10 are free.
 
   ```
   msix-rp1 -m set 25l
@@ -86,20 +103,16 @@ Use real-time priorities (`SCHED_FIFO`): watchdog and safety first, flow next, A
   devc-serpl011-rpi5 -b115200 -v -c50000000 -e -F -u1 0x1f00030000,185
   ```
 
-  That gives `/dev/ser1` on physical pins 8/10. If those pins hold the console
-  (`pidin ar | grep devc-ser`), use UART2 on GPIO4/5 instead.
-  Flight controller: `SERIAL1_PROTOCOL = 2`, `SERIAL1_BAUD = 115`, flow control off.
-- **Fallback: USB cable** to the flight controller's USB-C port, via `devc-serusb` →
-  `/dev/serusb1`. Check `which devc-serusb` first.
+  That gives `/dev/ser1`. Flight controller: `SERIAL1_PROTOCOL = 2`, `SERIAL1_BAUD = 115`,
+  flow control off.
 - **Pi 4 (Linux) fallback** if QNX blocks the onboard role: the Pi 4 flies, and the QNX Pi runs
   the safety gate on the ground. Weaker for the track.
 
 ## Ask at the QNX booth
 
-1. Is `devc-serusb` on the image? Is the console on pins 8/10 on the Pi 5?
-2. Are tflite-runtime, opencv and python3-numpy preinstalled?
-3. Are the High Availability Manager and adaptive partitioning on the image? (Demo moments 3
-   and 4 depend on them.)
+Answered on the board (see "Verified on our Pi"). Still worth asking:
+1. Is there a GStreamer source or Python binding for the QNX camera API, so OpenCV can read it?
+2. Is there an official way to get HAM or adaptive partitioning on this image?
 
 ## Sources
 
