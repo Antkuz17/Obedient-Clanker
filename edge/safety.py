@@ -68,6 +68,12 @@ class SafetyGate:
                 return _reject("flight controller has no position estimate (EKF)")
             if not s.limits_ok:
                 return _reject("flight controller speed limits not confirmed")
+            # the fence stays where the first takeoff put it (review3 #2): taking off again
+            # from outside it would let the next moves start beyond the walls we planned for
+            if home is not None and (abs(s.n - hn) > c.fence_half or abs(s.e - he) > c.fence_half):
+                return _reject(f"drone is ({s.n - hn:.1f}, {s.e - he:.1f}) m from the first "
+                               f"takeoff point, outside the +-{c.fence_half} m flying area; "
+                               "carry it back, or restart the edge to reset the area")
             return Verdict(True, target=(s.n, s.e, alt, s.yaw))
 
         # everything below needs to be in the air

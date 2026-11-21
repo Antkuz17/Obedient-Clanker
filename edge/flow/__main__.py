@@ -27,11 +27,18 @@ def main() -> None:
     ap.add_argument("--flip-y", action="store_true")
     ap.add_argument("--swap-xy", action="store_true")
     ap.add_argument("--print", action="store_true", help="print a line per second")
+    ap.add_argument("--fc", help="also send OPTICAL_FLOW straight to the FC through the USB "
+                    "relay's aux inlet, e.g. 127.0.0.1:14556, so position hold survives an edge "
+                    "core crash (the core then only records quality)")
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 
     host, port = a.edge.rsplit(":", 1)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    fc = None
+    if a.fc:
+        from edge.fcdirect import FLOW_COMPONENT, FcDirect
+        fc = FcDirect(a.fc, FLOW_COMPONENT)
     f_px = focal_px(PROC_W, a.hfov)
     tracker = FlowTracker()
     reader = ShmFrameReader(a.shm)
@@ -51,8 +58,10 @@ def main() -> None:
         if s is None:
             continue
         fx, fy = to_rates(s, dt, f_px, a.flip_x, a.flip_y, a.swap_xy)
-        sock.sendto(json.dumps({"fx": fx, "fy": fy, "q": s.quality,
-                                "dt_us": int(dt * 1e6)}).encode(), (host, int(port)))
+        if fc:
+            fc.optical_flow(fx, fy, s.quality)
+        sock.sendto(json.dumps({"fx": fx, "fy": fy, "q": s.quality, "dt_us": int(dt * 1e6),
+                                "direct": fc is not None}).encode(), (host, int(port)))
         n += 1
         sum_q += s.quality
         sum_ms += (time.monotonic() - t0) * 1000

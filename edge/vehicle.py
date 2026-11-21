@@ -66,6 +66,10 @@ class Vehicle:
                           ground_m: float | None) -> None:
         """Forward a software optical-flow sample to the FC (no-op in sim)."""
 
+    def note_flow_quality(self, quality: int) -> None:
+        """The flow process sent this sample to the FC itself (edge.fcdirect); only record
+        its quality for the gate (no-op in sim)."""
+
     def send_distance_sensor(self, range_m: float) -> None:
         """Forward a downward rangefinder reading (m; < 0 = no echo) to the FC (no-op here)."""
 

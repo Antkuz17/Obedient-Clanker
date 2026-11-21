@@ -59,10 +59,16 @@ def main() -> None:
     src.add_argument("--serial", help="serial port, e.g. COM8 or /dev/ttyACM0")
     ap.add_argument("--edge", default="127.0.0.1:7002")
     ap.add_argument("--print", action="store_true", help="print each reading")
+    ap.add_argument("--fc", help="also send DISTANCE_SENSOR straight to the FC through the USB "
+                    "relay's aux inlet, e.g. 127.0.0.1:14556 (survives an edge core crash)")
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     host, port = a.edge.rsplit(":", 1)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    fc = None
+    if a.fc:
+        from edge.fcdirect import RANGE_COMPONENT, FcDirect
+        fc = FcDirect(a.fc, RANGE_COMPONENT)
     n, t0 = 0, time.monotonic()
     for raw in (lines_usb() if a.usb else lines_serial(a.serial)):
         parts = raw.decode(errors="replace").split()
@@ -73,7 +79,10 @@ def main() -> None:
         except ValueError:
             continue
         m = -1.0 if mm < 0 else mm / 1000.0
-        sock.sendto(json.dumps({"range_m": m}).encode(), (host, int(port)))
+        if fc:
+            fc.distance(m)
+        sock.sendto(json.dumps({"range_m": m, "direct": fc is not None}).encode(),
+                    (host, int(port)))
         n += 1
         if a.print:
             print(f"range {m:.3f} m", flush=True)

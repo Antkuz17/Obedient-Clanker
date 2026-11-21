@@ -80,7 +80,10 @@ class PoseReceiver:
         self.sock.close()
 
 W, H = 640, 480
-HFOV_DEG = 60.0  # measure the real C270 and update
+# The C270's spec is ~55 deg *diagonal*, which is ~45 deg horizontal at 4:3 (the old 60 was
+# wrong; if 640x480 is a crop of the 720p sensor it is narrower still, ~38). MEASURE IT: tape
+# two marks a known distance apart, find the camera distance where they touch the frame edges.
+HFOV_DEG = 45.0
 
 
 def intrinsics(width: int = W, height: int = H, hfov_deg: float = HFOV_DEG) -> dict:

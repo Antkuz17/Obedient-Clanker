@@ -11,7 +11,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import queue
 import socket
+import threading
 import time
 from pathlib import Path
 
@@ -30,12 +32,27 @@ PERCEPTION_STALE_S = 1.0
 
 
 class FlightLog:
+    """JSONL flight log. Writes happen on a background thread: an SD-card write that stalls
+    the event loop would stop the hbwd pets (250 ms) and land the drone (review3 #8)."""
+
     def __init__(self, path: Path | None):
         self.f = open(path, "a", buffering=1) if path else None
+        self._q: queue.SimpleQueue | None = None
+        if self.f:
+            self._q = queue.SimpleQueue()
+            threading.Thread(target=self._writer, daemon=True, name="flight-log").start()
 
     def __call__(self, rec: dict) -> None:
-        if self.f:
-            self.f.write(json.dumps(rec) + "\n")
+        if self._q is not None:
+            self._q.put(json.dumps(rec) + "\n")
+
+    def _writer(self) -> None:
+        while True:
+            line = self._q.get()
+            try:
+                self.f.write(line)
+            except (OSError, ValueError):
+                pass  # disk full / closed: never take the flight loop down for a log line
 
 
 class EdgeServer:
@@ -64,6 +81,8 @@ class EdgeServer:
         self._server: asyncio.base_events.Server | None = None
         self._tasks: list[asyncio.Task] = []
         self.loop_stats: list[float] = []  # control-loop period samples (s), for the jitter graph
+        self._tick_fail_since: float | None = None
+        self._tick_fail_landed = False
         # edge/hbwd (C, SCHED_FIFO) is petted every safety tick; if the pets stop it drops the FC
         # heartbeat and commands LAND (only when armed in our modes)
         self.hbwd_addr = hbwd_addr
@@ -183,12 +202,31 @@ class EdgeServer:
                 del self.loop_stats[:1000]
                 self._stats_from = max(0, self._stats_from - 1000)
             last = now
-            self.safety_tick(now)
+            # One exception must not end this loop: it carries the watchdog, the battery and
+            # position failsafes and the FC heartbeat (review3 #6). The hbwd pet is sent only
+            # at the end of a complete tick, so a tick that keeps failing stops the pets and the
+            # C watchdog lands the drone; without hbwd, we try to land after 1 s of failures.
+            try:
+                self.safety_tick(now)
+                self._tick_fail_since = None
+            except Exception:
+                if self._tick_fail_since is None:
+                    self._tick_fail_since = now
+                    log.exception("safety tick failed")
+                elif now - self._tick_fail_since > 1.0 and not self._tick_fail_landed:
+                    self._tick_fail_landed = True
+                    log.error("safety tick failing for 1 s: landing")
+                    try:
+                        self.exec.trigger_failsafe("land", "watchdog",
+                                                   "edge safety loop is failing: landing")
+                    except Exception:
+                        log.exception("failsafe land failed")
 
     def safety_tick(self, now: float) -> None:
         self.v.tick(now)  # FC heartbeat + LAND retries live in this loop (review A3, A2)
         ex, s = self.exec, self.v.state()
-        if self._hbwd_sock:
+        self._safety_checks(now, ex, s)
+        if self._hbwd_sock:  # last: only a tick that ran every check pets the C watchdog
             self._hbwd_seq += 1
             ours = int(s.mode in ("GUIDED", "LAND"))
             try:
@@ -196,6 +234,8 @@ class EdgeServer:
                                        self.hbwd_addr)
             except OSError:
                 pass
+
+    def _safety_checks(self, now: float, ex: Executor, s) -> None:
         if self._video_sock:
             try:
                 self._video_sock.sendto(json.dumps(s.as_dict()).encode(), self.video_addr)
@@ -322,7 +362,11 @@ class EdgeServer:
         try:
             m = json.loads(data)
             if "range_m" in m:  # tools/rangefinder.py (HC-SR04 via Arduino): height above floor
-                self.v.send_distance_sensor(float(m["range_m"]))
+                if not m.get("direct"):  # direct: it already went to the FC (edge.fcdirect)
+                    self.v.send_distance_sensor(float(m["range_m"]))
+                return
+            if m.get("direct"):  # the flow process sent OPTICAL_FLOW to the FC itself (review3
+                self.v.note_flow_quality(int(m["q"]))  # #8); keep its quality for the gate
                 return
             self.v.send_optical_flow(float(m["fx"]), float(m["fy"]), int(m["q"]),
                                      int(m["dt_us"]), m.get("ground_m"))

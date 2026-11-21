@@ -121,3 +121,19 @@ def test_port_owned_by_someone_else_is_not_ready():
                              alive=lambda: False) is False
     finally:
         squatter.close()
+
+
+def test_child_output_goes_to_log_files(tmp_path):
+    """review3: on the drone, children must not write to the SSH terminal that started the
+    supervisor (unplugging the laptop closes it)."""
+    talker = [sys.executable, "-c", "import sys, time; print('hello', flush=True); "
+              "print('oops', file=sys.stderr, flush=True); time.sleep(60)"]
+    sup = Supervisor([Child("talker", talker)], child_logs=str(tmp_path))
+    t = run_bg(sup)
+    try:
+        log = tmp_path / "talker.log"
+        assert wait_for(lambda: log.exists() and "oops" in log.read_text())
+        assert "hello" in log.read_text()
+    finally:
+        sup.stop()
+        t.join(5)

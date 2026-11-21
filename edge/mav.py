@@ -93,6 +93,13 @@ class MavVehicle(Vehicle):
         self._last_setup = 0.0
         self.origin_ok = False         # FC confirmed the EKF origin
         self._last_origin_send = 0.0
+        # Height reference (review3 #1). LOCAL_POSITION_NED z is measured from the EKF origin,
+        # i.e. wherever the baro read zero at boot, and the baro drifts (warm-up, room pressure,
+        # doors). NAV_TAKEOFF climbs relative to the ground at arming. So `alt` is reported, and
+        # position targets are sent, relative to the ground: the raw EKF height is tracked as
+        # the ground level while the drone is on the ground and frozen while it flies.
+        self._ground_alt = 0.0         # EKF-frame height of the ground (m, up)
+        self._ess_on_ground = False    # EXTENDED_SYS_STATE says ON_GROUND (strictly)
 
     # --- lifecycle ---------------------------------------------------------------------------
     def _open(self) -> None:
@@ -259,7 +266,12 @@ class MavVehicle(Vehicle):
                 s.armed = bool(msg.base_mode & M.MAV_MODE_FLAG_SAFETY_ARMED)
                 s.mode = mavutil.mode_string_v10(msg)
             elif t == "LOCAL_POSITION_NED":
-                s.n, s.e, s.alt = msg.x, msg.y, -msg.z
+                raw_alt = -msg.z
+                # on the ground (disarmed, or armed but the FC's land detector says ON_GROUND):
+                # this height is the ground. In the air the reference stays frozen.
+                if not s.armed or (now - self._ess_t <= STALE_S and self._ess_on_ground):
+                    self._ground_alt = raw_alt
+                s.n, s.e, s.alt = msg.x, msg.y, raw_alt - self._ground_alt
                 s.vn, s.ve, s.vd = msg.vx, msg.vy, msg.vz
             elif t == "ATTITUDE":
                 s.yaw = wrap360(math.degrees(msg.yaw))
@@ -270,6 +282,7 @@ class MavVehicle(Vehicle):
                 s.range_m = msg.current_distance / 100.0
             elif t == "EXTENDED_SYS_STATE":
                 self._ess_t = now
+                self._ess_on_ground = msg.landed_state == M.MAV_LANDED_STATE_ON_GROUND
                 s.landed = msg.landed_state in (M.MAV_LANDED_STATE_ON_GROUND,
                                                 M.MAV_LANDED_STATE_UNDEFINED)
             elif t == "PARAM_VALUE":
@@ -338,11 +351,12 @@ class MavVehicle(Vehicle):
         self._cmd(M.MAV_CMD_NAV_TAKEOFF, 0, 0, 0, 0, 0, 0, alt)
 
     def set_target(self, n: float, e: float, alt: float, yaw: float) -> None:
+        """alt is metres above the ground (see _ground_alt); the FC wants EKF-origin z."""
         self._send(self.m.mav.set_position_target_local_ned_send,
                    int((time.monotonic() - self._t0) * 1000) & 0xFFFFFFFF,
                    self.m.target_system, self.m.target_component,
                    M.MAV_FRAME_LOCAL_NED, MASK_POS_YAW,
-                   n, e, -alt, 0, 0, 0, 0, 0, 0, math.radians(yaw), 0)
+                   n, e, -(alt + self._ground_alt), 0, 0, 0, 0, 0, 0, math.radians(yaw), 0)
 
     def land(self) -> None:
         self.cancel_takeoff()
@@ -363,11 +377,14 @@ class MavVehicle(Vehicle):
                    self.RANGE_MAX_CM, max(0, min(65535, cm)),
                    M.MAV_DISTANCE_SENSOR_ULTRASOUND, 0, M.MAV_SENSOR_ROTATION_PITCH_270, 0)
 
+    def note_flow_quality(self, quality: int) -> None:
+        self._last_flow_q, self._last_flow_t = quality, time.monotonic()
+
     def send_optical_flow(self, flow_x: float, flow_y: float, quality: int, dt_us: int,
                           ground_m: float | None) -> None:
         """flow_x/flow_y in rad/s (see docs/flight-setup.md). ground_m is ignored by ArduPilot;
         height must come from DISTANCE_SENSOR (review C)."""
-        self._last_flow_q, self._last_flow_t = quality, time.monotonic()
+        self.note_flow_quality(quality)
         self._send(self.m.mav.optical_flow_send,
                    int(time.time() * 1e6), 0, 0, 0, 0.0, 0.0, max(0, min(255, quality)),
                    -1.0 if ground_m is None else float(ground_m), float(flow_x), float(flow_y))

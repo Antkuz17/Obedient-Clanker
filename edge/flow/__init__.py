@@ -28,7 +28,9 @@ except ImportError:  # pragma: no cover - cv2 is on the Pi (apk python3-opencv) 
     cv2 = None
 
 PROC_W, PROC_H = 320, 240        # process at this size (fast LK; the C270 is 640x480)
-C270_HFOV_DEG = 60.0             # measure and refine; also FLOW_FXSCALER on the FC
+# ~55 deg diagonal spec -> ~45 deg horizontal at 4:3 (60 overstated flow speed by ~25-40 %).
+# Measure it (edge/video.py HFOV_DEG has how) and pass --hfov; fine-tune with FLOW_FXSCALER.
+C270_HFOV_DEG = 45.0
 MIN_TRACKS = 12                  # fewer good tracks than this -> quality 0
 
 

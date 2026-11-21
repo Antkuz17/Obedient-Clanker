@@ -17,7 +17,9 @@
       "python3",
       "-m",
       "tools.rangefinder",
-      "--usb"
+      "--usb",
+      "--fc",
+      "127.0.0.1:14556"
     ]
   },
   {
@@ -66,6 +68,23 @@
     "ready": "shm:camgrab_fwd"
   },
   {
+    "name": "camgrab_down",
+    "prio": 43,
+    "user": "qnxuser",
+    "cmd": [
+      "./edge/camgrab/camgrab",
+      "-u",
+      "6",
+      "-n",
+      "camgrab_down",
+      "-w",
+      "320",
+      "-h",
+      "240"
+    ],
+    "ready": "shm:camgrab_down"
+  },
+  {
     "name": "flow",
     "prio": 44,
     "user": "qnxuser",
@@ -74,7 +93,9 @@
       "-m",
       "edge.flow",
       "--shm",
-      "camgrab_fwd"
+      "camgrab_down",
+      "--fc",
+      "127.0.0.1:14556"
     ]
   },
   {

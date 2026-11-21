@@ -425,12 +425,26 @@ async def test_dead_detector_stops_a_running_forward_move():
 
 async def test_flow_loss_stops_a_running_move(rig):
     srv, sim, edge = rig
+    srv.exec.FLOW_BAD_S = 0.1  # the sim runs 8x fast; the move would finish within 0.5 s
     await edge.run("takeoff", alt=1.0)
     cid, _ = await edge.send("move_body", fwd=-2.5)
-    await asyncio.sleep(0.2)
+    await asyncio.sleep(0.1)
     sim.s.flow_quality = 0
     d = await edge.wait_done(cid, 10)
     assert d["status"] == P.ABORTED and "flow" in d["reason"]
+
+
+async def test_brief_flow_dip_does_not_abort_a_move(rig):
+    """review3: one blurry frame (flow quality 0 for < FLOW_BAD_S) must not end the move."""
+    srv, sim, edge = rig
+    await edge.run("takeoff", alt=1.0)
+    cid, _ = await edge.send("move_body", fwd=-2.5)
+    await asyncio.sleep(0.1)
+    sim.s.flow_quality = 0
+    await asyncio.sleep(0.15)
+    sim.s.flow_quality = 200
+    d = await edge.wait_done(cid, 10)
+    assert d["status"] == P.OK
 
 
 async def test_pilot_takeover_resets_target_and_cancels(rig):
@@ -503,3 +517,172 @@ async def test_short_move_goes_most_of_the_way(rig):
     n0 = sim.s.n
     assert (await edge.run("move_body", fwd=0.5))["status"] == P.OK
     assert sim.s.n - n0 >= 0.35
+
+
+# --- review3 ---------------------------------------------------------------------------------
+async def test_fence_stays_at_the_first_takeoff_point(rig):
+    """review3 #2: a second takeoff used to re-centre the fence wherever the drone landed."""
+    srv, sim, edge = rig
+    await edge.run("takeoff", alt=1.0)
+    await edge.run("move_body", fwd=2.5)
+    await edge.run("land")
+    await edge.run("takeoff", alt=1.0)                  # 2.5 m from home: inside, allowed
+    assert srv.exec.home == pytest.approx((0.0, 0.0), abs=0.05)
+    with pytest.raises(CommandRejected, match="geofence"):
+        await edge.run("move_body", fwd=1.0)           # 3.5 m from the first takeoff point
+    await edge.run("land")
+    sim.s.n = 4.0                                      # carried outside the area
+    with pytest.raises(CommandRejected, match="flying area"):
+        await edge.run("takeoff", alt=1.0)
+
+
+async def test_station_land_does_not_override_the_pilot(rig):
+    """review3 #7: with the pilot in AltHold, a station/dashboard LAND used to take over."""
+    srv, sim, edge = rig
+    await edge.run("takeoff", alt=1.0)
+    sim.s.mode = "ALT_HOLD"
+    await asyncio.sleep(0.1)
+    for op in ("land", "stop"):
+        with pytest.raises(CommandRejected, match="pilot has control"):
+            await edge.run(op)
+    assert sim.s.armed and not sim._landing
+    sim.s.mode = "GUIDED"                              # pilot hands back: land works again
+    await asyncio.sleep(0.1)
+    assert (await edge.run("land"))["status"] == P.OK
+
+
+async def test_safety_loop_survives_an_exception(rig, monkeypatch):
+    """review3 #6: one exception used to end the 50 Hz loop and, with it, the watchdog."""
+    srv, sim, edge = rig
+    await edge.run("takeoff", alt=1.0)
+    orig, n = sim.tick, {"calls": 0}
+
+    def flaky(now):
+        n["calls"] += 1
+        if n["calls"] == 1:
+            raise OSError("simulated USB write failure")
+        return orig(now)
+    monkeypatch.setattr(sim, "tick", flaky)
+    await asyncio.sleep(0.2)
+    assert not srv._tasks[1].done() and n["calls"] > 3
+    edge.heartbeat = False
+    for _ in range(100):
+        if not sim.s.armed:
+            break
+        await asyncio.sleep(0.05)
+    assert not sim.s.armed                             # the watchdog still landed it
+
+
+async def test_persistently_failing_safety_tick_lands(rig, monkeypatch):
+    srv, sim, edge = rig
+    await edge.run("takeoff", alt=1.0)
+
+    def broken(now, ex, s):
+        raise RuntimeError("bug in a safety check")
+    monkeypatch.setattr(srv, "_safety_checks", broken)
+    for _ in range(100):
+        if not sim.s.armed:
+            break
+        await asyncio.sleep(0.05)
+    assert not sim.s.armed
+
+
+def test_pets_only_after_a_complete_safety_tick(monkeypatch):
+    """hbwd is petted last: a tick that dies part-way must not tell the C watchdog all is well."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(("127.0.0.1", 0))
+    sock.settimeout(0.2)
+    srv = EdgeServer(SimVehicle(), perception_port=None, flow_port=None,
+                     hbwd_addr=sock.getsockname())
+    srv.safety_tick(time.monotonic())
+    assert sock.recv(64).startswith(b"PET 1 ")
+
+    def broken(now, ex, s):
+        raise RuntimeError("bug")
+    monkeypatch.setattr(srv, "_safety_checks", broken)
+    with pytest.raises(RuntimeError):
+        srv.safety_tick(time.monotonic())
+    with pytest.raises(socket.timeout):
+        sock.recv(64)
+
+
+def test_direct_flow_is_not_forwarded_again():
+    """review3 #8: with --fc the flow process already sent OPTICAL_FLOW to the FC itself."""
+    class V(SimVehicle):
+        sent, noted = [], []
+        def send_optical_flow(self, *a):
+            self.sent.append(a)
+        def note_flow_quality(self, q):
+            self.noted.append(q)
+        def send_distance_sensor(self, r):
+            self.sent.append(r)
+    v = V()
+    srv = EdgeServer(v, perception_port=None, flow_port=None)
+    srv._on_flow(json.dumps({"fx": 0.1, "fy": 0.0, "q": 180, "dt_us": 33000}).encode())
+    srv._on_flow(json.dumps({"fx": 0.1, "fy": 0.0, "q": 170, "dt_us": 33000,
+                             "direct": True}).encode())
+    srv._on_flow(json.dumps({"range_m": 0.5, "direct": True}).encode())
+    assert len(v.sent) == 1 and v.noted == [170]
+
+
+def test_fcdirect_frames_decode_as_mavlink2():
+    from pymavlink.dialects.v20 import ardupilotmega as mav2
+    from edge.fcdirect import FcDirect
+    rx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    rx.bind(("127.0.0.1", 0))
+    rx.settimeout(1.0)
+    fc = FcDirect(f"127.0.0.1:{rx.getsockname()[1]}", component=193)
+    parser = mav2.MAVLink(None)
+    fc.optical_flow(0.25, -0.5, 200)
+    m = parser.parse_char(rx.recv(300))
+    assert m.get_type() == "OPTICAL_FLOW" and m.quality == 200
+    assert m.flow_rate_x == pytest.approx(0.25) and m.flow_rate_y == pytest.approx(-0.5)
+    assert m.get_srcSystem() == 255 and m.get_srcComponent() == 193
+    fc.distance(0.42)
+    d = parser.parse_char(rx.recv(300))
+    assert d.get_type() == "DISTANCE_SENSOR" and d.current_distance == 42
+    fc.distance(-1)
+    assert parser.parse_char(rx.recv(300)).current_distance == 201  # no echo = out of range
+
+
+def _mav_vehicle():
+    """A MavVehicle with no link, for checking the height reference logic."""
+    from edge.mav import MavVehicle
+
+    class Rec:
+        sent = []
+        def set_position_target_local_ned_send(self, *a):
+            self.sent.append(a)
+    v = MavVehicle("udpin:127.0.0.1:0")
+    v.m = type("M", (), {"mav": Rec(), "target_system": 1, "target_component": 1})()
+    return v
+
+
+class _Msg:
+    def __init__(self, t, **kw):
+        self._t = t
+        self.__dict__.update(kw)
+
+    def get_type(self):
+        return self._t
+
+
+def test_height_is_measured_from_the_ground_not_the_drifted_baro():
+    """review3 #1: the baro drifts while the drone sits on the ground. Height and position
+    targets must be relative to the ground at arming, as NAV_TAKEOFF is."""
+    from pymavlink import mavutil
+    M = mavutil.mavlink
+    v = _mav_vehicle()
+    lpn = lambda z: _Msg("LOCAL_POSITION_NED", x=0.0, y=0.0, z=z, vx=0.0, vy=0.0, vz=0.0)
+    v._handle(lpn(-0.96))                       # disarmed, baro has drifted to +0.96 m
+    assert v.state().alt == pytest.approx(0.0)
+    v.s.armed = True                            # armed; the land detector still says ON_GROUND
+    v._handle(_Msg("EXTENDED_SYS_STATE", landed_state=M.MAV_LANDED_STATE_ON_GROUND))
+    v._handle(lpn(-0.97))
+    assert v.state().alt == pytest.approx(0.0)
+    v._handle(_Msg("EXTENDED_SYS_STATE", landed_state=M.MAV_LANDED_STATE_IN_AIR))
+    v._handle(lpn(-1.77))                       # climbed 0.8 m: frozen reference
+    assert v.state().alt == pytest.approx(0.8)
+    v.set_target(0.5, 0.0, 0.8, 0.0)            # hold 0.8 m above the ground ...
+    z = v.m.mav.sent[-1][7]  # (time, sys, comp, frame, mask, x, y, z, ...)
+    assert z == pytest.approx(-1.77)            # ... = 1.77 m above the EKF origin

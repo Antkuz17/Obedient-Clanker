@@ -136,7 +136,8 @@ def _probe(spec: str, since: float, timeout: float, stop: threading.Event | None
 
 class Supervisor:
     def __init__(self, children: list[Child], events_udp: tuple[str, int] | None = None,
-                 log_path: str | None = None):
+                 log_path: str | None = None, child_logs: str | None = None):
+        self.child_logs = child_logs  # dir: each child's stdout/stderr -> <name>.log
         names = [c.name for c in children]
         if len(set(names)) != len(names):
             raise ValueError(f"duplicate child names: {names}")
@@ -154,7 +155,10 @@ class Supervisor:
         with self._lock:
             self.events.append(ev)
         line = json.dumps(ev)
-        print(line, flush=True)
+        try:
+            print(line, flush=True)
+        except (OSError, ValueError):
+            pass  # the SSH terminal we started from is gone; keep supervising (review3)
         if self._log:
             self._log.write(line + "\n")
         if self._udp:
@@ -168,8 +172,14 @@ class Supervisor:
     def _spawn(self, c: Child) -> None:
         env = {**os.environ, **c.env}
         kw = {"user": c.user} if c.user and os.geteuid() == 0 else {}
+        if self.child_logs:  # not the terminal: a closed SSH session must not break children
+            os.makedirs(self.child_logs, exist_ok=True)
+            out = open(os.path.join(self.child_logs, f"{c.name}.log"), "ab")
+            kw.update(stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
         c.proc = subprocess.Popen(c.cmd, env=env, preexec_fn=_realtime(c.prio),
                                   start_new_session=True, **kw)
+        if self.child_logs:
+            out.close()  # the child has its own copy of the fd
         c.started_at = time.monotonic()
         wall = time.time()
         if c.died_at is None:
@@ -280,15 +290,22 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("config", help="JSON list of children")
     ap.add_argument("--events-udp", help="host:port to send each event to as JSON")
     ap.add_argument("--log", help="append events (JSON lines) to this file")
+    ap.add_argument("--child-logs", help="directory for each child's output (<name>.log) "
+                    "instead of this terminal; use it on the drone")
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
     udp = None
     if a.events_udp:
         h, _, p = a.events_udp.rpartition(":")
         udp = (h, int(p))
-    sup = Supervisor(load_config(a.config), events_udp=udp, log_path=a.log)
+    sup = Supervisor(load_config(a.config), events_udp=udp, log_path=a.log,
+                     child_logs=a.child_logs)
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: sup.stop())
+    # Unplugging the laptop closes the SSH session that started us; SIGHUP would kill the
+    # supervisor, and nothing would restart a crashed flow/camera process mid-flight (review3).
+    if hasattr(signal, "SIGHUP"):
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
     sup.run()
 
 

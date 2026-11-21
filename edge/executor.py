@@ -17,6 +17,7 @@ Emit = Callable[[dict], None]
 
 class Executor:
     TICK = 0.05
+    FLOW_BAD_S = 0.5  # flow quality below the minimum this long stops a running move
 
     def __init__(self, vehicle: Vehicle, gate: SafetyGate, emit: Emit,
                  cfg: ExecConfig | None = None, log: Callable[[dict], None] | None = None):
@@ -32,10 +33,13 @@ class Executor:
         self._phase = ""          # TAKING_OFF / LANDING while those run
         self.failsafe: str | None = None  # None | "hover" | "land"
         self.target: tuple[float, float, float, float] | None = None  # last commanded
-        self.home: tuple[float, float] | None = None  # set at takeoff (review A12)
+        # set at the FIRST takeoff of this edge process and kept (review A12, review3 #2): the
+        # fence is the room we cleared, not wherever the drone last landed
+        self.home: tuple[float, float] | None = None
         self._active_fwd = False   # running command moves the drone forward (person checks)
         self._active_moves = False # running command changes position (flow checks)
         self.pilot_mode: str | None = None  # set while the pilot has another mode in flight
+        self._flow_bad_since: float | None = None
 
     def _set(self, n: float, e: float, alt: float, yaw: float) -> None:
         self.target = (n, e, alt, wrap360(yaw))
@@ -72,6 +76,16 @@ class Executor:
     # --- command entry -----------------------------------------------------------------------
     def handle(self, cid: str, op: str, args: dict) -> bool:
         s = self.v.state()
+        if (op in ("stop", "hover", "land") and s.armed and not s.landed
+                and s.mode not in ("GUIDED", "LAND", "UNKNOWN")):
+            # the pilot has flipped SwA (AltHold etc.): the pilot always wins (review3 #7). A
+            # LAND from the station or a dashboard would take the drone back from them.
+            reason = f"pilot has control (mode {s.mode}); not overriding the pilot"
+            self.log({"t": time.time(), "kind": "cmd", "id": cid, "op": op, "args": args,
+                      "ok": False, "reason": reason})
+            self.emit(P.ack(cid, False, reason))
+            self.emit(P.event("safety_reject", f"{op}: {reason}"))
+            return False
         if self._phase == "LANDING" and op in ("stop", "hover", "land"):
             # landing beats stop: never pull a landing drone back into a hover
             self.emit(P.ack(cid, True, "landing continues"))
@@ -97,7 +111,7 @@ class Executor:
         if self.failsafe == "hover":
             self.failsafe = None  # a fresh accepted command from a live station clears it
         self._cancel(f"superseded by {op}")
-        if op == "takeoff":
+        if op == "takeoff" and self.home is None:
             self.home = (s.n, s.e)
         self._active_moves = op in ("move_body", "goto", "return_home")
         self._active_fwd = False
@@ -119,8 +133,16 @@ class Executor:
                 return f"person {p.person_m:.1f} m ahead"
             if cfg.require_person_detector and not p.detector_alive:
                 return "person detector stopped"
+        # one blurry frame shouldn't abort a move (and the whole plan): flow must stay bad for
+        # FLOW_BAD_S before the move is stopped (review3, smaller items)
         if s.flow_quality < cfg.flow_quality_min:
-            return f"optical flow quality {s.flow_quality} too low"
+            now = time.monotonic()
+            if self._flow_bad_since is None:
+                self._flow_bad_since = now
+            elif now - self._flow_bad_since >= self.FLOW_BAD_S:
+                return f"optical flow quality {s.flow_quality} too low"
+        else:
+            self._flow_bad_since = None
         return None
 
     def on_pilot_control(self, mode: str) -> None:
