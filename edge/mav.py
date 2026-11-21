@@ -331,6 +331,19 @@ class MavVehicle(Vehicle):
         self._last_land_send = time.monotonic()
         self._set_mode(COPTER_LAND)
 
+    # HC-SR04 limits as MAVLink reports them (cm). min must sit below the sensor's ground
+    # clearance: SITL showed the EKF gets no position unless the rangefinder reads valid on the
+    # ground (tools/sitl_flowonly.py). FC side: RNGFND1_TYPE=10, RNGFND1_ORIENT=25.
+    RANGE_MIN_CM, RANGE_MAX_CM = 2, 200
+
+    def send_distance_sensor(self, range_m: float) -> None:
+        """Downward rangefinder reading in metres (< 0 = no echo, sent as out of range)."""
+        cm = self.RANGE_MAX_CM + 1 if range_m < 0 else int(round(range_m * 100))
+        self._send(self.m.mav.distance_sensor_send,
+                   int(time.monotonic() * 1000) & 0xFFFFFFFF, self.RANGE_MIN_CM,
+                   self.RANGE_MAX_CM, max(0, min(65535, cm)),
+                   M.MAV_DISTANCE_SENSOR_ULTRASOUND, 0, M.MAV_SENSOR_ROTATION_PITCH_270, 0)
+
     def send_optical_flow(self, flow_x: float, flow_y: float, quality: int, dt_us: int,
                           ground_m: float | None) -> None:
         """flow_x/flow_y in rad/s (see docs/flight-setup.md). ground_m is ignored by ArduPilot;

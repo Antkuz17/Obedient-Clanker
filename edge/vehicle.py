@@ -66,6 +66,9 @@ class Vehicle:
                           ground_m: float | None) -> None:
         """Forward a software optical-flow sample to the FC (no-op in sim)."""
 
+    def send_distance_sensor(self, range_m: float) -> None:
+        """Forward a downward rangefinder reading (m; < 0 = no echo) to the FC (no-op here)."""
+
 
 def wrap360(deg: float) -> float:
     return deg % 360.0

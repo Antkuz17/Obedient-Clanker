@@ -29,6 +29,9 @@ class SimVehicle(Vehicle):
     def state(self) -> VehicleState:
         return VehicleState(**self.s.as_dict())
 
+    def send_distance_sensor(self, range_m: float) -> None:
+        self.s.range_m = None if range_m < 0 else range_m
+
     async def start(self) -> None:
         self._task = asyncio.create_task(self._run())
 

@@ -246,6 +246,9 @@ class EdgeServer:
     def _on_flow(self, data: bytes) -> None:
         try:
             m = json.loads(data)
+            if "range_m" in m:  # tools/rangefinder.py (HC-SR04 via Arduino): height above floor
+                self.v.send_distance_sensor(float(m["range_m"]))
+                return
             self.v.send_optical_flow(float(m["fx"]), float(m["fy"]), int(m["q"]),
                                      int(m["dt_us"]), m.get("ground_m"))
         except (ValueError, TypeError, KeyError):
