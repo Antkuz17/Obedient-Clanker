@@ -66,6 +66,8 @@ class SafetyGate:
                 return _reject(f"optical flow quality {s.flow_quality} too low to hold position")
             if not s.pos_ok:
                 return _reject("flight controller has no position estimate (EKF)")
+            if not s.limits_ok:
+                return _reject("flight controller speed limits not confirmed")
             return Verdict(True, target=(s.n, s.e, alt, s.yaw))
 
         # everything below needs to be in the air

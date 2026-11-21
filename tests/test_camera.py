@@ -37,6 +37,30 @@ def test_python_writer_reader_roundtrip(fmt):
     w.close()
 
 
+def test_reader_follows_a_restarted_grabber():
+    """review2 #8: kill + restart the grabber (new shm region); the reader must follow."""
+    import time
+    name = shm_name()
+    img = np.zeros((48, 64, 3), np.uint8)
+    w = ShmFrameWriter(name, 64, 48)
+    w.write_bgr(img)
+    r = ShmFrameReader(name, open_timeout=1)
+    first = r.wait_new(timeout=1)
+    w.close(unlink=True)
+    w2 = ShmFrameWriter(name, 64, 48)
+    img[:] = 200
+    for _ in range(80):                               # ~0.8 s of frames from the new grabber
+        w2.write_bgr(img)
+        time.sleep(0.01)
+    f = r.wait_new(after_seq=first.seq, timeout=2)
+    assert f is not None and f.gray()[0, 0] > 150     # it's the new grabber's picture
+    assert r.reopens >= 1
+    time.sleep(0.3)
+    assert r.read(max_age=0.1) is None                # stale frames are refused when asked
+    r.close()
+    w2.close()
+
+
 @pytest.mark.skipif(shutil.which("cc") is None, reason="needs a C compiler")
 @pytest.mark.parametrize("fmt", ["nv12", "yuyv"])
 def test_camgrab_c_against_stub_camera(tmp_path, fmt):

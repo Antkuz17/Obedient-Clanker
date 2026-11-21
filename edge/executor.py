@@ -10,7 +10,7 @@ from shared import protocol as P
 
 from .config import ExecConfig
 from .safety import Perception, SafetyGate
-from .vehicle import Vehicle, wrap360, yaw_err
+from .vehicle import Vehicle, ned_to_body, wrap360, yaw_err
 
 Emit = Callable[[dict], None]
 
@@ -33,6 +33,9 @@ class Executor:
         self.failsafe: str | None = None  # None | "hover" | "land"
         self.target: tuple[float, float, float, float] | None = None  # last commanded
         self.home: tuple[float, float] | None = None  # set at takeoff (review A12)
+        self._active_fwd = False   # running command moves the drone forward (person checks)
+        self._active_moves = False # running command changes position (flow checks)
+        self.pilot_mode: str | None = None  # set while the pilot has another mode in flight
 
     def _set(self, n: float, e: float, alt: float, yaw: float) -> None:
         self.target = (n, e, alt, wrap360(yaw))
@@ -96,9 +99,40 @@ class Executor:
         self._cancel(f"superseded by {op}")
         if op == "takeoff":
             self.home = (s.n, s.e)
+        self._active_moves = op in ("move_body", "goto", "return_home")
+        self._active_fwd = False
+        if self._active_moves and verdict.target:
+            fwd, _ = ned_to_body(verdict.target[0] - s.n, verdict.target[1] - s.e, s.yaw)
+            self._active_fwd = fwd > 0.2
         self._active = (cid, op)
         self._task = asyncio.create_task(self._run(cid, op, args, verdict))
         return True
+
+    def revalidate(self, s, cfg) -> str | None:
+        """Re-check the *running* command every safety tick (review2 #4, #6). Returns a reason
+        to stop it, or None. Forward-only checks let the drone back away from a person."""
+        if not (self._task and not self._task.done() and self._active_moves):
+            return None
+        p = self.perception
+        if self._active_fwd:
+            if p.person_m is not None and p.person_m < cfg.person_close_m:
+                return f"person {p.person_m:.1f} m ahead"
+            if cfg.require_person_detector and not p.detector_alive:
+                return "person detector stopped"
+        if s.flow_quality < cfg.flow_quality_min:
+            return f"optical flow quality {s.flow_quality} too low"
+        return None
+
+    def on_pilot_control(self, mode: str) -> None:
+        """The pilot switched the FC out of our modes in flight: get out of the way and forget
+        our targets, so the next relative move starts from where the pilot left it (review2 #5).
+        """
+        self.pilot_mode = mode
+        self._cancel(f"pilot took control (mode {mode})")
+        self.target = None
+        self._phase = ""
+        self.failsafe = None
+        self.log({"t": time.time(), "kind": "pilot_control", "mode": mode})
 
     def stop(self, reason: str) -> None:
         """Internal stop (palm, person, watchdog): cancel and hold."""
@@ -163,6 +197,18 @@ class Executor:
         c = self.cfg
         sc = self.gate.cfg
         if op == "stop" or op == "hover":
+            s = self.v.state()
+            if s.armed and not self.airborne:
+                # armed but still on the ground (a takeoff just armed it): "stop" must not let
+                # it climb. Abort and disarm via LAND (review2 #3)
+                self.v.cancel_takeoff()
+                self._phase = "LANDING"
+                self.v.land()
+                ok = await self._wait(lambda s: not s.armed, timeout=15.0)
+                self._phase = ""
+                if not ok:
+                    return P.FAILED, "still armed on the ground; pilot: disarm"
+                return P.OK, "takeoff stopped; disarmed on the ground"
             if self.airborne:
                 self._hold()
             return P.OK, ""
@@ -185,8 +231,18 @@ class Executor:
                                   timeout=alt / sc.speed_z + c.cmd_timeout_pad_s)
             self._phase = ""
             if not ok:
-                self._hold()
                 why = getattr(self.v, "last_error", "")
+                s = self.v.state()
+                if s.armed and s.alt < 0.3:
+                    # never leave it armed on the ground while telemetry says IDLE (review2 #11)
+                    self.v.cancel_takeoff()
+                    self._phase = "LANDING"
+                    self.v.land()
+                    await self._wait(lambda s: not s.armed, timeout=15.0)
+                    self._phase = ""
+                    why = (why + "; " if why else "") + "disarmed"
+                else:
+                    self._hold()
                 return P.FAILED, "takeoff timed out" + (f" ({why})" if why else "")
             s = self.v.state()
             self._set(s.n, s.e, alt, s.yaw)

@@ -22,6 +22,7 @@ class VehicleState:
     range_m: float | None = None
     landed: bool = True
     pos_ok: bool = True     # EKF has a usable local position (MavVehicle: EKF_STATUS_REPORT)
+    limits_ok: bool = True  # FC speed limits confirmed (MavVehicle: WPNAV_* read back)
 
     def as_dict(self) -> dict:
         return asdict(self)

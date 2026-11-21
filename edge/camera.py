@@ -97,7 +97,22 @@ class _Region:
 
 
 class ShmFrameReader:
-    def __init__(self, name: str = "camgrab_fwd", open_timeout: float = 5.0):
+    """Reads camgrab's latest frame. If no new frame arrives for `reopen_after_s`, it re-opens
+    the shared memory by name, so a restarted grabber (new region) is picked up instead of
+    the reader staring at the old, orphaned mapping forever (review2 #8)."""
+
+    def __init__(self, name: str = "camgrab_fwd", open_timeout: float = 5.0,
+                 reopen_after_s: float = 0.5):
+        self.name = name
+        self.reopen_after_s = reopen_after_s
+        self._open(open_timeout)
+        self._last_new = time.monotonic()
+        self._last_seq = -1
+        self._last_reopen = 0.0
+        self.reopens = 0
+
+    def _open(self, open_timeout: float) -> None:
+        name = self.name
         deadline = time.monotonic() + open_timeout
         while True:
             try:
@@ -113,10 +128,39 @@ class ShmFrameReader:
                 raise TimeoutError(f"no camgrab frames in shared memory '{name}'; "
                                    "is camgrab (or tools/fake_camgrab.py) running?")
             time.sleep(0.1)
-        self.name = name
 
-    def read(self) -> Frame | None:
-        """Latest complete frame, or None if no frame has been written yet."""
+    def _maybe_reopen(self) -> None:
+        now = time.monotonic()
+        if now - self._last_new < self.reopen_after_s or now - self._last_reopen < 0.5:
+            return
+        self._last_reopen = now
+        old = self._r
+        try:
+            self._open(open_timeout=0)
+        except TimeoutError:
+            return  # grabber not back yet; keep the old mapping and try again later
+        try:
+            old.close()
+        except Exception:
+            pass
+        self.reopens += 1
+        self._last_seq = -1  # a restarted grabber counts from 0 again
+
+    def read(self, max_age: float | None = None) -> Frame | None:
+        """Latest complete frame, or None if no frame has been written yet.
+        max_age (opt-in): also None if the latest frame is older than this many seconds,
+        so a consumer like the person detector never acts on a frozen picture."""
+        f = self._read_once()
+        if f is not None and f.seq != self._last_seq:
+            self._last_seq, self._last_new = f.seq, time.monotonic()
+        else:
+            self._maybe_reopen()
+            f = self._read_once() if self.reopens else f
+        if f is not None and max_age is not None and time.time() - f.t > max_age:
+            return None
+        return f
+
+    def _read_once(self) -> Frame | None:
         buf = self._r.buf
         for _ in range(50):
             s1 = struct.unpack_from("<Q", buf, _SEQ_OFF)[0]
@@ -134,8 +178,11 @@ class ShmFrameReader:
     def wait_new(self, after_seq: int = -1, timeout: float = 1.0) -> Frame | None:
         """Block until a frame newer than after_seq exists (or timeout)."""
         deadline = time.monotonic() + timeout
+        reopens = self.reopens
         while time.monotonic() < deadline:
             f = self.read()
+            if self.reopens != reopens:  # new grabber: its seq restarted, so accept any frame
+                after_seq, reopens = -1, self.reopens
             if f is not None and f.seq > after_seq:
                 return f
             time.sleep(0.003)

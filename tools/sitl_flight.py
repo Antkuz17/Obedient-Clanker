@@ -120,7 +120,7 @@ async def main(device: str) -> int:
     edge.heartbeat = True
     await asyncio.sleep(1.0)
     d = await edge.run("takeoff", alt=1.0, timeout=40)
-    check("re-takeoff after watchdog landing", d["status"] == P.OK, pos(v))
+    check("re-takeoff after watchdog landing", d["status"] == P.OK, f"{d['status']} {d['reason']} {pos(v)}")
     await asyncio.sleep(1.0)
     print("   freezing the edge event loop for 6 s (simulated hung core)...", flush=True)
     time.sleep(6.0)  # blocks the event loop: no safety_tick, so no GCS heartbeat to the FC

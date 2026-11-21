@@ -54,13 +54,26 @@ EKF_NEEDED = M.EKF_VELOCITY_HORIZ | M.EKF_POS_HORIZ_REL
 STALE_S = 1.0          # EKF / EXTENDED_SYS_STATE older than this = unknown
 FC_LINK_TIMEOUT_S = 3.0
 LAND_RETRY_S = 0.5
+HEARTBEAT_PERIOD_S = 0.5   # 2 Hz: 4 beats inside FS_GCS_TIMEOUT=2 (review2 #10)
 
 
 class MavVehicle(Vehicle):
-    def __init__(self, device: str, baud: int = 115200, speed_xy: float = 0.5):
-        self.device, self.baud, self.speed_xy = device, baud, speed_xy
+    def __init__(self, device: str, baud: int = 115200, speed_xy: float = 0.5,
+                 speed_z: float = 0.3):
+        self.device, self.baud, self.speed_xy, self.speed_z = device, baud, speed_xy, speed_z
+        # GUIDED position targets and takeoff fly at these FC params, not at anything we send
+        # per command, so the edge sets them on every connect and reads them back (review2 #2)
+        # ArduPilot 4.7 renamed these and switched to m/s (WPNAV_SPEED cm/s -> WP_SPD m/s);
+        # SITL 4.7 defaults are WP_SPD=10 m/s, WP_SPD_UP=2.5. Older firmware: the cm/s names.
+        self.limit_param_sets = [
+            {"WP_SPD": speed_xy, "WP_SPD_UP": speed_z, "WP_SPD_DN": speed_z},
+            {"WPNAV_SPEED": speed_xy * 100, "WPNAV_SPEED_UP": speed_z * 100,
+             "WPNAV_SPEED_DN": speed_z * 100},
+        ]
+        self.limit_params: dict[str, float] = {}  # the set the FC confirmed
+        self.params: dict[str, float] = {}
         self.m = None
-        self.s = VehicleState(pos_ok=False)
+        self.s = VehicleState(pos_ok=False, limits_ok=False)
         self._lock = threading.Lock()      # state
         self._tx = threading.Lock()        # all MAVLink sends (A11)
         self._stop = threading.Event()
@@ -104,6 +117,40 @@ class MavVehicle(Vehicle):
         for msg_id, hz in STREAMS.items():
             self._cmd(M.MAV_CMD_SET_MESSAGE_INTERVAL, msg_id, int(1e6 / hz))
         self.set_origin()
+        self._apply_limits()
+
+    def _apply_limits(self) -> None:
+        """Set the FC speed limits and confirm them from PARAM_VALUE echoes.
+
+        A re-setup after a telemetry gap keeps limits_ok if they were already confirmed:
+        param_set is persisted by the FC, and dropping it here made a takeoff that landed in the
+        2 s re-confirm window get rejected (intermittent SITL re-takeoff failure)."""
+        if not self.limit_params:
+            with self._lock:
+                self.s.limits_ok = False
+        def confirmed(ps: dict) -> bool:
+            return all(k in self.params and abs(self.params[k] - v) <= 0.01 * max(1.0, abs(v))
+                       for k, v in ps.items())
+        for attempt in range(3):
+            for ps in self.limit_param_sets:  # unknown names are ignored (no echo) by the FC
+                for name, val in ps.items():
+                    self.params.pop(name, None)
+                    self._send(self.m.mav.param_set_send, self.m.target_system,
+                               self.m.target_component, name.encode(), float(val),
+                               M.MAV_PARAM_TYPE_REAL32)
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                for ps in self.limit_param_sets:
+                    if confirmed(ps):
+                        self.limit_params = dict(ps)
+                        with self._lock:
+                            self.s.limits_ok = True
+                        log.info("FC speed limits confirmed: %s", ps)
+                        return
+                time.sleep(0.05)
+        want = " or ".join(str(ps) for ps in self.limit_param_sets)
+        self.last_error = f"FC did not confirm speed limits ({want})"
+        log.error(self.last_error)
 
     def set_origin(self) -> None:
         self._send(self.m.mav.set_gps_global_origin_send, self.m.target_system, ORIGIN_LAT,
@@ -122,7 +169,7 @@ class MavVehicle(Vehicle):
     def tick(self, now: float) -> None:
         if self.m is None:
             return
-        if now - self._last_hb_sent >= 1.0:  # A3: heartbeat only while the safety loop runs
+        if now - self._last_hb_sent >= HEARTBEAT_PERIOD_S:  # A3: only while the safety loop runs
             self._last_hb_sent = now
             try:
                 self._send(self.m.mav.heartbeat_send, M.MAV_TYPE_GCS, M.MAV_AUTOPILOT_INVALID,
@@ -141,9 +188,10 @@ class MavVehicle(Vehicle):
             log.warning("FC telemetry silent; re-sending stream rates and origin")
             threading.Thread(target=self._setup, daemon=True, name="mav-setup").start()
         if self._land_req:  # A2: keep asking for LAND until the FC is in it (or disarmed)
-            if not armed:
+            if not armed or mode not in ("GUIDED", "LAND"):
+                # disarmed, or the pilot chose another mode: the pilot always wins (review2 #1)
                 self._land_req = False
-            elif mode != "LAND" and now - self._last_land_send >= LAND_RETRY_S:
+            elif mode == "GUIDED" and now - self._last_land_send >= LAND_RETRY_S:
                 self._last_land_send = now
                 try:
                     self._set_mode(COPTER_LAND)
@@ -209,6 +257,8 @@ class MavVehicle(Vehicle):
                 self._ess_t = now
                 s.landed = msg.landed_state in (M.MAV_LANDED_STATE_ON_GROUND,
                                                 M.MAV_LANDED_STATE_UNDEFINED)
+            elif t == "PARAM_VALUE":
+                self.params[msg.param_id] = msg.param_value
             elif t == "EKF_STATUS_REPORT":
                 self._ekf_t, self._ekf_flags = now, msg.flags
             elif t == "STATUSTEXT":
@@ -230,6 +280,10 @@ class MavVehicle(Vehicle):
         # flow quality is what *we* last forwarded; stale flow = 0
         s.flow_quality = self._last_flow_q if now - self._last_flow_t < 0.5 else 0
         return s
+
+    def pos_diag(self) -> str:
+        """Why pos_ok is false, for the failsafe event: report age and EKF flags."""
+        return f"EKF report age {time.monotonic() - self._ekf_t:.1f} s, flags 0x{self._ekf_flags:x}"
 
     # --- primitives --------------------------------------------------------------------------
     def takeoff(self, alt: float) -> None:

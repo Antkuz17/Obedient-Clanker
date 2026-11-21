@@ -6,7 +6,9 @@
         print(edge.telemetry["n"])
 
 The heartbeat and the socket reader run on their **own threads** (review A10), so a slow STT or
-LLM call that blocks the caller's event loop can't make the drone hover or land. Received
+LLM call that blocks the caller's event loop can't make the drone hover or land. But the
+heartbeat only beats while the event loop has checked in within `liveness_s` (review2 #7): a
+planner that is truly hung stops the heartbeat, and the edge's watchdog takes over. Received
 messages are handed to the event loop with call_soon_threadsafe.
 """
 from __future__ import annotations
@@ -27,7 +29,7 @@ class CommandRejected(Exception):
 
 class EdgeClient:
     def __init__(self, host: str = "127.0.0.1", port: int = P.EDGE_PORT,
-                 on_event: Callable[[dict], None] | None = None):
+                 on_event: Callable[[dict], None] | None = None, liveness_s: float = 3.0):
         self.host, self.port = host, port
         self.on_event = on_event
         self.telemetry: dict = {}
@@ -36,6 +38,8 @@ class EdgeClient:
         self._acks: dict[str, asyncio.Future] = {}
         self._dones: dict[str, asyncio.Future] = {}
         self.heartbeat = True  # set False to simulate a dead station
+        self.liveness_s = liveness_s
+        self._loop_alive = time.monotonic()
         self.connected = False
         self._sock: socket.socket | None = None
         self._wlock = threading.Lock()
@@ -49,12 +53,22 @@ class EdgeClient:
         self._sock.settimeout(None)
         self._sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.connected = True
+        self._loop_alive = time.monotonic()
+        self._pet_task = asyncio.create_task(self._pet())
         threading.Thread(target=self._rx, daemon=True, name="edge-rx").start()
         threading.Thread(target=self._hb, daemon=True, name="edge-hb").start()
         return self
 
+    async def _pet(self) -> None:
+        """Proves the event loop (the planner) is alive; the heartbeat thread checks it."""
+        while not self._stop.is_set():
+            self._loop_alive = time.monotonic()
+            await asyncio.sleep(0.1)
+
     async def close(self) -> None:
         self._stop.set()
+        if getattr(self, "_pet_task", None):
+            self._pet_task.cancel()
         self.connected = False
         if self._sock:
             try:
@@ -76,7 +90,7 @@ class EdgeClient:
     def _hb(self) -> None:
         period = 1.0 / P.HEARTBEAT_HZ
         while not self._stop.is_set():
-            if self.heartbeat:
+            if self.heartbeat and time.monotonic() - self._loop_alive < self.liveness_s:
                 try:
                     self._send(P.heartbeat(time.time()))
                 except OSError:
@@ -114,12 +128,17 @@ class EdgeClient:
         """Send a command and wait for its ack. Returns (id, ack). Doesn't wait for done."""
         cid = f"c{next(self._ids)}"
         loop = asyncio.get_running_loop()
-        # Keep a local reference: _dispatch pops the ack future, and the ack can arrive before
-        # we get to wait on it (fast link), which used to raise KeyError here.
-        ack_fut = self._acks[cid] = loop.create_future()
+        # hold the future locally: the ack can arrive (and _dispatch pop it) while the send is
+        # still in the executor, so a later self._acks[cid] lookup raised KeyError
+        ack_f = self._acks[cid] = loop.create_future()
         self._dones[cid] = loop.create_future()
-        await loop.run_in_executor(None, self._send, P.cmd(cid, op, **args))
-        ack = await asyncio.wait_for(ack_fut, 5.0)
+        try:
+            await loop.run_in_executor(None, self._send, P.cmd(cid, op, **args))
+            ack = await asyncio.wait_for(ack_f, 5.0)
+        except BaseException:
+            self._acks.pop(cid, None)
+            self._dones.pop(cid, None)
+            raise
         if not ack["ok"]:
             self._dones.pop(cid, None)
         return cid, ack

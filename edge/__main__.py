@@ -38,7 +38,7 @@ async def main(a) -> None:
         vehicle = SimVehicle(cfg, speedup=a.speedup)
     else:
         from .mav import MavVehicle
-        vehicle = MavVehicle(a.mav, baud=a.baud, speed_xy=cfg.speed_xy)
+        vehicle = MavVehicle(a.mav, baud=a.baud, speed_xy=cfg.speed_xy, speed_z=cfg.speed_z)
 
     srv = EdgeServer(vehicle, cfg, port=a.port, perception_port=a.perception_port,
                      flow_port=a.flow_port, log_path=Path(a.log) if a.log else None,
@@ -73,6 +73,8 @@ if __name__ == "__main__":
     ap.add_argument("--station-ip", action="append",
                     help="only accept station connections from this IP (repeatable). "
                          "Always set this on the real drone (review A9)")
+    ap.add_argument("--allow-any-station", action="store_true",
+                    help="bench only: accept a station from any IP")
     ap.add_argument("--perception-port", type=int, default=7001, help="UDP from vision proc")
     ap.add_argument("--flow-port", type=int, default=7002, help="UDP from flow proc")
     ap.add_argument("--camera", default=None,
@@ -84,6 +86,9 @@ if __name__ == "__main__":
     ap.add_argument("--rt-prio", type=int, default=0, help="SCHED_FIFO priority (0 = off)")
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
+    if a.mav and not a.sitl and not a.station_ip and not a.allow_any_station:
+        ap.error("on the real drone, pass --station-ip <laptop ip> so nobody else on the "
+                 "Wi-Fi can fly it (review2 #13), or --allow-any-station for a bench test")
     if a.rt_prio:
         set_realtime(a.rt_prio)
     try:

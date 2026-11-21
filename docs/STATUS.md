@@ -95,7 +95,15 @@ Before any real flight:
 ## Second review (2026-11-21)
 
 [review2.md](review2.md): a fresh-eyes review of the design and the code. 13 findings, 8 reproduced
-with scripts in `tools/review/`; none fixed yet. Partner: cross-check the table at the bottom.
+with scripts in `tools/review/`. **Fixed (A, 2026-11-21): #1-#8, #10-#13**; #14 fixed by B.
+Verified: 45 tests; Anton's repros rerun unchanged (`sim_exp`, `sitl_exp`, `tools/review/hung_planner.py`
+with the edge in its own process); `tools.sitl_flight` ALL PASS 8 of 9 runs.
+- Speed limits: set on every connect as `WP_SPD*` (ArduPilot 4.7, m/s) or `WPNAV_SPEED*` (older,
+  cm/s), read back; takeoff is refused until confirmed. A re-setup after a telemetry gap keeps them.
+- **Open: intermittent SITL failure** (1 of 9): re-takeoff after the watchdog landing aborted with
+  "position estimate lost". The failsafe now logs the EKF report age and flags; next failure tells
+  us stale telemetry (our side) vs bad EKF flags (may be the same root as #9).
+- **Open: #9** flow-only takeoff on the predicted-position flag; check with `tools.sitl_flowonly`.
 
 ## Open questions / known gaps
 

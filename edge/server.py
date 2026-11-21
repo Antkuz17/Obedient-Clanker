@@ -56,6 +56,7 @@ class EdgeServer:
         self._perception_t = 0.0
         self._palm_latched = False
         self._pos_bad_since: float | None = None
+        self._batt_low_since: float | None = None
         self._server: asyncio.base_events.Server | None = None
         self._tasks: list[asyncio.Task] = []
         self.loop_stats: list[float] = []  # control-loop period samples (s), for the jitter graph
@@ -167,6 +168,19 @@ class EdgeServer:
     def safety_tick(self, now: float) -> None:
         self.v.tick(now)  # FC heartbeat + LAND retries live in this loop (review A3, A2)
         ex, s = self.exec, self.v.state()
+        # pilot took another mode in flight -> stand down, forget targets (review2 #5)
+        in_air = s.armed and not s.landed
+        ours = s.mode == "GUIDED" or (s.mode == "LAND" and ex.state in ("LANDING", "FAILSAFE"))
+        if in_air and not ours and s.mode != "UNKNOWN":
+            if ex.pilot_mode != s.mode:
+                ex.on_pilot_control(s.mode)
+        elif ex.pilot_mode is not None and (s.mode == "GUIDED" or not s.armed):
+            ex.pilot_mode = None
+        # re-check the running move (review2 #4, #6)
+        if (why := ex.revalidate(s, self.safety_cfg)) is not None:
+            ex.stop(why)
+            kind = "person_close" if "person" in why else "safety_reject"
+            self._emit(P.event(kind, f"{why}: stopped and holding"))
         # Only act while we're in control. If the pilot switched to AltHold/Land/Stabilize,
         # the edge must not override them; ArduPilot's own failsafes still apply.
         flying = ex.airborne and s.mode in ("GUIDED", "LAND")
@@ -187,12 +201,19 @@ class EdgeServer:
             if self._pos_bad_since is None:
                 self._pos_bad_since = now
             elif now - self._pos_bad_since > 1.0:
-                ex.trigger_failsafe("land", "position", "position estimate lost: landing")
+                diag = getattr(self.v, "pos_diag", None)
+                ex.trigger_failsafe("land", "position", "position estimate lost: landing"
+                                    + (f" ({diag()})" if diag else ""))
         else:
             self._pos_bad_since = None
-        # battery
+        # battery: 2 s below the threshold, so throttle sag doesn't end a flight (review2 #12)
         if flying and 0 < s.battery_v < self.safety_cfg.batt_land_v:
-            ex.trigger_failsafe("land", "battery", f"battery {s.battery_v:.2f} V: landing")
+            if self._batt_low_since is None:
+                self._batt_low_since = now
+            elif now - self._batt_low_since > 2.0:
+                ex.trigger_failsafe("land", "battery", f"battery {s.battery_v:.2f} V: landing")
+        else:
+            self._batt_low_since = None
         # stale perception: forget the person and mark the detector dead
         if now - self._perception_t > PERCEPTION_STALE_S:
             ex.perception.person_m = None
@@ -206,12 +227,10 @@ class EdgeServer:
         ex.perception.detector_alive = True
         pm = msg.get("person_m")
         ex.perception.person_m = float(pm) if isinstance(pm, (int, float)) else None
-        if (ex.perception.person_m is not None
-                and ex.perception.person_m < self.safety_cfg.person_close_m
-                and ex.state == "BUSY"):
-            ex.stop(f"person {ex.perception.person_m:.1f} m ahead")
-            self._emit(P.event("person_close", f"person {ex.perception.person_m:.1f} m ahead: "
-                                               "stopped"))
+        # react now rather than on the next tick: every ms counts for the stop latency demo
+        if (why := ex.revalidate(self.v.state(), self.safety_cfg)) is not None:
+            ex.stop(why)
+            self._emit(P.event("person_close", f"{why}: stopped and holding"))
         palm = bool(msg.get("palm"))
         if palm and not self._palm_latched and ex.airborne:
             ex.stop("palm stop")

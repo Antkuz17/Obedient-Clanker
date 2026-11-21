@@ -150,6 +150,17 @@ async def test_takeoff_move_yaw_return_land(rig):
     assert not sim.s.armed
 
 
+async def test_ack_arriving_before_send_returns(rig):
+    """The ack can be dispatched while send() is still in the executor (SITL KeyError 'c4')."""
+    srv, sim, edge = rig
+    real = edge._send
+    def slow_send(msg):
+        real(msg)
+        time.sleep(0.2)  # the loop is free meanwhile: the ack arrives and _dispatch pops it
+    edge._send = slow_send
+    assert (await edge.run("takeoff", alt=1.0))["status"] == P.OK
+
+
 async def test_rejection_is_reported_with_reason(rig):
     srv, sim, edge = rig
     await edge.run("takeoff", alt=1.0)
@@ -212,12 +223,22 @@ async def test_palm_and_person_stop(rig):
     srv.on_perception({"person_m": None, "palm": True})
     assert (await edge.wait_done(c1))["status"] == P.ABORTED
     srv.on_perception({"person_m": None, "palm": False})
-    c2, _ = await edge.send("move_body", fwd=-1.0)
+    # a person walks in during a forward move -> it stops
+    c2, _ = await edge.send("move_body", fwd=1.0)
     await asyncio.sleep(0.1)
     srv.on_perception({"person_m": 0.5, "palm": False})
     assert (await edge.wait_done(c2))["status"] == P.ABORTED
     with pytest.raises(CommandRejected, match="person"):
         await edge.run("move_body", fwd=0.5)
+    # ...but backing away from them is allowed and is NOT aborted (review2 #6)
+    n0 = sim.s.n
+    c3, ack = await edge.send("move_body", fwd=-1.0)
+    assert ack["ok"]
+    for _ in range(3):
+        srv.on_perception({"person_m": 0.5, "palm": False})
+        await asyncio.sleep(0.1)
+    assert (await edge.wait_done(c3))["status"] == P.OK
+    assert sim.s.n == pytest.approx(n0 - 1.0, abs=0.3)
     await asyncio.sleep(0.1)
     kinds = {e["kind"] for e in edge.events}
     assert {"palm_stop", "person_close"} <= kinds
@@ -330,6 +351,39 @@ async def test_client_heartbeat_survives_a_blocked_event_loop():
     assert max(b - a for a, b in zip(during, during[1:])) < 0.5
 
 
+async def test_hung_planner_stops_the_heartbeat():
+    """review2 #7: a 1 s block is fine, but a planner hung for good must stop heartbeating."""
+    import socket as so
+    import threading
+    srv = so.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    beats = []
+
+    def accept():
+        c, _ = srv.accept()
+        for line in c.makefile("rb"):
+            if b"heartbeat" in line:
+                beats.append(time.monotonic())
+    threading.Thread(target=accept, daemon=True).start()
+    edge = await EdgeClient("127.0.0.1", srv.getsockname()[1], liveness_s=1.0).connect()
+    await asyncio.sleep(0.3)
+    t0 = time.monotonic()
+    time.sleep(3.0)                                   # hung for 3 s
+    late = [b for b in beats if b > t0 + 1.5]
+    await edge.close()
+    srv.close()
+    assert not late                                   # beats stopped once liveness expired
+
+
+def test_edge_refuses_real_drone_without_station_ip():
+    import subprocess
+    import sys
+    r = subprocess.run([sys.executable, "-m", "edge", "--mav", "udpin:127.0.0.1:14599"],
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode != 0 and "--station-ip" in r.stderr
+
+
 async def test_station_allowlist_refuses_other_ips():
     cfg = SafetyConfig()
     srv = EdgeServer(SimVehicle(cfg), cfg, host="127.0.0.1", port=0, perception_port=None,
@@ -340,6 +394,86 @@ async def test_station_allowlist_refuses_other_ips():
     assert not edge.connected and srv._writer is None
     await edge.close()
     await srv.close()
+
+
+async def test_dead_detector_stops_a_running_forward_move():
+    """review2 #4: the detector dying mid-move must stop a forward move, not just new ones."""
+    cfg = SafetyConfig(require_person_detector=True)
+    sim = SimVehicle(cfg, speedup=1.0)  # real time: the 1 s stale window must elapse mid-move
+    srv = EdgeServer(sim, cfg, host="127.0.0.1", port=0, perception_port=None, flow_port=None)
+    await srv.start()
+    edge = await EdgeClient("127.0.0.1", srv.port).connect()
+    alive = True
+
+    async def vision():
+        while alive:
+            srv.on_perception({"person_m": None, "palm": False})
+            await asyncio.sleep(0.1)
+    t = asyncio.create_task(vision())
+    await edge.run("takeoff", alt=1.0)
+    cid, ack = await edge.send("move_body", fwd=2.5)
+    assert ack["ok"]
+    await asyncio.sleep(0.3)
+    alive = False
+    await t
+    d = await edge.wait_done(cid, 10)
+    assert d["status"] == P.ABORTED and "detector" in d["reason"]
+    assert sim.s.n < 1.5
+    await edge.close()
+    await srv.close()
+
+
+async def test_flow_loss_stops_a_running_move(rig):
+    srv, sim, edge = rig
+    await edge.run("takeoff", alt=1.0)
+    cid, _ = await edge.send("move_body", fwd=-2.5)
+    await asyncio.sleep(0.2)
+    sim.s.flow_quality = 0
+    d = await edge.wait_done(cid, 10)
+    assert d["status"] == P.ABORTED and "flow" in d["reason"]
+
+
+async def test_pilot_takeover_resets_target_and_cancels(rig):
+    """review2 #5: after the pilot flies it elsewhere and hands back, relative moves start
+    from where the drone actually is."""
+    srv, sim, edge = rig
+    await edge.run("takeoff", alt=1.0)
+    await edge.run("move_body", fwd=0.5)
+    sim.s.mode = "ALT_HOLD"
+    sim._target = None
+    sim.s.n, sim.s.e = -1.5, 1.0
+    await asyncio.sleep(0.2)
+    assert srv.exec.target is None and srv.exec.pilot_mode == "ALT_HOLD"
+    with pytest.raises(CommandRejected, match="pilot has control"):
+        await edge.run("move_body", fwd=0.5)
+    sim.s.mode = "GUIDED"
+    await asyncio.sleep(0.1)
+    await edge.run("move_body", fwd=0.5)
+    await asyncio.sleep(0.3)
+    assert (sim.s.n, sim.s.e) == pytest.approx((-1.0, 1.0), abs=0.05)
+
+
+async def test_stop_while_armed_on_ground_disarms(rig):
+    """review2 #3: 'stop' right after arming must not let the takeoff continue."""
+    srv, sim, edge = rig
+    sim.takeoff = lambda alt: setattr(sim.s, "armed", True)   # armed, not yet climbing
+    sim.s.landed = True
+    c1, _ = await edge.send("takeoff", alt=1.0)
+    await asyncio.sleep(0.1)
+    c2, ack = await edge.send("stop")
+    assert ack["ok"]
+    d = await edge.wait_done(c2, 10)
+    assert d["status"] == P.OK and "disarmed" in d["reason"] and not sim.s.armed
+
+
+async def test_battery_sag_is_debounced(rig):
+    srv, sim, edge = rig
+    await edge.run("takeoff", alt=1.0)
+    sim.s.battery_v = 10.0
+    await asyncio.sleep(0.5)
+    sim.s.battery_v = 11.5                            # throttle sag recovered
+    await asyncio.sleep(2.5)
+    assert sim.s.armed and srv.exec.failsafe is None  # review2 #12
 
 
 async def test_bad_message_gets_error_ack(rig):
