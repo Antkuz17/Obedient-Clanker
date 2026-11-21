@@ -3,178 +3,262 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0E1012">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%23E0352B'/%3E%3C/svg%3E">
+<meta name="theme-color" content="#0E0E14">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='12' fill='%23EA4B71'/%3E%3C/svg%3E">
 <title>Hope</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400..800&family=Fragment+Mono&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300..600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 /* ---------- tokens ---------- */
 :root{
-  --bg:#0E1012; --cloud:#171A1E; --raise:#1B1E21;
-  --text:#F1F2EF; --t2:#A9AEB3; --t3:#868C92; --t4:#4A5056;
-  --line:#262A2E; --line2:#33383D;
-  --ok:#7FD3A8; --no:#F5B53D; --stop:#E0352B; --crit:#E0594A;
-  --sans:'Schibsted Grotesk',system-ui,sans-serif; --mono:'Fragment Mono',ui-monospace,monospace;
+  --bg:#0E0E14; --panel:#15151C; --node:#17171F; --raise:#1C1C25; --raise2:#22222E;
+  --line:#2E2E3E; --div:#262632; --btn:#3A3A4A;
+  --text:#EDEDF2; --soft:#C4C4D0; --t2:#9A9AAA; --t3:#8A8A98; --t4:#6A6A78;
+  --pink:#EA4B71; --amber:#F2A73B; --green:#3DC99A; --rose:#C02A52;
+  --sans:'Geist',system-ui,sans-serif; --mono:'Geist Mono',ui-monospace,monospace;
 }
 *{box-sizing:border-box}
-html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:var(--sans);-webkit-font-smoothing:antialiased}
-.big,td.r,#stopMs{font-variant-numeric:tabular-nums}
+html,body{margin:0}
+body{min-height:100dvh;color:var(--text);font-family:var(--sans);font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;
+  background-color:var(--bg);
+  background-image:radial-gradient(rgba(255,255,255,.07) 1px,transparent 1px),radial-gradient(60% 50% at 18% 0%,rgba(234,75,113,.10),transparent 70%);
+  background-size:22px 22px,100% 100%;background-attachment:fixed}
 button,input{font:inherit;color:inherit}
 button{cursor:pointer}
-a{color:var(--text)}
 [hidden]{display:none!important}
 .mono{font-family:var(--mono)}
-.label{font-size:12px;color:var(--t3)}
 .muted{color:var(--t2)}
 
 /* ---------- app grid: phone first ---------- */
-.app{min-height:100dvh;display:grid;grid-template-columns:1fr;
-  grid-template-areas:"head" "cam" "trace" "dock";grid-template-rows:auto auto 1fr auto}
-header{grid-area:head;display:flex;align-items:center;gap:4px;padding:0 8px 0 20px;min-height:52px}
-.brand{font-size:18.75px;font-weight:750;letter-spacing:-.02em;margin-right:auto}
-.nav button{height:44px;padding:0 10px;border:0;background:none;color:var(--t2);font-size:15px}
-.nav button[aria-current="page"]{color:var(--text);text-decoration:underline;text-underline-offset:7px;text-decoration-thickness:1.5px}
-.who{display:none;font-size:15px;color:var(--t2);background:none;border:0;height:44px;padding:0 10px}
-.voice{display:none;height:36px;padding:0 14px;border-radius:18px;border:1px solid var(--line2);background:none;color:var(--t2);font-size:13px}
+.app{min-height:100dvh;padding:0 12px;display:grid;grid-template-columns:minmax(0,1fr);
+  grid-template-areas:"head" "cam" "pipe" "dock";grid-template-rows:auto auto 1fr auto;row-gap:12px}
+header{grid-area:head;display:flex;align-items:center;gap:9px;min-height:54px;padding-left:4px}
+.brand{display:flex;align-items:center;gap:10px;font-size:17px;font-weight:600;letter-spacing:-.02em;margin-right:auto}
+.brand svg{width:22px;height:22px}
+.nav{display:flex;gap:4px}
+.nav button{height:44px;padding:0 10px;border:0;border-radius:8px;background:none;color:var(--t2);font-size:13.5px}
+.nav button[aria-current="page"]{display:none}
+.conn,.who,.voice{display:none}
+.conn{align-items:center;gap:8px;font-size:13px;color:var(--t2)}
+.conn i{width:7px;height:7px;border-radius:50%;background:var(--t4)}
+.conn.on i{background:var(--green)}
+.who{font-size:13px;color:var(--t2)} .who b{font-weight:400;color:var(--text)}
+.voice{height:34px;padding:0 12px;border-radius:8px;border:1px solid var(--line);background:#16161E;color:var(--soft);font-size:12.5px;align-items:center}
+.voice[aria-pressed="false"]{color:var(--t3)}
 
 /* ---------- camera ---------- */
-.cam{grid-area:cam;position:relative;overflow:hidden;background:#1B1E21;aspect-ratio:4/3;max-height:42dvh;width:100%}
+.cam{grid-area:cam;position:relative;height:300px;border-radius:14px;overflow:hidden;border:1px solid var(--line);background:#1A1A22}
 .cam img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
-.cam .empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--t3);font-size:15px}
-.cam .live{position:absolute;left:20px;top:14px;display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;letter-spacing:.04em;color:#E4E6E3}
-.cam .live i{width:6px;height:6px;border-radius:50%;background:var(--stop);animation:blink 2s ease-in-out infinite}
-.cam .live.off i{background:var(--t4);animation:none}
-.cam .foot{position:absolute;left:0;right:0;bottom:0;padding:34px 20px 12px;background:linear-gradient(rgba(14,16,18,0),rgba(14,16,18,.86));display:flex;align-items:flex-end;gap:12px}
-.cam .state{font-size:15px;font-weight:600}
-.cam .alt{font-size:15px;color:#C9CDD1;margin-left:auto}
-.latency{font-size:12px;color:var(--t3)}
-.cam svg.fence{width:40px;height:40px;flex-shrink:0}
-.cam::after{content:"";position:absolute;inset:0;pointer-events:none;border-radius:inherit;transition:box-shadow .2s}
-.cam.refused::after{box-shadow:inset 0 0 0 2px var(--no)}
-.banner{position:absolute;left:12px;right:12px;top:40px;padding:10px 14px;border-radius:12px;font-size:14px;line-height:1.35}
-.banner b{display:block;font-size:15px;font-weight:650}
-.banner.crit{background:rgba(224,53,43,.88);border:1px solid #F08A80}
-.banner.warn{background:rgba(23,26,30,.9);border:1px solid var(--line2)}
-.banner.qnx{background:rgba(40,30,10,.9);border:1px solid rgba(245,181,61,.6);color:var(--no)}
+.cam .empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--t3);font-size:14px}
+.cam .shade{position:absolute;inset:0;pointer-events:none;background:linear-gradient(rgba(14,14,20,.55),rgba(14,14,20,0) 22%,rgba(14,14,20,0) 66%,rgba(14,14,20,.82))}
+.ceiling{position:absolute;left:0;right:0;top:30%;border-top:1px dashed var(--amber)}
+.ceiling span{position:absolute;right:14px;bottom:6px;font-size:11.5px;color:var(--amber)}
+.reticle{position:absolute;left:50%;top:54%;width:0;height:0;pointer-events:none}
+.reticle i{position:absolute;display:block;background:rgba(237,237,242,.7)}
+.reticle .o{left:-11px;top:-11px;width:22px;height:22px;border-radius:50%;background:none;border:1px solid rgba(237,237,242,.8)}
+.reticle .l{left:-92px;top:0;width:72px;height:1px} .reticle .r{left:20px;top:0;width:72px;height:1px}
+.live{position:absolute;left:14px;top:12px;display:flex;align-items:center;gap:8px;font-size:12px;color:#D0D0DA}
+.live i{width:6px;height:6px;border-radius:50%;background:var(--pink);animation:blink 2s ease-in-out infinite}
+.live.off i{background:var(--t4);animation:none}
+.live .full{display:none}
+.foot{position:absolute;left:14px;right:14px;bottom:10px;display:flex;align-items:flex-end;gap:10px}
+.state{font-size:22px;letter-spacing:-.02em;line-height:1.1}
+.alt{font-size:14px;color:#B8B8C4;padding-bottom:2px}
+.foot .sp{flex:1}
+.track{display:flex;align-items:center;gap:10px;font-size:12px;color:#B8B8C4}
+.track svg{width:32px;height:32px;flex-shrink:0}
+.track span{display:none}
+.banner{position:absolute;left:12px;right:12px;top:38px;display:flex;align-items:baseline;gap:10px;padding:10px 14px;border-radius:10px;
+  background:rgba(21,21,28,.92);border:1px solid var(--btn);font-size:14px;line-height:1.35}
+.banner i{width:8px;height:8px;border-radius:50%;flex-shrink:0;align-self:center;background:var(--amber)}
+.banner .d{color:var(--t2)}
+.banner.crit{background:rgba(30,16,22,.94);border-color:rgba(192,42,82,.6)}
+.banner.crit i{background:var(--rose)}
+.banner.crit .d{color:#C9A9A4}
 
-/* ---------- the trace: cloud -> drone ---------- */
-.trace{grid-area:trace;display:flex;flex-direction:column;min-height:0}
-.zone{padding:14px 20px 16px;display:flex;flex-direction:column;gap:12px}
-.zone .zhead{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
-.zone .ztitle{font-size:13px;font-weight:650;color:#C9CDD1}
-.cloudz{background:var(--cloud);position:relative}
-.cloudz::after{content:"";position:absolute;left:20px;bottom:-14px;border:14px solid transparent;border-top-color:var(--cloud);border-bottom:0}
-.dronez{padding-top:24px}
-.heard{font-size:23.4px;font-weight:500;letter-spacing:-.015em;line-height:1.2;min-height:28px}
-.heard.empty{color:var(--t4)}
-.plan{font-family:var(--mono);font-size:14px;color:#D9DCD8;line-height:1.6}
-.plan .bad{color:var(--no)}
-.plan .sep{color:var(--t4);padding:0 6px}
-.reply{font-size:15px;color:var(--t2);line-height:1.4}
-.verdict{font-size:45.8px;font-weight:750;letter-spacing:-.035em;line-height:1}
-.verdict.approved{color:var(--ok)} .verdict.refused{color:var(--no)} .verdict.waiting,.verdict.checking,.verdict.sent{color:var(--t4);font-size:29px;font-weight:600;letter-spacing:-.02em}
-.reason{font-size:17px;line-height:1.35}
-.result{font-size:15px;color:var(--t2);line-height:1.4;display:flex;gap:12px;align-items:center}
-.result img{width:56px;height:42px;object-fit:cover;border-radius:3px;flex-shrink:0}
-.arrive{animation:arrive .24s ease-out both}
-.lv{display:inline-flex;align-items:center;gap:3px;height:22px;color:var(--text);margin-right:10px;vertical-align:-3px}
-.lv span{width:3px;border-radius:1.5px;background:currentColor;height:calc(4px + var(--lvl,0) * 18px);transition:height .06s linear}
-.lv span:nth-child(2),.lv span:nth-child(4){height:calc(4px + var(--lvl,0) * 12px)}
-.dots span{display:inline-block;width:5px;height:5px;border-radius:50%;background:#C9CDD1;margin-right:4px;animation:blink 1.2s ease-in-out infinite}
-.dots span:nth-child(2){animation-delay:.2s}.dots span:nth-child(3){animation-delay:.4s}
-.typebox{display:flex;gap:8px}
-.typebox input{flex:1;min-width:0;height:44px;padding:0 14px;border-radius:22px;border:1px solid var(--line2);background:transparent;font-size:15px}
-.typebox button{height:44px;padding:0 16px;border-radius:22px;border:1px solid var(--line2);background:none;font-size:15px;font-weight:600}
-.typetoggle{align-self:flex-start;border:0;background:none;color:var(--t3);font-size:13px;padding:6px 0;text-decoration:underline;text-underline-offset:4px}
+/* ---------- command pipeline ---------- */
+.pipe{grid-area:pipe;display:flex;flex-direction:column}
+.node{min-width:0;border-radius:12px;border:1px solid var(--line);background:var(--node);padding:11px 12px;display:flex;flex-direction:column;gap:8px}
+.nh{display:flex;align-items:center;gap:10px}
+.ic{width:28px;height:28px;flex-shrink:0;border-radius:8px;background:var(--raise2);color:var(--text);display:flex;align-items:center;justify-content:center}
+.ic svg{width:15px;height:15px}
+.nt{display:flex;flex-direction:column;min-width:0}
+.nt b{font-size:13px;font-weight:500}
+.nt small{font-size:11.5px;color:var(--t3)}
+.said{font-size:16px;line-height:1.3;overflow-wrap:anywhere}
+.said.empty{color:var(--t3);font-size:14px}
+.n-plan .ic{background:rgba(234,75,113,.16);color:var(--pink)}
+.steps{display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:12.5px;color:var(--soft);overflow-wrap:anywhere}
+.steps.has-bad span{color:var(--t2)}
+.steps.has-bad span.bad{color:var(--text);text-decoration:line-through;text-decoration-color:var(--amber);text-decoration-thickness:1.5px}
+.steps .idle{font-family:var(--sans);font-size:13px;color:var(--t3)}
+.steps .thinking{font-family:var(--sans);font-size:13px;color:var(--t2);display:flex;align-items:center}
+.reply{font-size:13px;color:var(--soft);line-height:1.4}
+.latency{font-family:var(--mono);font-size:11px;color:var(--t4)}
+.n-qnx .ic{color:var(--t2)}
+.qv{font-size:17px;color:var(--t2);line-height:1.15}
+.qr{font-size:12.5px;color:var(--soft);line-height:1.4;overflow-wrap:anywhere}
+.n-qnx[data-state="refused"]{border:1.5px solid var(--amber);background:#1D1A16;animation:ring 2.4s ease-out infinite}
+.n-qnx[data-state="refused"] .ic{background:rgba(242,167,59,.16);color:var(--amber)}
+.n-qnx[data-state="refused"] .qv{color:var(--amber)}
+.n-qnx[data-state="approved"]{border:1.5px solid var(--green);background:#141C19}
+.n-qnx[data-state="approved"] .ic{background:rgba(61,201,154,.16);color:var(--green)}
+.n-qnx[data-state="approved"] .qv{color:var(--green)}
+.n-qnx[data-state="checking"] .qv,.n-qnx[data-state="approved"] .qv,.n-qnx[data-state="refused"] .qv{font-size:24px;letter-spacing:-.02em}
+.mres{font-size:14px;line-height:1.35;display:flex;gap:10px;align-items:center;color:var(--soft)}
+.mres img{width:56px;height:42px;object-fit:cover;border-radius:6px;flex-shrink:0;background:var(--raise)}
+.n-motors[data-state="held"]{border-style:dashed;border-color:var(--btn);background:transparent}
+.n-motors[data-state="held"] .ic{background:none;border:1px solid var(--line);color:var(--t3)}
+.n-motors[data-state="held"] .nt b,.n-motors[data-state="held"] .mres{color:var(--t3)}
+.n-motors[data-state="idle"] .mres{color:var(--t3)}
 
-/* ---------- history (laptop) ---------- */
-.hist{grid-area:hist;display:none;flex-direction:column;min-height:0;overflow:auto}
-.hist h2{margin:0 0 6px;font-size:15px;font-weight:650;color:#C9CDD1}
-.hist .row{padding:14px 0;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:3px}
-.hist .row .t{font-size:17px}
-.hist .row .m{font-size:13px;color:var(--t3)}
-.ok{color:var(--ok)} .no{color:var(--no)}
+/* wires: dashed, flowing pink while a command passes through */
+.wire{position:relative;flex-shrink:0;width:2px;height:14px;margin-left:25px;
+  background:repeating-linear-gradient(180deg,var(--btn) 0 3px,transparent 3px 7px)}
+.wire[data-state="flow"]{background:repeating-linear-gradient(180deg,var(--pink) 0 6px,transparent 6px 12px);animation:flowv .9s linear infinite}
+.wire .x{display:none;position:absolute;left:50%;top:50%;width:16px;height:16px;margin:-8px 0 0 -8px}
+.wire[data-state="cut"] .x{display:block}
 
-/* ---------- dock ---------- */
-.dock{grid-area:dock;position:sticky;bottom:0;background:var(--bg);padding:10px 16px calc(20px + env(safe-area-inset-bottom)) 8px;display:flex;align-items:center;gap:10px;z-index:5}
-.land{min-width:64px;height:48px;border:0;background:none;font-size:15px;font-weight:600;text-decoration:underline;text-underline-offset:5px;text-decoration-color:var(--t4)}
-.talk{flex:1;height:60px;border-radius:30px;border:0;background:var(--text);color:var(--bg);font-size:16px;font-weight:650;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
-.talk[data-phase="listening"]{background:#fff}
+/* ---------- side panel (laptop) / dock (phone) ---------- */
+.side{display:contents}
+.side .info{display:none}
+.controls{grid-area:dock;position:sticky;bottom:0;z-index:5;display:flex;flex-wrap:wrap;gap:8px;
+  padding:8px 0 calc(16px + env(safe-area-inset-bottom));background:var(--bg)}
+.talk{order:3;flex:1;min-width:0;height:56px;border-radius:10px;border:1px solid var(--pink);background:rgba(234,75,113,.08);color:#F5B6C5;font-size:14.5px;
+  display:flex;align-items:center;justify-content:center;gap:10px;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.talk svg{width:17px;height:17px;flex-shrink:0}
+.talk .hint{color:#A46A7B;display:none}
+.talk[data-phase="listening"]{background:rgba(234,75,113,.24);color:var(--text)}
+.talk[data-phase="sending"],.talk[data-phase="thinking"]{border-color:var(--btn);background:var(--raise);color:var(--t2)}
 .talk:not([data-phase="idle"]) .hint{display:none!important}
-.talk[data-phase="thinking"],.talk[data-phase="sending"]{background:#24282C;color:var(--t2)}
-.talk .hint{font-weight:450;color:#5A6066;display:none}
-.stop{width:84px;height:84px;flex-shrink:0;border-radius:50%;border:0;background:var(--stop);color:#fff;font-size:16px;font-weight:800;letter-spacing:.06em;box-shadow:0 0 0 4px var(--bg),0 0 0 5px rgba(224,53,43,.5);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px}
-.stop:active{transform:scale(.97)}
-.stop small{display:none;font-size:12px;font-weight:500;letter-spacing:0;color:#FFD6D2}
-.dock .note{display:none}
+.lv{display:inline-flex;align-items:center;gap:3px;height:20px;color:var(--pink);margin-right:10px}
+.lv span{width:3px;border-radius:1.5px;background:currentColor;height:calc(4px + var(--lvl,0) * 16px);transition:height .06s linear}
+.lv span:nth-child(2),.lv span:nth-child(4){height:calc(4px + var(--lvl,0) * 10px)}
+.dots{display:inline-flex;gap:4px;margin-right:8px}
+.dots span{width:5px;height:5px;border-radius:50%;background:var(--pink);animation:blink 1.2s ease-in-out infinite}
+.dots span:nth-child(2){animation-delay:.2s}.dots span:nth-child(3){animation-delay:.4s}
+.land{order:2;width:72px;height:56px;border-radius:10px;border:1px solid var(--btn);background:var(--raise);font-size:14.5px}
+.stop{order:4;width:100px;height:56px;border-radius:10px;border:0;background:var(--rose);color:#FFFFFF;font-size:14.5px;font-weight:600;letter-spacing:.08em;
+  display:flex;align-items:center;justify-content:center;gap:10px}
+.stop small{font-size:12px;font-weight:400;letter-spacing:0;opacity:.75;display:none}
+.stop:active,.land:active{transform:translateY(1px)}
+.typetoggle{order:0;flex-basis:100%;border:0;background:none;color:var(--t3);font-size:12.5px;padding:2px 0;text-align:left;text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--btn)}
+.typebox{order:1;flex-basis:100%;display:flex;gap:8px}
+.typebox input{flex:1;min-width:0;height:44px;padding:0 12px;border-radius:10px;border:1px solid var(--line);background:var(--node);font-size:14px}
+.typebox input:focus{outline:none;border-color:var(--pink)}
+.typebox button{height:44px;padding:0 14px;border-radius:10px;border:1px solid var(--btn);background:var(--raise);font-size:14px}
 
-/* ---------- secondary views ---------- */
-.view{grid-area:cam / 1 / trace / -1;padding:20px 20px 24px;display:flex;flex-direction:column;gap:22px;overflow:auto;max-width:760px}
-.view h1{margin:0;font-size:39px;font-weight:650;letter-spacing:-.03em;line-height:1}
-.view h2{margin:0;font-size:15.5px;font-weight:650}
+/* ---------- QNX safety view ---------- */
+.view{grid-row:2 / 4;grid-column:1;display:flex;flex-direction:column;gap:24px;padding:14px 8px 24px}
+.view .vhead{display:flex;flex-direction:column;gap:8px}
+.view h1{margin:0;font-size:39px;font-weight:400;letter-spacing:-.03em;line-height:1}
+.view h2{margin:0;font-size:15.5px;font-weight:600}
 .view p{margin:0;font-size:15.5px;line-height:1.45;color:var(--t2)}
-.view p b{color:var(--text);font-weight:500}
-.rule{height:1px;background:var(--line)}
+.view p b{color:var(--text);font-weight:400}
+.view section{display:flex;flex-direction:column;gap:10px}
+.rule{height:1px;background:var(--div)}
 .split{display:flex;justify-content:space-between;align-items:baseline;gap:16px}
-.big{font-size:27px;font-weight:600}
+.sub{font-size:13px;color:var(--t3)}
+.big{font-size:27px;font-weight:300}
 table{border-collapse:collapse;width:100%;font-size:15px}
 th{font-weight:400;font-size:13px;color:var(--t3);text-align:left;padding:4px 0}
-td{padding:8px 0;border-top:1px solid var(--line)}
+td{padding:8px 0;border-top:1px solid var(--div)}
 td.r,th.r{text-align:right}
-tr.flash td{animation:flash 2.4s ease-out}
-.search input{width:100%;height:52px;padding:0 16px;border-radius:12px;border:1px solid var(--line2);background:var(--cloud);font-size:16px}
-.hit{display:flex;flex-direction:column;gap:10px}
-.hit img{width:100%;border-radius:6px;display:block;aspect-ratio:4/3;object-fit:cover;background:var(--raise)}
-.hit .cap{font-size:22.5px;font-weight:600;letter-spacing:-.02em;line-height:1.2}
-.also{display:flex;gap:12px;align-items:center}
-.also img{width:72px;height:54px;object-fit:cover;border-radius:4px;flex-shrink:0;background:var(--raise)}
-.gallery{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
-.gallery figure{margin:0;display:flex;flex-direction:column;gap:4px}
-.gallery img{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:4px;background:var(--raise)}
-.gallery figcaption{font-size:12px;color:var(--t3);line-height:1.3}
+td.no{color:var(--amber)}
+
+/* process list (side panel + safety view) */
+.procs{display:flex;flex-direction:column;gap:2px}
+.proc{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:13px;padding:4px 8px;margin:0 -8px;border-radius:6px}
+.proc .n{font-family:var(--mono);font-size:12.5px}
+.proc .c{color:var(--t2)}
+.proc .s{color:var(--amber)}
+.proc.hot{background:rgba(234,75,113,.10)}
+.proc.hot .c{color:var(--text)}
+.proc .ago{color:#F08AA3}
+.procs.full .proc{height:38px;padding:0 10px;margin:0 -10px;border-radius:8px}
+.procs.full .proc .n{font-size:13px} .procs.full .proc .c{font-size:15px}
 
 /* ---------- toast ---------- */
-.toast{position:fixed;left:50%;bottom:120px;transform:translateX(-50%);background:var(--raise);border:1px solid var(--line2);padding:10px 16px;border-radius:12px;font-size:14px;z-index:20;max-width:90vw}
+.toast{position:fixed;left:50%;bottom:110px;transform:translateX(-50%);background:var(--raise);border:1px solid var(--btn);padding:10px 16px;border-radius:10px;font-size:14px;z-index:20;max-width:90vw}
 
-@keyframes blink{0%,100%{opacity:.3}50%{opacity:1}}
+@keyframes blink{0%,100%{opacity:.35}50%{opacity:1}}
 @keyframes arrive{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-@keyframes flash{from{background:rgba(127,211,168,.18)}to{background:transparent}}
+@keyframes ring{0%{box-shadow:0 0 0 0 rgba(242,167,59,.35)}70%,100%{box-shadow:0 0 0 10px rgba(242,167,59,0)}}
+@keyframes flowh{to{background-position:12px 0}}
+@keyframes flowv{to{background-position:0 12px}}
+.arrive{animation:arrive .3s ease-out both}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 
-/* ---------- laptop: decision across the top, camera + history below ---------- */
+/* ---------- laptop ---------- */
 @media (min-width:1000px){
-  .app{grid-template-columns:minmax(0,1fr) minmax(300px,400px);column-gap:32px;padding:0 32px 28px;
-    grid-template-areas:"head head" "trace trace" "cam hist" "cam dock";grid-template-rows:68px auto 1fr auto}
-  header{padding:0}
-  .brand{font-size:23.4px;margin-right:20px}
+  .app{height:100dvh;min-height:680px;padding:20px;column-gap:16px;row-gap:16px;
+    grid-template-columns:minmax(0,1fr) 330px;grid-template-rows:44px minmax(0,1fr) auto;
+    grid-template-areas:"head head" "cam side" "pipe side"}
+  header{gap:28px;min-height:0;padding:0}
+  .brand{font-size:19px;margin-right:0}
+  .brand svg{width:26px;height:26px}
+  .nav button{height:34px;padding:0 14px}
+  .nav button[aria-current="page"]{display:flex;align-items:center;background:var(--raise2);color:var(--text)}
   .nav{margin-right:auto}
-  .who,.voice{display:inline-flex;align-items:center}
-  .trace{flex-direction:row;margin-bottom:32px}
-  .trace .zone{flex:1 1 0;padding:22px 40px 26px 28px;gap:18px}
-  .cloudz::after{left:auto;right:-17px;bottom:auto;top:50%;margin-top:-18px;border:18px solid transparent;border-left:17px solid var(--cloud);border-right:0}
-  .dronez{padding-left:48px!important}
-  .heard{font-size:36.6px;letter-spacing:-.02em;line-height:1.1}
-  .plan{font-size:16px} .reply{font-size:17px}
-  .verdict{font-size:71.5px;letter-spacing:-.04em;line-height:.95}
-  .verdict.waiting,.verdict.checking,.verdict.sent{font-size:45.8px}
-  .reason{font-size:23.4px;line-height:1.3}
-  .result{font-size:17px}
-  .cam{aspect-ratio:auto;max-height:none;min-height:420px;height:100%;border-radius:4px}
-  .cam .foot{padding:48px 24px 18px}
-  .cam .state{font-size:23.4px;letter-spacing:-.015em}
-  .cam .alt{font-size:17px}
-  .cam svg.fence{width:56px;height:56px}
-  .hist{display:flex}
-  .dock{position:static;padding:24px 0 0;flex-wrap:wrap;align-items:center}
-  .dock .land{order:3}
-  .dock .note{display:block;order:4;margin-left:auto;font-size:13px;color:var(--t3)}
-  .talk{order:1;height:64px;border-radius:32px;font-size:17px}
+  .conn,.who{display:flex;align-items:center} .voice{display:inline-flex}
+
+  .cam{height:auto;min-height:0}
+  .ceiling{top:19%} .ceiling span{right:20px;font-size:12px}
+  .live{left:20px;top:18px;font-size:13px}
+  .live .full{display:inline}
+  .foot{left:20px;right:20px;bottom:18px;align-items:center}
+  .state{font-size:28px}
+  .alt{font-size:16px;align-self:baseline}
+  .foot .state{align-self:baseline}
+  .track svg{width:38px;height:38px}
+  .track span{display:inline}
+  .banner{left:50%;right:auto;top:16px;transform:translateX(-50%);max-width:calc(100% - 340px);white-space:nowrap}
+  .banner span{overflow:hidden;text-overflow:ellipsis}
+
+  .pipe{flex-direction:row;align-items:stretch;padding:4px 0 2px}
+  .node{flex:1;padding:14px;gap:10px;min-height:150px}
+  .n-plan,.n-qnx{flex:1.15} .n-motors{flex:.85}
+  .said{font-size:17px}
+  .wire{width:54px;height:2px;margin:0;align-self:center;
+    background:repeating-linear-gradient(90deg,var(--btn) 0 3px,transparent 3px 7px)}
+  .wire[data-state="flow"]{background:repeating-linear-gradient(90deg,var(--pink) 0 6px,transparent 6px 12px);animation:flowh .9s linear infinite}
+
+  .side{grid-area:side;display:flex;flex-direction:column;min-height:0;overflow-y:auto;border-radius:14px;border:1px solid var(--line);background:var(--panel)}
+  .side .info{display:flex}
+  .blk{padding:16px 22px;flex-direction:column;gap:14px;border-bottom:1px solid var(--div)}
+  .dec{padding:22px 22px 20px;gap:8px}
+  .lbl{font-size:12px;color:var(--t2)}
+  .verdict{font-size:38px;font-weight:400;letter-spacing:-.035em;line-height:1;color:var(--t4)}
+  .verdict.approved{color:var(--green)} .verdict.refused{color:var(--amber)}
+  .verdict.waiting,.verdict.checking,.verdict.sent{font-size:30px}
+  .reason{font-size:15.5px;line-height:1.4}
+  .reason:empty{display:none}
+  .explain{font-size:13px;color:var(--t2);line-height:1.45}
+  .counts{display:flex;gap:28px}
+  .counts b{font-size:24px;font-weight:300} .counts span span{font-size:12.5px;color:var(--t2)}
+  .row{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-size:13px}
+  .row .k{color:var(--t2)}
+  .row .q{color:var(--t4)}
+  .bar{height:3px;border-radius:2px;background:var(--div);position:relative;margin-top:-7px}
+  .bar i{position:absolute;left:0;top:0;bottom:0;border-radius:2px;background:var(--pink);max-width:100%}
+  .bar.h i{background:var(--text)}
+  .bar .tick{position:absolute;right:0;top:-4px;width:2px;height:11px;background:var(--amber)}
+  .hnum b{font-size:22px;font-weight:300} .hnum span{font-size:13px;color:var(--t2)}
+  .warnv{color:var(--amber)}
+  .grow{flex:1}
+  .controls{position:static;padding:0 22px 22px;gap:10px;background:none}
+  .talk{order:0;flex:0 0 100%;height:52px}
   .talk .hint{display:inline}
-  .stop{order:2;width:112px;height:112px;font-size:21px;box-shadow:0 0 0 5px var(--bg),0 0 0 6px rgba(224,53,43,.5)}
-  .stop small{display:block}
-  .view{grid-area:trace / 1 / cam / 2;padding:8px 0 24px}
+  .typetoggle{order:1;margin:-4px 0 0;text-align:center}
+  .typebox{order:2}
+  .land{order:3;width:90px;height:52px}
+  .stop{order:4;flex:1;width:auto;height:52px}
+  .stop small{display:inline}
+
+  .view{grid-row:2 / 4;grid-column:1;overflow:auto;border-radius:14px;border:1px solid var(--line);background:var(--panel);padding:32px 36px}
+  .view > *{max-width:720px}
+  .toast{bottom:40px}
 }
 </style>
 </head>
@@ -182,106 +266,134 @@ tr.flash td{animation:flash 2.4s ease-out}
 <div class="app" id="app" data-view="live">
 
   <header>
-    <span class="brand">Hope</span>
+    <div class="brand">
+      <svg viewBox="0 0 26 26" aria-hidden="true"><circle cx="5" cy="13" r="3.2" fill="#EA4B71"/><circle cx="21" cy="6" r="3.2" fill="none" stroke="#EDEDF2" stroke-width="1.6"/><circle cx="21" cy="20" r="3.2" fill="none" stroke="#EDEDF2" stroke-width="1.6"/><path d="M8 13 C13 13 13 6 17.8 6 M8 13 C13 13 13 20 17.8 20" fill="none" stroke="#EDEDF2" stroke-width="1.6"/></svg>
+      hope
+    </div>
     <nav class="nav" aria-label="Views">
       <button data-go="live" aria-current="page">Live</button>
-      <button data-go="safety">Safety</button>
-      <button data-go="memory">Memory</button>
+      <button data-go="safety">QNX safety</button>
     </nav>
-    <!-- who's flying -->
-    <span class="who" id="who">Nobody is flying</span>
-    <button class="voice" id="voice" aria-pressed="true">Voice replies here: on</button>
+    <span class="conn" id="conn"><i></i><span id="connText">Connecting…</span></span>
+    <span class="who">Pilot:&nbsp;<b id="who">nobody</b></span>
+    <button class="voice" id="voice" aria-pressed="true">Voice replies here · on</button>
   </header>
 
   <!-- ===== LIVE VIEW ===== -->
   <section class="cam live-only" id="cam" aria-label="Live camera">
     <img id="frame" alt="Live forward camera" hidden>
     <div class="empty" id="camEmpty">Waiting for the camera…</div>
-    <div class="live off" id="liveTag"><i></i>LIVE</div>
+    <div class="shade"></div>
+    <div class="ceiling" id="ceiling" hidden><span id="ceilingLabel">5 m ceiling</span></div>
+    <div class="reticle" aria-hidden="true"><i class="o"></i><i class="l"></i><i class="r"></i></div>
+    <div class="live off" id="liveTag"><i></i><span>Live<span class="full"> · forward camera</span></span></div>
     <div class="banner" id="banner" role="alert" hidden></div>
     <div class="foot">
       <span class="state" id="state">Disconnected</span>
       <span class="alt" id="alt"></span>
-      <svg class="fence" id="fence" viewBox="-3.3 -3.3 6.6 6.6" role="img" aria-label="Track from the takeoff point">
-        <path id="home" d="M-.3 0H.3M0 -.3V.3" stroke="rgba(241,242,239,.5)" stroke-width="1.2" vector-effect="non-scaling-stroke"/>
-        <polyline id="trail" fill="none" stroke="rgba(241,242,239,.45)" stroke-width="1.5" vector-effect="non-scaling-stroke" stroke-linecap="round" points=""/>
-        <circle id="dot" r=".32" fill="#F1F2EF" cx="0" cy="0"/>
-      </svg>
+      <span class="sp"></span>
+      <div class="track">
+        <span id="fenceLabel">Track ±3 m</span>
+        <svg id="fence" viewBox="-3.3 -3.3 6.6 6.6" role="img" aria-label="Track from the takeoff point">
+          <rect id="fenceBox" x="-3" y="-3" width="6" height="6" fill="none" stroke="rgba(237,237,242,.5)" stroke-width="1" vector-effect="non-scaling-stroke"/>
+          <path id="home" d="M-.3 0H.3M0 -.3V.3" stroke="rgba(237,237,242,.5)" stroke-width="1.2" vector-effect="non-scaling-stroke"/>
+          <polyline id="trail" fill="none" stroke="rgba(237,237,242,.45)" stroke-width="1.5" vector-effect="non-scaling-stroke" stroke-linecap="round" points=""/>
+          <circle id="dot" r=".32" fill="#EDEDF2" cx="0" cy="0"/>
+        </svg>
+      </div>
     </div>
   </section>
 
-  <section class="trace live-only" aria-label="Latest command">
-    <div class="zone cloudz">
-      <div class="zhead"><span class="ztitle">Jarvis suggests</span><span class="label">AI in the cloud · Vultr</span></div>
-      <div>
-        <div class="label" id="heardLabel">Hold to talk, then say what you want</div>
-        <div class="heard empty" id="heard">—</div>
-      </div>
-      <div id="planWrap" hidden>
-        <div class="label">Plan</div>
-        <div class="plan" id="plan"></div>
-      </div>
+  <section class="pipe live-only" aria-label="Command pipeline">
+    <article class="node n-said" id="nSaid">
+      <div class="nh"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/></svg></span>
+        <div class="nt"><b id="saidTitle">You said</b><small id="saidMeta">voice</small></div></div>
+      <div class="said empty" id="heard">Hold to talk, then say what you want.</div>
+    </article>
+    <div class="wire" id="w1" aria-hidden="true"></div>
+    <article class="node n-plan" id="nPlan">
+      <div class="nh"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 18a4 4 0 0 1-.7-7.9A6 6 0 0 1 18 9a3.5 3.5 0 0 1 0 7z"/></svg></span>
+        <div class="nt"><b>Jarvis plans</b><small>AI · Vultr cloud</small></div></div>
+      <div class="steps" id="plan"></div>
       <div class="reply" id="replies"></div>
-      <div class="latency mono" id="latency" hidden></div>
-      <button class="typetoggle" id="typeToggle">Type instead</button>
+      <div class="latency" id="latency" hidden></div>
+    </article>
+    <div class="wire" id="w2" aria-hidden="true"></div>
+    <article class="node n-qnx" id="nQnx" data-state="waiting" role="status" aria-live="polite">
+      <div class="nh"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4.5 6v5.5c0 4.4 3.2 8.1 7.5 9 4.3-.9 7.5-4.6 7.5-9V6L12 3z"/></svg></span>
+        <div class="nt"><b>QNX decides</b><small>real-time OS · on drone</small></div></div>
+      <div class="qv" id="qVerdict">Waiting</div>
+      <div class="qr" id="qReason">Every step is checked here before the drone moves.</div>
+    </article>
+    <div class="wire" id="w3" aria-hidden="true"><svg class="x" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="#0E0E14" stroke="#F2A73B" stroke-width="1.4"/><path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="#F2A73B" stroke-width="1.4" stroke-linecap="round"/></svg></div>
+    <article class="node n-motors" id="nMotors" data-state="idle">
+      <div class="nh"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/><path d="M9 9l6 6M15 9l-6 6"/></svg></span>
+        <div class="nt"><b>Motors</b><small>drone</small></div></div>
+      <div class="mres" id="result">Nothing running.</div>
+    </article>
+  </section>
+
+  <!-- ===== QNX SAFETY VIEW ===== -->
+  <section class="view" id="safety" hidden>
+    <div class="vhead">
+      <h1>Safety</h1>
+      <p>Every step Jarvis plans goes through a real-time gate on QNX before the drone moves. This is the proof it keeps up.</p>
+    </div>
+    <section>
+      <h2>Safety loop</h2>
+      <p id="loopText">No timing data yet.</p>
+      <svg id="loopChart" viewBox="0 0 350 104" style="width:100%;max-width:560px;height:auto" role="img" aria-label="Safety loop lateness over the last 2 minutes"></svg>
+    </section>
+    <div class="rule"></div>
+    <section class="split" style="flex-direction:row"><div style="display:flex;flex-direction:column;gap:3px"><h2>Person seen → stop sent</h2><span class="sub" id="stopWhen">No stops yet</span></div><span class="big" id="stopMs">—</span></section>
+    <div class="rule"></div>
+    <section style="gap:0">
+      <div class="split" style="padding-bottom:8px"><h2>Processes</h2><span class="sub">restarts</span></div>
+      <div class="procs full" id="procsFull"><span class="muted">No process data yet.</span></div>
+    </section>
+    <div class="rule"></div>
+    <section>
+      <h2>Jitter, worst 1 in 100</h2>
+      <table id="jitter"><tbody><tr><td class="muted">No benchmark yet.</td></tr></tbody></table>
+    </section>
+  </section>
+
+  <!-- ===== SIDE PANEL (laptop) · DOCK (phone) ===== -->
+  <aside class="side" aria-label="Decision and flight">
+    <div class="info blk dec" id="dec">
+      <span class="lbl">QNX decision</span>
+      <span class="verdict waiting" id="verdict">Waiting</span>
+      <span class="reason" id="reason"></span>
+      <span class="explain" id="explain">Every step Jarvis plans is checked on the drone before it moves.</span>
+    </div>
+    <div class="info blk">
+      <span class="lbl">Safety gate, this flight</span>
+      <div class="counts"><span><b id="nChecked">0</b> <span>checked</span></span><span><b id="nRefused">0</b> <span>refused</span></span></div>
+      <div class="row"><span class="k">Loop lateness, p99</span><span><span id="p99">—</span> <span class="q">/ 2 ms</span></span></div>
+      <div class="bar" role="img" id="p99Bar" aria-label="Loop lateness against the 2 ms budget"><i id="p99Fill" style="width:0"></i></div>
+      <div class="row"><span class="k">Person seen → stop sent</span><span id="stopSide">—</span></div>
+    </div>
+    <div class="info blk" style="gap:2px">
+      <div class="row" style="font-size:12px;padding-bottom:6px"><span class="k">QNX processes</span><span class="k">restarts</span></div>
+      <div class="procs" id="procsSide"><span class="muted" style="font-size:13px">No process data yet.</span></div>
+    </div>
+    <div class="info blk" style="gap:10px;border-bottom:0">
+      <div class="row"><span class="lbl">Height <span class="q" id="ceilNote">· ceiling 5 m</span></span><span class="hnum"><b id="hNum">—</b><span> m</span></span></div>
+      <div class="bar h" role="img" id="hBar" aria-label="Height against the ceiling" style="margin-top:0"><i id="hFill" style="width:0"></i><span class="tick"></span></div>
+      <div class="row" style="padding-top:4px"><span class="k">Battery</span><span id="batt">—</span></div>
+    </div>
+    <div class="info grow"></div>
+    <div class="controls">
+      <button class="talk" id="talk" data-phase="idle" aria-label="Hold to talk to Jarvis, or hold Space"><span id="talkIcon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg></span><span id="talkLabel">Hold to talk</span><span class="hint">· Space</span></button>
+      <button class="typetoggle" id="typeToggle" type="button">Type instead</button>
       <form class="typebox" id="typeForm" hidden>
         <input id="typeIn" placeholder="e.g. go to the red poster and read it" autocomplete="off" aria-label="Type a command">
         <button>Send</button>
       </form>
+      <button class="land" id="land" aria-label="Land">Land</button>
+      <button class="stop" id="stop" aria-label="Emergency stop, or press Esc">STOP<small>Esc</small></button>
     </div>
-    <div class="zone dronez">
-      <div class="zhead"><span class="ztitle">QNX decides</span><span class="label">Real-time OS on the drone</span></div>
-      <div role="status" aria-live="polite">
-        <div class="verdict waiting" id="verdict">Waiting for a plan</div>
-        <div class="reason" id="reason" style="margin-top:6px"></div>
-      </div>
-      <div class="result" id="result"><span class="label" style="font-size:15px">Every step is checked here before the drone moves.</span></div>
-    </div>
-  </section>
-
-  <aside class="hist live-only" aria-label="Earlier commands">
-    <h2>Earlier</h2>
-    <div id="histList"><div class="row"><span class="m">Nothing yet.</span></div></div>
   </aside>
-
-  <!-- ===== SAFETY VIEW ===== -->
-  <section class="view" id="safety" hidden>
-    <h1>Safety</h1>
-    <p>Every step Jarvis plans goes through a real-time gate on QNX before the drone moves. This is the proof it keeps up.</p>
-    <div>
-      <h2>Safety loop</h2>
-      <p id="loopText" style="margin-top:8px">No timing data yet.</p>
-      <svg id="loopChart" viewBox="0 0 350 104" style="width:100%;height:110px;margin-top:8px" role="img" aria-label="Safety loop lateness over the last 2 minutes"></svg>
-    </div>
-    <div class="rule"></div>
-    <div class="split"><div><h2>Person seen → stop sent</h2><div class="label" id="stopWhen" style="margin-top:3px">No stops yet</div></div><span class="big" id="stopMs">—</span></div>
-    <div class="rule"></div>
-    <div><div class="split" style="padding-bottom:4px"><h2>Processes</h2><span class="label">restarts</span></div>
-      <table><tbody id="procs"><tr><td class="muted">No process data yet.</td><td></td></tr></tbody></table></div>
-    <div class="rule"></div>
-    <div><h2 style="margin-bottom:8px">Jitter benchmark</h2><table id="jitter"><tbody><tr><td class="muted">No benchmark yet.</td></tr></tbody></table></div>
-  </section>
-
-  <!-- ===== MEMORY VIEW ===== -->
-  <section class="view" id="memory" hidden>
-    <h1>Memory</h1>
-    <form class="search" id="memForm" role="search">
-      <label for="memQ" class="label" style="display:block;margin-bottom:8px">Ask about anything the drone has photographed</label>
-      <input id="memQ" type="search" placeholder="Where did I leave my keys?">
-    </form>
-    <div id="memResults"></div>
-    <div class="rule"></div>
-    <h2>All photos</h2>
-    <div class="gallery" id="gallery"><span class="label">Photos the drone takes show up here.</span></div>
-  </section>
-
-  <!-- ===== DOCK: always visible ===== -->
-  <div class="dock">
-    <button class="land" id="land">Land</button>
-    <button class="talk" id="talk" data-phase="idle" aria-label="Hold to talk to Jarvis"><span id="talkLabel">Hold to talk</span> <span class="hint">· Space</span></button>
-    <button class="stop" id="stop" aria-label="Emergency stop">STOP<small>Esc</small></button>
-    <span class="note">Anyone watching can press STOP.</span>
-  </div>
 </div>
 
 <div class="toast" id="toast" hidden></div>
@@ -290,7 +402,7 @@ tr.flash td{animation:flash 2.4s ease-out}
 'use strict';
 /* =========================================================
    Hope dashboard. One file, no build step.
-   Talks to FastAPI over /ws/ui and a few POST endpoints.
+   Talks to FastAPI over /ws/ui, /ws/voice and POST /voice.
    ========================================================= */
 
 const $ = (s) => document.querySelector(s);
@@ -312,17 +424,22 @@ const S = {
   telem: {}, lastTelemAt: 0,
   trail: [],                         // recent (n, e) points for the track map
   voiceHere: store.get('hope_voice', '1') === '1',
-  turn: null, history: [],           // current command + earlier ones
-  photos: [],
+  turn: null,                        // the current command
+  lastPhoto: null,                   // last photo event, shown in the Motors node
+  via: 'voice',                      // how this browser sent its last command: voice | typed
   phase: 'idle',                     // talk button: idle | listening | sending | thinking
   replaying: false,                  // true while replaying hello.log (no sounds/animation)
   edgeAlert: null,                   // last failsafe/override event from the drone
+  gate: { checked: 0, refused: 0 },  // safety gate decisions this session (hello.log included)
+  ceiling: 5,                        // m; edge/config.py alt_max, updated from refusal reasons
+  shownVerdict: 'waiting',
   qnx: { loop: [], stops: [], jitter: [], procs: [] },
-  lastRestarts: {},
+  lastRestarts: {}, restartAt: {},
 };
 
 // Battery thresholds from the brief (3-cell LiPo)
 const V_CRIT = 10.6, V_LOW = 11.0, V_MIN = 10.5, V_MAX = 12.6;
+const BUDGET = 2;   // ms: safety loop lateness budget
 
 const STATE_WORDS = {
   DISCONNECTED: 'Disconnected', IDLE: 'On the ground', TAKING_OFF: 'Taking off',
@@ -345,17 +462,9 @@ function fmtTime(t) {
   if (isNaN(d)) return '';
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
 }
-// "today 13:58", "yesterday 19:12", or "Nov 19, 08:02"
-function fmtDay(t) {
-  if (t == null) return '';
-  const d = new Date(typeof t === 'number' && t < 1e12 ? t * 1000 : t); if (isNaN(d)) return '';
-  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-  const diff = Math.round((day(new Date()) - day(d)) / 864e5);
-  const hm = fmtTime(d.getTime());
-  return diff === 0 ? `today ${hm}` : diff === 1 ? `yesterday ${hm}` : `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${hm}`;
-}
 const num = (v, d = 1) => (typeof v === 'number' && isFinite(v) ? v.toFixed(d) : '—');
 const m = (v) => `${+(+v).toFixed(2)} m`;
+const airborne = () => typeof S.telem.alt === 'number' && S.telem.state !== 'IDLE' && S.telem.state !== 'DISCONNECTED';
 
 // A plan step can arrive as {op:'move', fwd:1} or {move:{fwd:1}}. Normalise to [name, args].
 function stepParts(s) {
@@ -396,100 +505,140 @@ function humanReason(r) {
   if (/battery/i.test(t)) return t.charAt(0).toUpperCase() + t.slice(1);
   return t ? t.charAt(0).toUpperCase() + t.slice(1) : 'Not allowed';
 }
+const withDot = (s) => (/[.!?]$/.test(s) ? s : s + '.');
+
+// Height the plan asks for at the refused step: takeoff sets it, "move up" adds to it.
+function askedAlt(T) {
+  let alt = airborne() ? S.telem.alt : 0;
+  for (let i = 0; i <= T.badStep && i < T.plan.length; i++) {
+    const [n, a] = stepParts(T.plan[i]);
+    if (n === 'takeoff') alt = +(a.alt ?? a.value ?? 1);
+    else if (n === 'move' && a.up) alt += +a.up;
+  }
+  return alt;
+}
 
 /* =========================================================
-   The command trace (cloud -> QNX)
+   The command pipeline: You said -> Jarvis plans -> QNX decides -> Motors
    ========================================================= */
 function newTurn(who, text, t) {
   // the "heard" message and the person's log line describe the same command: one turn
   if (S.turn && S.turn.who === who && S.turn.text === text && !S.turn.plan.length) { S.turn.t = t; renderTurn(); return; }
   if (S.turn) clearTimeout(S.turn.timer);
-  if (S.turn && S.turn.text) { S.history.unshift(S.turn); S.history = S.history.slice(0, 12); }
-  S.turn = { who, text, t, plan: [], replies: [], verdict: 'waiting', reason: '', badStep: null, results: [], photo: null, timer: null, latency: '' };
-  renderTurn(); renderHistory();
+  S.turn = { who, text, t, via: who === S.you ? S.via : '', plan: [], replies: [], verdict: 'waiting', reason: '', badStep: null, badName: '',
+    results: [], timer: null, latency: '', okSteps: 0, doneAt: 0 };
+  renderTurn();
 }
+
+const VERDICT_WORDS = { waiting: 'Waiting', checking: 'Checking…', approved: 'Approved', refused: 'Refused', sent: 'Nothing to check' };
 
 function renderTurn() {
   const T = S.turn;
-  const heard = $('#heard'), label = $('#heardLabel');
 
-  // 1) what was said
+  // 1) You said
+  const heard = $('#heard');
+  $('#saidTitle').textContent = T && T.who && T.who !== S.you && T.who !== '?' ? `${T.who} said` : 'You said';
   if (S.phase === 'listening') {
-    label.textContent = 'Hearing you';
-    heard.className = 'heard';
+    $('#saidTitle').textContent = 'You said'; $('#saidMeta').textContent = 'voice · now';
+    heard.className = 'said';
     heard.replaceChildren(levelBars(), document.createTextNode('Listening…'));
-  } else if (!T) {
-    label.textContent = 'Hold to talk, then say what you want';
-    heard.className = 'heard empty'; heard.textContent = '—';
+  } else if (!T || !T.text) {
+    $('#saidMeta').textContent = T && T.t ? fmtTime(T.t) : 'voice';
+    heard.className = 'said empty'; heard.textContent = T ? '—' : 'Hold to talk, then say what you want.';
   } else {
-    const whoTxt = T.who === S.you ? 'You said' : `${T.who} said`;
-    label.textContent = `${whoTxt}${T.t ? ' · ' + fmtTime(T.t) : ''}`;
-    heard.className = 'heard'; heard.textContent = T.text;
+    $('#saidMeta').textContent = [T.via, fmtTime(T.t)].filter(Boolean).join(' · ');
+    heard.className = 'said'; heard.textContent = T.text;
   }
 
-  // 2) the plan
-  const planWrap = $('#planWrap'), plan = $('#plan');
+  // 2) Jarvis plans
+  const plan = $('#plan');
+  plan.className = 'steps' + (T && T.badStep != null ? ' has-bad' : '');
   if (T && T.plan.length) {
-    planWrap.hidden = false;
-    plan.replaceChildren();
-    T.plan.forEach((s, i) => {
-      if (i) plan.append(el('span', 'sep', '→'));
-      const isBad = T.badStep != null && i === T.badStep;
-      plan.append(el('span', isBad ? 'bad' : '', fmtStep(s)));
-    });
+    plan.replaceChildren(...T.plan.map((s, i) => el('span', i === T.badStep ? 'bad' : '', fmtStep(s))));
   } else if (S.phase === 'thinking' || S.phase === 'sending') {
-    planWrap.hidden = false;
-    const d = el('span', 'reply'); d.append(dots(), document.createTextNode('Jarvis is planning'));
+    const d = el('span', 'thinking'); d.append(dots(), document.createTextNode('Jarvis is planning'));
     plan.replaceChildren(d);
-  } else planWrap.hidden = true;
-
-  // 3) Jarvis's spoken replies (last two)
+  } else plan.replaceChildren(el('span', 'idle', T && T.replies.length ? 'No flight steps' : 'Waiting for a command'));
   const said = T ? T.replies.filter((r) => !(T.verdict === 'refused' && (/^Safety says no/i.test(r) || sameLine(r, T.reason)))) : [];  // the verdict says it
-  $('#replies').textContent = said.length ? 'Jarvis: ' + said.slice(-2).map((r) => `“${r}”`).join('  ') : '';
+  $('#replies').textContent = said.length ? said.slice(-2).map((r) => `“${r}”`).join('  ') : '';
   $('#latency').hidden = !(T && T.latency); $('#latency').textContent = T && T.latency ? T.latency : '';
 
-  // 4) QNX verdict
-  const v = $('#verdict'), reason = $('#reason'), result = $('#result');
-  const vText = { waiting: 'Waiting for a plan', checking: 'Checking…', approved: 'Approved', refused: 'Refused', sent: 'Nothing to check' }[T ? T.verdict : 'waiting'];
-  if (v.textContent !== vText) {
-    v.textContent = vText;
-    v.className = 'verdict ' + (T ? T.verdict : 'waiting') + (!S.replaying && T && (T.verdict === 'approved' || T.verdict === 'refused') ? ' arrive' : '');
+  // 3) QNX decides (node + side panel)
+  const kind = T ? T.verdict : 'waiting';
+  const ceilingHit = !!(T && kind === 'refused' && /ceiling/i.test(T.reason));
+  let reason = '', explain = '', qReason = '';
+  if (kind === 'refused') {
+    reason = withDot(humanReason(T.reason));
+    const bad = T.badStep != null ? T.plan[T.badStep] : null;
+    const ask = bad ? (ceilingHit ? `Jarvis asked for ${+askedAlt(T).toFixed(2)} m. ` : `Jarvis asked to ${fmtStep(bad)}. `) : '';
+    explain = `${ask}The drone held${airborne() ? ` at ${S.telem.alt.toFixed(2)} m` : ''} and nothing moved.`;
+    qReason = `${T.badName ? T.badName + ': ' : ''}${T.reason || 'not allowed'}`;
+  } else if (kind === 'approved') {
+    reason = 'Inside the fence, under the ceiling.';
+    explain = `${T.okSteps > 1 ? `${T.okSteps} steps` : 'One step'} checked. The drone is on its way.`;
+    qReason = 'inside fence · under ceiling';
+  } else if (kind === 'checking') {
+    explain = 'The real-time gate on the drone is checking each step.';
+    qReason = 'checking each step';
+  } else if (kind === 'sent') {
+    explain = 'No flight step in this plan, so nothing for the gate to check.';
+    qReason = 'no flight step in this plan';
+  } else {
+    explain = 'Every step Jarvis plans is checked on the drone before it moves.';
+    qReason = 'Every step is checked here before the drone moves.';
   }
-  if (T && T.verdict === 'refused') reason.textContent = humanReason(T.reason) + '.';
-  else if (T && T.verdict === 'approved') reason.textContent = T.okSteps > 1 ? `${T.okSteps} steps passed the safety gate so far.` : 'The safety gate let it through.';
-  else if (T && T.verdict === 'sent') reason.textContent = 'No flight step in this plan, so nothing for the gate to check.';
-  else reason.textContent = '';
-
-  // 5) what the drone actually did
-  result.replaceChildren();
-  if (T && T.photo) {
-    const img = el('img'); img.src = T.photo.url; img.alt = T.photo.caption || 'Photo the drone took';
-    result.append(img);
+  const v = $('#verdict');
+  v.textContent = VERDICT_WORDS[kind]; v.className = 'verdict ' + kind;
+  $('#reason').textContent = reason; $('#explain').textContent = explain;
+  $('#nQnx').dataset.state = kind;
+  $('#qVerdict').textContent = VERDICT_WORDS[kind]; $('#qReason').textContent = qReason;
+  if (kind !== S.shownVerdict) {
+    S.shownVerdict = kind;
+    if (!S.replaying && (kind === 'approved' || kind === 'refused')) { replay($('#dec')); replay($('#qVerdict')); }
   }
-  if (T && T.verdict === 'refused') result.append(el('span', '', `Drone held${typeof S.telem.alt === 'number' ? ' at ' + m(S.telem.alt) : ''}. Nothing moved.`));
-  else if (T && T.results.length) result.append(el('span', '', T.results.slice(-1)[0]));
-  else if (T && T.photo && T.photo.caption) result.append(el('span', '', T.photo.caption));
-  else result.append(el('span', 'label', 'Every step is checked here before the drone moves.'));
 
-  $('#cam').classList.toggle('refused', !!(T && T.verdict === 'refused'));
+  // ceiling line on the camera when that's why it was refused
+  $('#ceiling').hidden = !ceilingHit;
+
+  // 4) Motors: what the drone actually did
+  const res = $('#result'), nM = $('#nMotors');
+  res.replaceChildren();
+  if (kind === 'refused') {
+    nM.dataset.state = 'held';
+    res.append(el('span', '', `Not run. Held${airborne() ? ` at ${S.telem.alt.toFixed(2)} m` : ''}.`));
+  } else {
+    const tm = S.telem;
+    let text = '';
+    if (T && T.results.length) text = T.results.slice(-1)[0];
+    else if (tm.state === 'BUSY' && tm.active_cmd) text = `Doing: ${tm.active_cmd}`;
+    else if (S.lastPhoto && S.lastPhoto.caption) text = S.lastPhoto.caption;
+    else if (kind === 'approved') text = 'Running the plan.';
+    else text = 'Nothing running.';
+    nM.dataset.state = kind === 'approved' || (T && T.results.length) ? 'run' : 'idle';
+    if (S.lastPhoto && S.lastPhoto.url) {
+      const img = el('img'); img.src = S.lastPhoto.url; img.alt = S.lastPhoto.caption || 'Last photo the drone took';
+      res.append(img);
+    }
+    res.append(el('span', '', text));
+  }
+
+  renderWires();
 }
 
-function renderHistory() {
-  const list = $('#histList');
-  list.replaceChildren();
-  if (!S.history.length) { const r = el('div', 'row'); r.append(el('span', 'm', 'Nothing yet.')); list.append(r); return; }
-  for (const T of S.history) {
-    const r = el('div', 'row');
-    r.append(el('span', 't', T.text));
-    const meta = el('span', 'm');
-    meta.append(document.createTextNode(fmtTime(T.t) + ' · '));
-    const vc = T.verdict === 'approved' ? 'ok' : T.verdict === 'refused' ? 'no' : '';
-    meta.append(el('span', vc, T.verdict === 'refused' ? 'refused' : T.verdict === 'approved' ? 'approved' : T.plan.length ? 'sent' : 'no plan'));
-    if (T.verdict === 'refused' && T.reason) meta.append(document.createTextNode(' · ' + humanReason(T.reason).toLowerCase()));
-    else if (T.replies.length) meta.append(document.createTextNode(' · “' + T.replies.slice(-1)[0] + '”'));
-    r.append(meta); list.append(r);
-  }
+// Wires flow pink while a command is passing through that edge; after QNX refuses, the last one is cut.
+function renderWires() {
+  const T = S.turn, now = Date.now();
+  const thinking = S.phase === 'thinking' || S.phase === 'sending';
+  const fresh = T && (!T.doneAt || now - T.doneAt < 8000);
+  const moving = /BUSY|TAKING_OFF|LANDING/.test(S.telem.state || '');
+  const set = (id, st) => { const w = $(id); if (w.dataset.state !== st) w.dataset.state = st; };
+  set('#w1', T && (thinking || (T.plan.length && fresh)) ? 'flow' : 'idle');
+  set('#w2', T && T.plan.length && fresh ? 'flow' : 'idle');
+  set('#w3', T && T.verdict === 'refused' ? 'cut' : T && T.verdict === 'approved' && (fresh || moving) ? 'flow' : 'idle');
 }
+setInterval(renderWires, 1000);
+
+function replay(n) { n.classList.remove('arrive'); void n.offsetWidth; n.classList.add('arrive'); }
 
 function setVerdict(kind, reason, op) {
   const T = S.turn; if (!T) return;
@@ -499,13 +648,18 @@ function setVerdict(kind, reason, op) {
     T.okSteps = (T.okSteps || 0) + 1;
   }
   T.verdict = kind; T.reason = reason || '';
-  if (kind === 'refused' && op) {
-    const step = OP_STEP[op] || op;
-    const i = T.plan.findIndex((s) => stepParts(s)[0] === step);
-    T.badStep = i >= 0 ? i : null;
+  T.doneAt = S.replaying ? 1 : Date.now();
+  if (kind === 'refused') {
+    let x; if ((x = T.reason.match(/ceiling\s*([\d.]+)\s*m/i))) S.ceiling = +x[1];
+    if (op) {
+      const step = OP_STEP[op] || op;
+      const i = T.plan.findIndex((s) => stepParts(s)[0] === step);
+      T.badStep = i >= 0 ? i : null;
+      T.badName = step;
+    }
   }
   if (S.phase === 'thinking') setPhase('idle');
-  renderTurn(); renderHistory();
+  renderTurn(); renderFlight();
 }
 
 /* =========================================================
@@ -521,13 +675,13 @@ function onLog({ t, who, text }) {
     let steps = [];
     try { steps = JSON.parse(text); } catch { steps = [text]; }
     if (!Array.isArray(steps)) steps = [steps];
-    T.plan = steps; T.badStep = null;
+    T.plan = steps; T.badStep = null; T.badName = ''; T.doneAt = 0;
     if (steps.length) {
       T.verdict = 'checking';
       // The gate answers each flight step ("safety_ok" / "safety_reject"). Plans with no flight
       // step (look, recall) never reach it: after a few seconds, say so instead of spinning.
       clearTimeout(T.timer);
-      T.timer = setTimeout(() => { if (S.turn === T && T.verdict === 'checking') { T.verdict = 'sent'; renderTurn(); renderHistory(); } }, S.replaying ? 0 : 6000);
+      T.timer = setTimeout(() => { if (S.turn === T && T.verdict === 'checking') { T.verdict = 'sent'; T.doneAt = Date.now(); renderTurn(); } }, S.replaying ? 0 : 6000);
     }
     if (S.phase === 'thinking') setPhase('idle');
   } else if (who === 'jarvis') {
@@ -538,8 +692,8 @@ function onLog({ t, who, text }) {
     // edge events arrive as "<kind>: <detail>", e.g. "safety_reject: move_body: above ceiling 1.5 m"
     // demo mode: "safety_reject: yaw (demo): I'd love to turn around..."
     const rej = text.match(/^safety_reject\s*:\s*(?:(\w+)(?:\s*\(demo\))?\s*:\s*)?(.*)$/i);
-    if (rej) { setVerdict('refused', rej[2], rej[1]); return; }
-    if (/^safety_ok\b/i.test(text)) { setVerdict('approved'); return; }
+    if (rej) { S.gate.checked++; S.gate.refused++; setVerdict('refused', rej[2], rej[1]); return; }
+    if (/^safety_ok\b/i.test(text)) { S.gate.checked++; setVerdict('approved'); return; }
     if (/failsafe|pilot|override|manual|link/i.test(text)) { S.edgeAlert = { text, at: Date.now() }; updateAlerts(); }
     if (who === 'edge') T.results.push(prettifyEdge(text));
   } else if (who === 'cloud') {
@@ -554,22 +708,20 @@ function onLog({ t, who, text }) {
   renderTurn();
 }
 
+// "mission_done: read 'Exit'" -> "Mission done: read 'Exit'"
+function prettifyEdge(t) { return t.replace(/^(\w+)(:)/, (_, w, c) => w.replace(/_/g, ' ').replace(/^./, (x) => x.toUpperCase()) + c); }
 // a demo refusal is spoken as the edge's own line: don't show it twice (reply + verdict)
 function sameLine(a, b) { const n = (x) => (x || '').trim().replace(/\.$/, '').toLowerCase(); return !!b && n(a) === n(b); }
 
-// "mission_done: read 'Exit'" -> "Mission done: read 'Exit'"
-function prettifyEdge(t) { return t.replace(/^(\w+)(:)/, (_, w, c) => w.replace(/_/g, ' ').replace(/^./, (x) => x.toUpperCase()) + c); }
-
 /* =========================================================
-   Telemetry, camera, fence, alerts
+   Telemetry, camera, track map, alerts
    ========================================================= */
 function onTelemetry(tm) {
   S.telem = tm; S.lastTelemAt = Date.now();
   let word = STATE_WORDS[tm.state] || (tm.state ? String(tm.state).toLowerCase() : '—');
   if (tm.state === 'BUSY' && tm.active_cmd) word = `Doing: ${tm.active_cmd}`;
   $('#state').textContent = word;
-  const altOK = typeof tm.alt === 'number' && tm.state !== 'IDLE' && tm.state !== 'DISCONNECTED';
-  $('#alt').textContent = altOK ? `${tm.alt.toFixed(2)} m up` : '';
+  $('#alt').textContent = airborne() ? `${tm.alt.toFixed(2)} m` : '';
 
   // track map: north up, east right, takeoff point (+) at the centre. No fence outdoors, so
   // it zooms out to fit the whole track (at least +-3 m).
@@ -577,14 +729,34 @@ function onTelemetry(tm) {
     const last = S.trail[S.trail.length - 1];
     const step = Math.max(0.05, Math.hypot(tm.n, tm.e) / 100);   // fewer points when far out
     if (!last || Math.hypot(last[0] - tm.n, last[1] - tm.e) > step) { S.trail.push([tm.n, tm.e]); if (S.trail.length > 200) S.trail.shift(); }
-    const r = 1.1 * Math.max(3, ...S.trail.map(([n, e]) => Math.max(Math.abs(n), Math.abs(e))), Math.abs(tm.n), Math.abs(tm.e));
+    const half = Math.max(3, ...S.trail.map(([n, e]) => Math.max(Math.abs(n), Math.abs(e))), Math.abs(tm.n), Math.abs(tm.e));
+    const r = 1.1 * half;
     $('#fence').setAttribute('viewBox', `${(-r).toFixed(2)} ${(-r).toFixed(2)} ${(2 * r).toFixed(2)} ${(2 * r).toFixed(2)}`);
+    for (const [k, v] of [['x', -half], ['y', -half], ['width', 2 * half], ['height', 2 * half]]) $('#fenceBox').setAttribute(k, v.toFixed(2));
+    $('#fenceLabel').textContent = `Track ±${Math.ceil(half)} m`;
     $('#home').setAttribute('d', `M${(-r / 11).toFixed(2)} 0H${(r / 11).toFixed(2)}M0 ${(-r / 11).toFixed(2)}V${(r / 11).toFixed(2)}`);
     $('#dot').setAttribute('r', (r / 10).toFixed(2));
     $('#trail').setAttribute('points', S.trail.map(([n, e]) => `${e.toFixed(2)},${(-n).toFixed(2)}`).join(' '));
     $('#dot').setAttribute('cx', tm.e.toFixed(2)); $('#dot').setAttribute('cy', (-tm.n).toFixed(2));
   }
+  renderFlight();
   updateAlerts();
+  if (S.turn && S.turn.verdict !== 'refused' && !S.turn.results.length) renderTurn();   // Motors shows active_cmd
+}
+
+// side panel: height vs ceiling, battery, gate counts
+function renderFlight() {
+  const tm = S.telem, C = S.ceiling;
+  $('#ceilNote').textContent = `· ceiling ${+C.toFixed(2)} m`;
+  $('#ceilingLabel').textContent = `${+C.toFixed(2)} m ceiling`;
+  const alt = typeof tm.alt === 'number' ? Math.max(0, tm.alt) : null;
+  $('#hNum').textContent = alt == null ? '—' : alt.toFixed(2);
+  $('#hFill').style.width = alt == null ? '0' : `${Math.min(100, (alt / C) * 100).toFixed(1)}%`;
+  $('#hBar').setAttribute('aria-label', alt == null ? 'Height unknown' : `${alt.toFixed(2)} of ${C} metres`);
+  const v = tm.battery_v, b = $('#batt');
+  b.textContent = typeof v === 'number' ? `${v.toFixed(1)} V` : '—';
+  b.className = typeof v === 'number' && v < V_LOW ? 'warnv' : '';
+  $('#nChecked').textContent = S.gate.checked; $('#nRefused').textContent = S.gate.refused;
 }
 
 function onFrame(f) {
@@ -604,79 +776,34 @@ function updateAlerts() {
   let a = null;
   if (!S.wsOpen) a = ['crit', 'Dashboard offline', 'Reconnecting to the server…'];
   else if (!S.station) a = ['crit', 'Drone not connected', 'The drone’s computer isn’t talking to the server.'];
-  else if (stale) a = ['crit', 'Link lost', 'No word from the drone for a few seconds. It will hold, then land.'];
+  else if (stale) a = ['crit', 'Link lost', 'No word from the drone for 3 s. It will hold, then land.'];
   else if (tm.state === 'FAILSAFE') a = ['crit', 'Failsafe', 'The drone is protecting itself (hold or land). Commands are paused.'];
   else if (typeof v === 'number' && v < V_CRIT) a = ['crit', `Battery critical · ${v.toFixed(1)} V`, 'Land now.'];
   else if ((tm.armed && tm.mode && !/GUIDED|LAND/i.test(tm.mode)) || (S.edgeAlert && /pilot|override|manual/i.test(S.edgeAlert.text) && Date.now() - S.edgeAlert.at < 8000))
     a = ['warn', 'Pilot has the remote', 'Manual override. Jarvis is hands-off until it’s released.'];
-  else if (typeof v === 'number' && v < V_LOW) a = ['warn', `Battery low · ${v.toFixed(1)} V · about ${pct}%`, 'A couple more commands, then land.'];
+  else if (typeof v === 'number' && v < V_LOW) a = ['warn', 'Battery low', `${v.toFixed(1)} V, about ${pct}%. Land soon.`];
+
+  const on = S.wsOpen && S.station && !stale;
+  $('#conn').classList.toggle('on', !!on);
+  $('#connText').textContent = !S.wsOpen ? 'Offline' : on ? 'Drone connected' : stale ? 'Link lost' : 'Drone not connected';
+
   if (!a) { b.hidden = true; return; }
+  const key = a.join('|');
+  if (b.dataset.key === key && !b.hidden) return;
+  b.dataset.key = key;
   b.hidden = false; b.className = 'banner ' + a[0];
-  b.replaceChildren(el('b', '', a[1]), document.createTextNode(a[2]));
+  const msg = el('span'); msg.append(a[1], ' ', el('span', 'd', '· ' + a[2]));
+  b.replaceChildren(el('i'), msg);
 }
 setInterval(updateAlerts, 1000);
 setInterval(() => { if (S.lastFrameAt && Date.now() - S.lastFrameAt > 2000) $('#liveTag').classList.add('off'); }, 1000);
 
 function onControl(holder) {
   S.holder = holder;
-  const w = $('#who');
-  if (!holder) w.textContent = 'Nobody is flying';
-  else if (holder === S.you) w.textContent = 'You have control';
-  else w.textContent = `${holder} is flying`;
+  $('#who').textContent = !holder ? 'nobody' : holder === S.you ? 'You' : holder;
 }
 
-/* =========================================================
-   Photos + memory
-   ========================================================= */
-function onPhoto(p) {
-  S.photos.unshift(p);
-  if (S.turn) { S.turn.photo = p; renderTurn(); }
-  renderGallery();
-}
-function renderGallery() {
-  const g = $('#gallery');
-  if (!S.photos.length) return;
-  g.replaceChildren(...S.photos.slice(0, 30).map((p) => {
-    const f = el('figure'); const i = el('img'); i.src = p.url; i.alt = p.caption || 'Photo'; i.loading = 'lazy';
-    f.append(i); if (p.caption) f.append(el('figcaption', '', p.caption)); return f;
-  }));
-}
-
-$('#memForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const q = $('#memQ').value.trim(); if (!q) return;
-  const box = $('#memResults'); box.replaceChildren(el('p', '', 'Looking through photos…'));
-  try {
-    const r = await fetch('/memory/search', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ q }) });
-    if (!r.ok) throw new Error(r.status);
-    const hits = await r.json();
-    box.replaceChildren();
-    if (!hits.length) { box.append(el('p', '', 'Nothing in the photos matches that yet.')); return; }
-    const [top, ...rest] = hits;
-    const h = el('div', 'hit'); const img = el('img'); img.src = top.jpeg_url; img.alt = top.caption || '';
-    h.append(img, el('div', 'cap', top.caption || 'Best match'), el('p', '', where(top)));
-    box.append(h);
-    if (rest.length) {
-      const also = el('div'); also.style.cssText = 'display:flex;flex-direction:column;gap:12px;margin-top:22px';
-      also.append(el('h2', '', 'Also seen'));
-      for (const x of rest.slice(0, 5)) {
-        const r2 = el('div', 'also'); const i2 = el('img'); i2.src = x.jpeg_url; i2.alt = '';
-        const tx = el('div'); tx.append(el('div', '', x.caption || ''), el('div', 'label', where(x)));
-        r2.append(i2, tx); also.append(r2);
-      }
-      box.append(also);
-    }
-  } catch (err) { box.replaceChildren(el('p', '', 'Search failed. Is the server up?')); }
-});
-// "Seen 13:58 · 2.1 m ahead, 0.8 m right of takeoff, 1.0 m up"
-function where(x) {
-  const bits = [];
-  if (typeof x.n === 'number') bits.push(`${Math.abs(x.n).toFixed(1)} m ${x.n >= 0 ? 'ahead' : 'behind'}`);
-  if (typeof x.e === 'number') bits.push(`${Math.abs(x.e).toFixed(1)} m ${x.e >= 0 ? 'right' : 'left'}`);
-  let s = bits.length ? bits.join(', ') + ' of takeoff' : '';
-  if (typeof x.alt === 'number') s += `${s ? ', ' : ''}${x.alt.toFixed(1)} m up`;
-  return `Seen ${fmtDay(x.t)}${s ? ' · ' + s : ''}`;
-}
+function onPhoto(p) { S.lastPhoto = p; renderTurn(); }
 
 /* =========================================================
    QNX safety proof
@@ -710,7 +837,7 @@ function onQnx(q) {
   renderSafety();
 }
 function renderSafety() {
-  const Q = S.qnx, BUDGET = 2;
+  const Q = S.qnx;
   // loop lateness
   const vals = Q.loop.map(lateMs).filter((v) => v != null && isFinite(v));
   const svg = $('#loopChart');
@@ -720,57 +847,76 @@ function renderSafety() {
     const p99 = lastP99 != null ? +lastP99 : sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.99))];
     const worst = sorted[sorted.length - 1];
     const lp = $('#loopText'); lp.replaceChildren();
-    lp.append('Never more than ', el('b', '', worst.toFixed(2) + ' ms'), ' late in this window. p99 is ', el('b', '', p99.toFixed(2) + ' ms'), `. The budget is ${BUDGET} ms.`);
+    lp.append('Never more than ', el('b', '', worst.toFixed(2) + ' ms'), ' late in this window. Worst 1 in 100 is ', el('b', '', p99.toFixed(2) + ' ms'), `. The budget is ${BUDGET} ms.`);
     const top = Math.max(BUDGET * 1.1, worst * 1.1), y = (v) => 88 - (v / top) * 80, x0 = 30, w = 320;
     const pts = vals.map((v, i) => `${(x0 + (i / Math.max(1, vals.length - 1)) * w).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
     const wi = vals.indexOf(worst);
     svg.innerHTML =
-      `<line x1="30" y1="${y(BUDGET)}" x2="350" y2="${y(BUDGET)}" stroke="#4A5056" stroke-dasharray="3 3"/>` +
-      `<line x1="30" y1="88" x2="350" y2="88" stroke="#262A2E"/>` +
-      `<g font-family="Schibsted Grotesk,sans-serif" font-size="11" fill="#868C92"><text x="0" y="${y(BUDGET) + 4}">${BUDGET} ms</text><text x="0" y="92">0</text><text x="30" y="104">−2 min</text><text x="350" y="104" text-anchor="end">now</text></g>` +
-      `<polyline fill="none" stroke="#F1F2EF" stroke-width="1.3" stroke-linejoin="round" points="${pts}"/>` +
-      `<circle cx="${(x0 + (wi / Math.max(1, vals.length - 1)) * w).toFixed(1)}" cy="${y(worst).toFixed(1)}" r="2.5" fill="#F1F2EF"/>`;
+      `<line x1="30" y1="${y(BUDGET)}" x2="350" y2="${y(BUDGET)}" stroke="#6A6A78" stroke-dasharray="3 3"/>` +
+      `<line x1="30" y1="88" x2="350" y2="88" stroke="#262632"/>` +
+      `<g font-family="Geist,system-ui,sans-serif" font-size="11" fill="#8A8A98"><text x="0" y="${y(BUDGET) + 4}">${BUDGET} ms</text><text x="0" y="92">0</text><text x="30" y="104">−2 min</text><text x="350" y="104" text-anchor="end">now</text></g>` +
+      `<polyline fill="none" stroke="#EA4B71" stroke-width="1.5" stroke-linejoin="round" points="${pts}"/>` +
+      `<circle cx="${(x0 + (wi / Math.max(1, vals.length - 1)) * w).toFixed(1)}" cy="${y(worst).toFixed(1)}" r="2.5" fill="#EA4B71"/>`;
+    $('#p99').textContent = `${p99.toFixed(2)} ms`;
+    $('#p99Fill').style.width = `${Math.min(100, (p99 / BUDGET) * 100).toFixed(1)}%`;
+    $('#p99Bar').setAttribute('aria-label', `${p99.toFixed(2)} of ${BUDGET} milliseconds`);
   }
   // person seen -> stop
   if (Q.stops.length) {
     const s = Q.stops[Q.stops.length - 1];
     const ms = typeof s === 'number' ? s : pick(s, ['ms', 'edge_ms', 'latency_ms', 'stop_ms', 'value']);
-    $('#stopMs').textContent = ms != null ? `${Math.round(ms)} ms` : '—';
+    $('#stopMs').textContent = $('#stopSide').textContent = ms != null ? `${Math.round(ms)} ms` : '—';
     const t = typeof s === 'object' ? pick(s, ['t', 'time', 'ts']) : null;
     $('#stopWhen').textContent = t ? `Last time at ${fmtTime(t)}` : `${Q.stops.length} stop${Q.stops.length > 1 ? 's' : ''} measured`;
   }
-  // processes (flash a row when its restart count goes up: the "kill it live" demo)
-  if (Q.procs.length) {
-    const tb = $('#procs'); tb.replaceChildren();
-    for (const p of Q.procs) {
-      const name = pick(p, ['name', 'proc', 'process']) ?? '?';
-      const restarts = +(pick(p, ['restarts', 'restart_count']) ?? 0);
-      let status = pick(p, ['state', 'status']) ?? (p.alive === false ? 'down' : 'running');
-      if (status === 'up') status = 'running';
-      const tr = el('tr');
-      if (S.lastRestarts[name] != null && restarts > S.lastRestarts[name]) tr.className = 'flash';
-      S.lastRestarts[name] = restarts;
-      const td1 = el('td', 'mono', name); td1.style.fontSize = '13px';
-      if (String(status) !== 'running') td1.append(el('span', 'no', '  ' + status));
-      tr.append(td1, el('td', 'r', String(restarts))); tb.append(tr);
-    }
+  // processes: note when a restart count goes up (the "kill it live" demo)
+  for (const p of Q.procs) {
+    const name = pick(p, ['name', 'proc', 'process']) ?? '?';
+    const restarts = +(pick(p, ['restarts', 'restart_count']) ?? 0);
+    if (S.lastRestarts[name] != null && restarts > S.lastRestarts[name]) S.restartAt[name] = Date.now();
+    S.lastRestarts[name] = restarts;
   }
-  // jitter benchmark: idle vs CPU hog, normal vs real-time (FIFO) priority
+  renderProcs();
+  // jitter benchmark: priority (rows) x CPU load (columns), worst 1 in 100
   if (Q.jitter.length) {
+    const rowName = (c) => (c.prio_applied ? 'Real-time' : c.prio ? 'Real-time (not applied)' : 'Normal');
+    const rows = [...new Set(Q.jitter.map(rowName))].sort((a, b) => (a === 'Normal' ? -1 : b === 'Normal' ? 1 : a.localeCompare(b)));
     const t = $('#jitter'), head = el('thead'), hr = el('tr');
-    ['Case', 'p99', 'worst'].forEach((c, i) => hr.append(el('th', i ? 'r' : '', c)));
+    [['Priority', ''], ['Quiet CPU', 'r'], ['CPU hog', 'r']].forEach(([c, k]) => hr.append(el('th', k, c)));
     head.append(hr);
     const body = el('tbody');
-    const rows = [...Q.jitter].sort((a, b) => (a.hog - b.hog) || ((a.prio_applied ? 1 : 0) - (b.prio_applied ? 1 : 0)));
-    for (const c of rows) {
-      const tr = el('tr');
-      const name = `${c.hog ? 'CPU hog' : 'Idle'}, ${c.prio_applied ? 'real-time priority' : c.prio ? 'priority not applied' : 'normal priority'}`;
-      tr.append(el('td', '', name), el('td', 'r', num(c.p99_ms, 2) + ' ms'), el('td', 'r' + (c.max_ms > 2 ? ' no' : ''), num(c.max_ms, 2) + ' ms'));
+    for (const r of rows) {
+      const tr = el('tr'); tr.append(el('td', '', r));
+      for (const hog of [false, true]) {
+        const c = Q.jitter.find((x) => rowName(x) === r && !!x.hog === hog);
+        const v = c ? pick(c, ['p99_ms', 'max_ms']) : null;
+        tr.append(el('td', 'r' + (v != null && v > BUDGET ? ' no' : ' muted'), v != null ? num(+v, 2) + ' ms' : '—'));
+      }
       body.append(tr);
     }
     t.replaceChildren(head, body);
   }
 }
+function renderProcs() {
+  const Q = S.qnx; if (!Q.procs.length) return;
+  const now = Date.now();
+  for (const box of [$('#procsSide'), $('#procsFull')]) {
+    box.replaceChildren(...Q.procs.map((p) => {
+      const name = pick(p, ['name', 'proc', 'process']) ?? '?';
+      const restarts = +(pick(p, ['restarts', 'restart_count']) ?? 0);
+      let status = pick(p, ['state', 'status']) ?? (p.alive === false ? 'down' : 'running');
+      if (status === 'up') status = 'running';
+      const ago = S.restartAt[name] ? (now - S.restartAt[name]) / 1000 : Infinity;
+      const row = el('div', 'proc' + (ago < 10 ? ' hot' : ''));
+      const left = el('span'); left.append(el('span', 'n', name));
+      if (ago < 10) left.append(' ', el('span', 'ago', `restarted ${ago < 10 ? ago.toFixed(1) : Math.round(ago)} s ago`));
+      else if (String(status) !== 'running') left.append(' ', el('span', 's', String(status)));
+      row.append(left, el('span', 'c', String(restarts)));
+      return row;
+    }));
+  }
+}
+setInterval(() => { const now = Date.now(); if (Object.values(S.restartAt).some((t) => now - t < 11000)) renderProcs(); }, 300);
 
 /* =========================================================
    WebSocket
@@ -789,13 +935,10 @@ function connect() {
         if (msg.you) S.you = msg.you;
         S.station = !!(msg.station && (msg.station.connected ?? msg.station));
         onControl(msg.holder ?? null);
-        S.replaying = true; S.turn = null; S.history = [];
+        S.replaying = true; S.turn = null; S.gate = { checked: 0, refused: 0 };
         (msg.log || []).forEach(onLog);
-        S.replaying = false; renderTurn(); renderHistory();
+        S.replaying = false; renderTurn(); renderFlight();
         if (msg.telemetry) onTelemetry(msg.telemetry);
-        if (!S.photos.length) fetch('/memory/recent?kind=photo').then((r) => r.ok ? r.json() : []).then((rows) => {
-          S.photos = rows.map((x) => ({ url: x.jpeg_url, caption: x.caption, t: x.t })); renderGallery();
-        }).catch(() => {});
         break;
       case 'station': S.station = !!msg.connected; updateAlerts(); break;
       case 'control': onControl(msg.holder ?? null); break;
@@ -815,30 +958,32 @@ function connect() {
 const send = (o) => { if (ws && ws.readyState === 1) { ws.send(JSON.stringify(o)); return true; } toast('Not connected'); return false; };
 
 /* =========================================================
-   Controls: STOP, Land, typing
+   Controls: STOP, Land, typing, voice replies
    ========================================================= */
 function doStop() { send({ type: 'op', op: 'stop' }); toast('STOP sent'); }
 $('#stop').addEventListener('click', doStop);
 
 $('#land').addEventListener('click', () => send({ type: 'op', op: 'land' }));
 
-
 $('#typeToggle').addEventListener('click', () => { const f = $('#typeForm'); f.hidden = !f.hidden; if (!f.hidden) $('#typeIn').focus(); });
 $('#typeForm').addEventListener('submit', (e) => {
   e.preventDefault();
   const text = $('#typeIn').value.trim(); if (!text) return;
-  if (send({ type: 'text', text })) { $('#typeIn').value = ''; setPhase('thinking'); }
+  if (send({ type: 'text', text })) { S.via = 'typed'; $('#typeIn').value = ''; setPhase('thinking'); }
 });
 
+function renderVoiceToggle() {
+  $('#voice').textContent = `Voice replies here · ${S.voiceHere ? 'on' : 'off'}`;
+  $('#voice').setAttribute('aria-pressed', S.voiceHere);
+}
 $('#voice').addEventListener('click', () => {
   S.voiceHere = !S.voiceHere; store.set('hope_voice', S.voiceHere ? '1' : '0');
-  $('#voice').textContent = `Voice replies here: ${S.voiceHere ? 'on' : 'off'}`;
-  $('#voice').setAttribute('aria-pressed', S.voiceHere);
+  renderVoiceToggle();
 });
-$('#voice').textContent = `Voice replies here: ${S.voiceHere ? 'on' : 'off'}`;
+renderVoiceToggle();
 
 /* =========================================================
-   Hold to talk (MediaRecorder + live mic level)
+   Hold to talk (MediaRecorder + live mic level + streaming STT)
    ========================================================= */
 let stream, rec, chunks = [], actx, analyser, raf, thinkTimer;
 const LEVEL = { v: 0 };
@@ -852,7 +997,7 @@ function setPhase(p) {
   renderTurn();
 }
 function levelBars() { const s = el('span', 'lv'); s.id = 'lvBars'; for (let i = 0; i < 5; i++) s.append(el('span')); return s; }
-function dots() { const s = el('span', 'dots'); s.style.marginRight = '8px'; for (let i = 0; i < 3; i++) s.append(el('span')); return s; }
+function dots() { const s = el('span', 'dots'); for (let i = 0; i < 3; i++) s.append(el('span')); return s; }
 
 // Live speech-to-text: 24 kHz mono 16-bit PCM over /ws/voice while the button is held, so the
 // text is ready ~0.4 s after release. The recorded clip (POST /voice) is the fallback, used only
@@ -912,7 +1057,7 @@ async function startTalk() {
   rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
   rec.onstop = uploadVoice;
   rec.start();
-  S.talkStart = Date.now();
+  S.talkStart = Date.now(); S.via = 'voice';
   setPhase('listening');
   // mic level -> bar heights; the same source feeds the live speech-to-text stream
   actx = actx || new (window.AudioContext || window.webkitAudioContext)();
@@ -978,16 +1123,16 @@ addEventListener('keyup', (e) => { if (e.code === 'Space' && !typing()) { e.prev
 document.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => {
   const v = b.dataset.go;
   $('#app').dataset.view = v;
-  document.querySelectorAll('[data-go]').forEach((x) => (x === b ? x.setAttribute('aria-current', 'page') : x.removeAttribute('aria-current')));
+  document.querySelectorAll('[data-go]').forEach((x) => (x.dataset.go === v ? x.setAttribute('aria-current', 'page') : x.removeAttribute('aria-current')));
   document.querySelectorAll('.live-only').forEach((n) => (n.hidden = v !== 'live'));
-  $('#safety').hidden = v !== 'safety'; $('#memory').hidden = v !== 'memory';
-  if (v === 'memory') renderGallery();
+  $('#safety').hidden = v !== 'safety';
 }));
 let toastT;
 function toast(t) { const n = $('#toast'); n.textContent = t; n.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => (n.hidden = true), 2600); }
 
 onControl(null);
 renderTurn();
+renderFlight();
 connect();
 </script>
 </body>
