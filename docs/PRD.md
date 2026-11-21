@@ -27,6 +27,22 @@ These resolve conflicts between the earlier docs. Change them only by agreement.
 | D5 | **Laptop ↔ Pi link = newline-delimited JSON over TCP on Wi-Fi**, using only the Python stdlib on the Pi. The ESP8266 bridge becomes a backup telemetry link for Mission Planner only. | Fewest QNX dependencies; fewest unknowns. |
 | D6 | **Python 3.14 on the Pi** (verified image), 3.11+ elsewhere. Pi: stdlib + pymavlink + numpy + OpenCV + tflite-runtime (all installed and verified, see qnx.md). Laptop/cloud: anything. | Matches the QNX image. |
 | D7 | One task at a time. A new command cancels the running one. `stop` always wins. | Matches the README scope. |
+| D8 | **Speech-to-text = faster-whisper on our own Vultr VM** (Vultr has no hosted STT). CPU VM is enough; GPU if the credits allow. The laptop runs it only as a fallback. Audio → 16 kHz mono wav first (iOS records mp4/AAC). | Keeps voice on Vultr for the track; about 1 s per clip. |
+| D9 | **Voice out = ElevenLabs streaming** (the Jarvis voice), Vultr TTS as fallback. Plays on the laptop → Nest Mini over Bluetooth (risky on Windows; laptop speaker as fallback). | Best voice; starts talking almost at once. |
+| D10 | **Mic = phone push-to-talk on the Vultr dashboard (HTTPS)**, laptop mic as fallback. The laptop holds an outbound WSS to Vultr (ping every 15–20 s, reconnect with backoff). | Judges can use their own phones; NAT-safe. |
+| D11 | **Pi ↔ FC over USB through a small root relay process** → UDP `127.0.0.1:14555`; the core runs unprivileged and accepts only the station. | No soldering; root confined to one small "user-space USB driver". |
+| D12 | **Network: venue Wi-Fi if the Pi and laptop can reach each other on it** (no client isolation, no login page); otherwise a travel router; an iPhone hotspot last (fixed IPs, no mDNS). | Venue networks often isolate clients. |
+| D13 | **Height from the FC barometer first;** HC-SR04 (through an Arduino over USB) only if flow-only hover drifts. Verify flow-only in SITL before relying on it. | No soldering; the rangefinder is off the critical path. |
+| D14 | **QNX story: "the AI suggests, QNX decides."** Separate processes (camgrab, flow, vision, USB relay, core) restarted by our supervisor; the safety loop at top `SCHED_FIFO` priority (the small watchdog/heartbeat loop in C); every command through the gate. Demo it: `pidin`, rejected command, person stop with latency, `slay` + restart time, jitter graph under CPU hog, pull the Wi-Fi. | QNX's business is exactly this (cars: infotainment vs brakes); see [review.md](review.md) D. |
+| D15 | **No Linux fallback for the flying role.** If the drone can't fly on QNX in time, the fallback is a tethered or bench demo on QNX. | A "Pi 4 Linux flies" fallback would read as not really QNX. |
+
+### Still to decide
+
+1. **Models** (budget about $200 Vultr): the LLM brain (tool calling), the open-vocabulary
+   detector for "find the red thing", and the VLM for read / solve / describe. Check
+   `GET https://api.vultrinference.com/v1/models` and GPU availability first.
+2. **Command schema:** the LLM's tool definitions (direct moves vs tasks) and how each maps to
+   protocol v1 primitives.
 
 ## 3. Users and core flows
 
