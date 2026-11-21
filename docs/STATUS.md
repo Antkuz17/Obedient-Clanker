@@ -82,7 +82,11 @@ position (altitude used to sag about 0.1 m per command).
      yet). Laptop demo (`tools/supervisor_laptop.json`): `kill -9` camgrab -> respawn 3.5 ms,
      new frame 208 ms; kill edge -> 3.9 ms, serving 119 ms. Add flow/vision entries when they
      exist. On the Pi: replace `LAPTOP_IP`, run as root, then `slay camgrab` for the demo.
-   - Jitter graph from `EdgeServer.loop_stats`.
+   - **Jitter benchmark: done** (`tools/jitter.py`). On the Pi, as root:
+     `python3 -m tools.jitter --compare --out jitter.json` runs idle/hog x normal/FIFO 50 and
+     prints p50/p99/max lateness + a histogram; the JSON (every sample) feeds the dashboard graph.
+     macOS baseline (no FIFO): p50 ~2.5-3.4 ms, p99 5-12 ms, max up to 34 ms under the hog.
+     Not yet: the edge's own `EdgeServer.loop_stats` streamed live, and the loop in C.
 
 ## Review follow-ups (from [review.md](review.md), 2026-11-21)
 
