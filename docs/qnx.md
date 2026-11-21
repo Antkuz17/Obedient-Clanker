@@ -41,6 +41,27 @@ Use real-time priorities (`SCHED_FIFO`): watchdog and safety first, flow next, A
 4. **Max out the CPU.** The control loop's jitter graph stays flat.
 5. **Tell the AI "fly up 10 m".** The safety gate rejects it and shows the reason.
 
+## Verified on our Pi (2026-11-21)
+
+- QNX 8.0.0 on a Raspberry Pi 5: 4× Cortex-A76, 8 GB RAM, 17 GB free on `/data`. Internet works.
+- **SSH:** `ssh qnxuser@192.168.68.131` on the `bootie` Wi-Fi (`qnxpi.local` doesn't resolve
+  on Windows). `sudo` works, and `vncserv` is running for a remote desktop.
+- **Installed:** `python3-numpy` (2.4.1), `python3-opencv` (4.12, with `calcOpticalFlowPyrLK`)
+  and `python3-tflite-runtime` (2.21) via `apk`; `pymavlink` and `pyusb` via
+  `pip --user --no-deps`. The image has **Python 3.14**, not 3.11.
+- **`devc-serusb` is not on the image and not in the repo.** Workaround: `libusb` (apk) + `pyusb`
+  talk to the flight controller's USB CDC-ACM endpoints directly. This **must run as root**;
+  as `qnxuser`, libusb segfaults. Load it with
+  `get_backend(find_library=lambda _: "/usr/lib/libusb-1.0.so.0")`.
+- USB camera support (`qnx-sf-camera-usb`, Sensor Framework unit 5) is installed.
+- **HAM and adaptive partitioning are not available.** For demo 3 we write our own supervisor
+  that restarts a crashed process; for demo 4 we use `SCHED_FIFO` priorities.
+- Wi-Fi config the Pi actually reads: `/data/var/etc/settings/wpa_supplicant.conf` (seeded from
+  `/boot`). The serial console is the Pi 5's 3-pin debug connector (`/dev/ser10`), not GPIO
+  pins 8/10.
+- If it ever disappears from the network: put a `/boot/onboot` script on the SD card. The
+  image runs it as root at boot (`mount_fs.sh`), so it can write diagnostics back to `/boot`.
+
 ## Pi 5 setup (QNX quick-start image)
 
 - **Login:** `qnxuser` / `qnxuser`. Root password `root` (`su`).
