@@ -130,6 +130,52 @@ async def test_brain_refusal_and_fallback():
     assert r.actions[0]["kind"] == "takeoff"
 
 
+@pytest.mark.parametrize("text, kind", [
+    ("Stop!", "stop"), ("stop stop stop", "stop"), ("Jarvis, stop now", "stop"), ("freeze", "stop"),
+    ("hold on", "stop"), ("Land.", "land"), ("land now please", "land"), ("come down", "land")])
+async def test_urgent_commands_skip_the_llm(text, kind):
+    ai = FakeAI({"content": "should not be asked", "tool_calls": []})
+    r = await Brain(ai).think(text)
+    assert ai.calls == [] and r.actions == [{"kind": kind}]
+
+
+@pytest.mark.parametrize("text", ["land on the table after the photo", "don't stop at the door",
+                                  "fly to the bus stop sign", "take off and find the door",
+                                  "go left", "move forward a bit", "fly forward 5 metres",
+                                  "take off to 3 metres", "what's up", "land and go forward 1 metre"])
+async def test_sentences_still_go_to_the_llm(text):
+    ai = FakeAI({"content": "Sure.", "tool_calls": []})
+    await Brain(ai).think(text)
+    assert ai.calls == ["chat"]
+
+
+@pytest.mark.parametrize("text, want", [
+    ("take off", [("takeoff", 1.0)]),
+    ("Take off to 1.2 metres.", [("takeoff", 1.2)]),
+    ("Move forward one meter and turn left 90 degrees.", [("fwd", 1.0), ("yaw_deg", -90.0)]),
+    ("Jarvis, go back 50 centimetres please.", [("fwd", -0.5)]),
+    ("Go up half a metre and turn around.", [("up", 0.5), ("yaw_deg", 180.0)]),
+    ("1 metre left, then come back", [("right", -1.0), ("home", None)]),
+    ("turn right 45°", [("yaw_deg", 45.0)]),
+    ("forward 1 metre then land", [("fwd", 1.0), ("land", None)])])
+async def test_simple_commands_skip_the_llm(text, want):
+    ai = FakeAI({"content": "should not be asked", "tool_calls": []})
+    r = await Brain(ai).think(text, {"armed": True})
+    assert ai.calls == [] and r.source == "fast"
+    got = []
+    for a in r.actions:
+        if a["kind"] == "move":
+            got += [(k, a[k]) for k in ("fwd", "right", "up", "yaw_deg") if a[k]]
+        else:
+            got.append((a["kind"], a.get("alt")))
+    assert got == want
+
+
+async def test_fast_path_takes_off_first_when_landed():
+    r = await Brain(FakeAI(None)).think("forward 1 metre", {"armed": False})
+    assert [a["kind"] for a in r.actions] == ["takeoff", "move"]
+
+
 async def test_ai_missing_key_and_requests():
     s = Settings(vultr_key="", eleven_key="", eleven_voice="")
     ai = AI(s)
@@ -584,7 +630,7 @@ async def test_check_ai_runs_against_a_fake_vultr(capsys):
                 return httpx.Response(200, json={"choices": [{"message": {"content": txt}}]})
             user = body["messages"][-1]["content"]
             tc = ([] if "crash" in user else
-                  [tool_call("move", up=0.5, yaw_deg=180)] if "half" in user else
+                  [tool_call("move", up=0.5, yaw_deg=180)] if "little" in user else
                   [tool_call("recall", query="keys")] if "keys" in user else
                   [tool_call("mission", target="red poster", action="read", after="come_back")])
             return httpx.Response(200, json={"choices": [{"message": {
@@ -782,3 +828,49 @@ def test_no_pin_means_only_this_machine_can_fly(tmp_path):
             r = c.post("/text", json={"text": "take off"}).json()
             assert r["ok"]
             assert _next_actions(st)[0]["kind"] == "takeoff"
+
+
+def test_streamed_voice_runs_the_command_and_reports_errors(tmp_path, monkeypatch):
+    """/ws/voice: PCM frames while held, "end" on release -> the same reply as POST /voice.
+    If streaming STT can't start, the dashboard gets {"error"} and uploads the clip instead."""
+    from fastapi.testclient import TestClient
+    import cloud.app as cloud_app
+
+    class FakeStream:
+        def __init__(self):
+            self.pcm = b""
+
+        @classmethod
+        async def open(cls, s):
+            if not s.stt_stream_model:
+                raise RuntimeError("no model")
+            return cls()
+
+        async def send(self, pcm):
+            self.pcm += pcm
+
+        async def finish(self):
+            return self.pcm.decode()  # "transcribes" by echoing the bytes
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(cloud_app, "StreamingSTT", FakeStream)
+    s = Settings(vultr_key="", station_token="tok", data_dir=tmp_path, control_pin="1234")
+    with TestClient(cloud_app.create_app(s, ai=FakeAI())) as c:
+        with c.websocket_connect("/ws/station?token=tok") as st:
+            with c.websocket_connect("/ws/voice?client=judge&pin=1234") as v:
+                v.send_bytes(b"forward 1 ")
+                v.send_bytes(b"metre")
+                v.send_text("end")
+                r = v.receive_json()
+            assert r["text"] == "forward 1 metre" and r["ok"]
+            assert _next_actions(st)[0] == {"kind": "move", "fwd": 1.0, "right": 0.0,
+                                            "up": 0.0, "yaw_deg": 0.0}
+            with c.websocket_connect("/ws/voice?client=judge&pin=nope") as v:  # no PIN: no STT
+                v.send_bytes(b"land")
+                v.send_text("end")
+                assert v.receive_json().get("need_pin")
+        s.stt_stream_model = ""
+        with c.websocket_connect("/ws/voice?client=judge&pin=1234") as v:
+            assert "error" in v.receive_json()

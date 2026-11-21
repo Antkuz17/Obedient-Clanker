@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
+import json
 import logging
 import shutil
 import time
@@ -127,6 +129,86 @@ class AI:
         except (httpx.HTTPError, MissingKey) as e:
             log.warning("no TTS available (%s); text only", e)
             return b""
+
+
+class StreamingSTT:
+    """Live transcription over Vultr's realtime websocket (`/v1/realtime?intent=transcription`,
+    OpenAI-realtime events). Feed 24 kHz mono s16le PCM while the user talks; `finish()` returns
+    the text about 0.4 s after the last chunk, instead of upload + a whole-clip Whisper call.
+
+        stt = await StreamingSTT.open(settings)
+        await stt.send(pcm)  ...
+        text = await stt.finish()
+    """
+    RATE = 24000
+
+    def __init__(self, ws):
+        self.ws = ws
+        self.parts: list[str] = []
+        self.text: str | None = None
+        self.error: str | None = None
+        self.sent = 0
+        self._done = asyncio.Event()
+        self._reader = asyncio.create_task(self._read())
+
+    @classmethod
+    async def open(cls, s: Settings, timeout: float = 5.0) -> "StreamingSTT":
+        import websockets  # station/cloud dependency; imported here so tests can skip it
+        if not s.stt_stream_model:
+            raise MissingKey("STT_STREAM_MODEL")
+        url = (s.vultr_base.replace("https://", "wss://").replace("http://", "ws://")
+               + f"/realtime?model={s.stt_stream_model}&intent=transcription")
+        ws = await websockets.connect(url, open_timeout=timeout, max_size=2**22,
+                                      additional_headers={"Authorization":
+                                                          f"Bearer {s.need('vultr_key', 'VULTR_INFERENCE_KEY')}"})
+        return cls(ws)
+
+    async def _read(self) -> None:
+        try:
+            async for raw in self.ws:
+                m = json.loads(raw)
+                kind = m.get("type", "")
+                if kind.endswith("input_audio_transcription.delta"):
+                    self.parts.append(m.get("delta", ""))
+                elif kind.endswith("input_audio_transcription.completed"):
+                    self.text = (m.get("transcript") or "".join(self.parts)).strip()
+                    self._done.set()
+                elif kind == "error":
+                    err = m.get("error") or {}
+                    if err.get("code") != "input_audio_buffer_commit_empty":
+                        self.error = err.get("message") or str(err)
+                        self._done.set()
+        except Exception as e:  # socket dropped
+            self.error = self.error or f"stream closed: {e}"
+        self._done.set()
+
+    async def send(self, pcm: bytes) -> None:
+        if pcm and not self._done.is_set():
+            self.sent += len(pcm)
+            await self.ws.send(json.dumps({"type": "input_audio_buffer.append",
+                                           "audio": base64.b64encode(pcm).decode()}))
+
+    @property
+    def partial(self) -> str:
+        return "".join(self.parts).strip()
+
+    async def finish(self, timeout: float = 4.0) -> str:
+        """Commit the audio and wait for the final transcript. Raises on error / timeout."""
+        try:
+            if self.sent and not self._done.is_set():
+                await self.ws.send(json.dumps({"type": "input_audio_buffer.commit",
+                                               "final": True}))
+                await asyncio.wait_for(self._done.wait(), timeout)
+            if self.text is None:
+                raise RuntimeError(self.error or "no audio")
+            return self.text
+        finally:
+            await self.close()
+
+    async def close(self) -> None:
+        self._reader.cancel()
+        with contextlib.suppress(Exception):
+            await self.ws.close()
 
 
 async def to_wav16k(audio: bytes) -> bytes:

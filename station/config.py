@@ -46,6 +46,9 @@ class Settings:
         "BRAIN_BACKUP_MODEL", "qwen3.8-flash-next"))
     vision_model: str = field(default_factory=lambda: _env("VISION_MODEL", "qwen3.8-27b"))
     stt_model: str = field(default_factory=lambda: _env("STT_MODEL", "whisper-large-v3-turbo"))
+    # streaming speech-to-text while the talk button is held (blank STT_STREAM_MODEL = upload only)
+    stt_stream_model: str = field(default_factory=lambda: _env(
+        "STT_STREAM_MODEL", "voxtral-mini-4b-realtime"))
     embed_model: str = field(default_factory=lambda: _env("EMBED_MODEL", "qwen3-embedding-4b"))
     rerank_model: str = field(default_factory=lambda: _env("RERANK_MODEL", "bge-reranker-v2-m3"))
     vultr_tts_model: str = field(default_factory=lambda: _env("VULTR_TTS_MODEL", "chatterbox"))

@@ -37,7 +37,7 @@ from fastapi import (FastAPI, File, Form, HTTPException, Request, UploadFile, We
 from fastapi.responses import FileResponse, HTMLResponse
 from starlette.requests import HTTPConnection
 
-from station.ai import AI
+from station.ai import AI, StreamingSTT
 from station.brain import Brain
 from station.config import MissingKey, Settings, settings as load_settings
 
@@ -307,6 +307,7 @@ def create_app(s: Settings | None = None, ai: AI | None = None) -> FastAPI:
         if not hub.pin_ok(pin, request):
             return await hub.command("(voice)", client, authorized=False)  # skip STT: no PIN
         data = await audio.read()
+        t0 = time.perf_counter()
         try:
             text = await ai.transcribe(data, audio.filename or "clip.webm")
         except MissingKey as e:
@@ -315,8 +316,66 @@ def create_app(s: Settings | None = None, ai: AI | None = None) -> FastAPI:
             raise HTTPException(502, f"speech-to-text failed: {e}")
         if not text:
             return {"text": "", "reply": "I didn't catch that."}
+        t1 = time.perf_counter()
         r = await hub.command(text, client)
-        return {"text": text, **r}
+        stt_ms, plan_ms = round((t1 - t0) * 1000), round((time.perf_counter() - t1) * 1000)
+        await hub.log_line("cloud", f"voice latency: speech-to-text {stt_ms} ms, "
+                                    f"brain + send {plan_ms} ms ({r.get('source', '?')})")
+        return {"text": text, **r, "latency_ms": {"stt": stt_ms, "plan": plan_ms}}
+
+    @app.websocket("/ws/voice")
+    async def voice_stream(ws: WebSocket, client: str = "phone", pin: str = ""):
+        """Push-to-talk, streamed: binary frames of 24 kHz mono s16le PCM while the button is
+        held, then the text "end". Transcribed live (StreamingSTT), so the command runs ~0.4 s
+        after release. Replies with the same JSON as POST /voice, or {"error"} (the dashboard
+        then falls back to uploading the clip to /voice)."""
+        await ws.accept()
+        stt = None
+        try:
+            if not hub.pin_ok(pin, ws):  # no PIN: don't transcribe, just say so on release
+                while (m := await ws.receive())["type"] != "websocket.disconnect":
+                    if m.get("text") == "end":
+                        break
+                else:
+                    return
+                await ws.send_json(await hub.command("(voice)", client, authorized=False))
+                return
+            try:
+                stt = await StreamingSTT.open(s)
+            except Exception as e:
+                await ws.send_json({"error": f"streaming speech-to-text unavailable: {e}"})
+                return
+            while True:
+                m = await ws.receive()
+                if m["type"] == "websocket.disconnect":
+                    return
+                if m.get("bytes"):
+                    await stt.send(m["bytes"])
+                elif m.get("text") == "end":
+                    break
+            t0 = time.perf_counter()
+            try:
+                text = await stt.finish()
+            except Exception as e:
+                await ws.send_json({"error": f"speech-to-text failed: {e}"})
+                return
+            if not text:
+                await ws.send_json({"text": "", "reply": "I didn't catch that."})
+                return
+            t1 = time.perf_counter()
+            r = await hub.command(text, client)
+            stt_ms, plan_ms = round((t1 - t0) * 1000), round((time.perf_counter() - t1) * 1000)
+            await hub.log_line("cloud", f"voice latency (streamed): speech-to-text {stt_ms} ms "
+                                        f"after release, brain + send {plan_ms} ms "
+                                        f"({r.get('source', '?')})")
+            await ws.send_json({"text": text, **r, "latency_ms": {"stt": stt_ms, "plan": plan_ms}})
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+        finally:
+            if stt:
+                await stt.close()
+            with contextlib.suppress(Exception):
+                await ws.close()
 
     @app.post("/text")
     async def text_cmd(request: Request, body: dict):

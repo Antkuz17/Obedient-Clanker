@@ -3,158 +3,272 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
 <title>Hope Drone</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
+  /* Design rule (Fuselab, Lattice): a number earns screen space only when it drives a decision.
+     Always visible: live view, state + height, battery, STOP / talk / LAND, the conversation.
+     Everything else appears as an alert when it matters. */
   :root {
-    --bg: #0e1116; --panel: #171b22; --line: #262c36; --text: #e6e9ef; --muted: #8b93a1;
-    --accent: #5aa9ff; --ok: #3ccf8e; --warn: #f5b942; --bad: #ff5d5d;
+    --ink: #f4f4f5; --ink2: rgba(244,244,245,.62); --ink3: rgba(244,244,245,.36); --hair: rgba(255,255,255,.09);
+    --rail: #0b0b0c; --accent: #ff8a3d; --ok: #4ade80; --warn: #fbbf24; --bad: #ff453a; --qnx: #a78bfa;
+    --sans: Geist, Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; background: var(--bg); color: var(--text);
-    font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  main { max-width: 980px; margin: 0 auto; padding: 12px 16px 40px; display: grid; gap: 12px;
-    grid-template-columns: 1fr; }
-  @media (min-width: 860px) { main { grid-template-columns: 1.4fr 1fr; } }
-  header { display: flex; align-items: center; gap: 10px; grid-column: 1 / -1; }
-  header h1 { font-size: 17px; margin: 0; flex: 1; letter-spacing: .02em; }
-  .pill { font-size: 12px; padding: 3px 9px; border-radius: 99px; background: var(--panel);
-    border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
-  .pill.ok { color: var(--ok); border-color: #1f5a41; } .pill.bad { color: var(--bad); border-color: #5c2525; }
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
-  #video { width: 100%; aspect-ratio: 4 / 3; background: #000; border-radius: 8px; object-fit: contain;
-    display: block; }
-  .tele { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 10px; }
-  .tele div { background: var(--bg); border-radius: 8px; padding: 6px 8px; min-width: 0; }
-  .tele b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; overflow: hidden;
-    text-overflow: ellipsis; white-space: nowrap; }
-  .tele span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
-  .row { display: flex; gap: 8px; }
-  button { font: inherit; border: 0; border-radius: 10px; padding: 12px 14px; cursor: pointer;
-    color: var(--text); background: #232a35; touch-action: manipulation; }
-  button:active { transform: scale(.98); }
-  .stop { background: var(--bad); color: #fff; font-weight: 700; flex: 1; font-size: 17px; }
-  .land { background: var(--warn); color: #1b1300; font-weight: 700; flex: 1; font-size: 17px; }
-  #talk { width: 100%; padding: 22px; font-size: 18px; font-weight: 600; background: var(--accent);
-    color: #041526; margin: 10px 0; user-select: none; -webkit-user-select: none; }
-  #talk.rec { background: var(--bad); color: #fff; }
-  form { display: flex; gap: 8px; }
-  input[type=text], input[type=password] { flex: 1; min-width: 0; font: inherit; padding: 11px 12px; border-radius: 10px;
-    border: 1px solid var(--line); background: var(--bg); color: var(--text); }
-  #reply { min-height: 44px; font-size: 16px; margin: 10px 0 0; }
-  #reply.empty { color: var(--muted); }
-  #log { height: 260px; overflow-y: auto; font: 12.5px/1.45 ui-monospace, Menlo, monospace;
-    margin: 8px 0 0; padding: 0; list-style: none; }
-  #log li { padding: 2px 0; border-bottom: 1px solid #1c2129; word-break: break-word; }
-  #log .who { color: var(--accent); } #log .edge { color: var(--warn); } #log .jarvis { color: var(--ok); }
-  #log time { color: var(--muted); margin-right: 6px; }
-  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; }
-  #photos { display: flex; gap: 8px; overflow-x: auto; }
-  #photos figure { margin: 0; flex: 0 0 140px; }
-  #photos img { width: 140px; border-radius: 6px; display: block; }
-  #photos figcaption { font-size: 11px; color: var(--muted); }
-  #hits li { margin-bottom: 6px; } #hits img { width: 72px; vertical-align: middle; border-radius: 4px; margin-right: 8px; }
-  #hits { list-style: none; padding: 0; margin: 8px 0 0; font-size: 13px; }
-  .qnx { grid-column: 1 / -1; }
-  .qgrid { display: grid; gap: 12px; grid-template-columns: 1fr; }
-  @media (min-width: 860px) { .qgrid { grid-template-columns: 1.4fr 1fr; } }
-  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 10px; }
-  .tiles div { background: var(--bg); border-radius: 8px; padding: 6px 8px; min-width: 0; }
-  .tiles b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .tiles span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
-  #loopc { width: 100%; height: 120px; display: block; background: var(--bg); border-radius: 8px; }
-  .legend { font-size: 11px; color: var(--muted); margin-top: 4px; display: flex; gap: 12px; flex-wrap: wrap; }
-  .legend i { display: inline-block; width: 10px; height: 3px; vertical-align: middle; margin-right: 4px; }
-  table.q { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
-  table.q th { text-align: left; font-weight: 500; color: var(--muted); padding: 3px 4px; }
-  table.q td { padding: 4px; border-top: 1px solid #1c2129; }
-  table.q td.n { text-align: right; white-space: nowrap; }
-  .bar { height: 6px; border-radius: 3px; background: var(--accent); min-width: 2px; }
+  html, body { margin: 0; height: 100%; background: #000; color: var(--ink); font: 14px/1.45 var(--sans);
+    -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent; }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; touch-action: manipulation; }
+  .app { display: grid; grid-template-columns: minmax(0, 1fr) 420px; height: 100vh; }
+  @media (max-width: 960px) { .app { grid-template-columns: minmax(0, 1fr); height: auto; } }
+
+  /* ================= live view ================= */
+  .view { position: relative; overflow: hidden; background: #050505; }
+  @media (max-width: 960px) { .view { height: 72svh; min-height: 420px; } }
+  #video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .vignette { position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(180deg, rgba(0,0,0,.62) 0%, rgba(0,0,0,0) 26%, rgba(0,0,0,0) 58%, rgba(0,0,0,.78) 100%); }
+  .nosig { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; color: var(--ink3);
+    background: radial-gradient(ellipse at center, #141416 0%, #050505 70%); }
+  .nosig b { display: block; font-weight: 500; color: var(--ink2); font-size: 15px; margin-bottom: 4px; }
+  .nosig.hide { display: none; }
+
+  .hud-top { position: absolute; top: 0; left: 0; right: 0; padding: 22px 26px; display: flex; align-items: flex-start; gap: 16px; }
+  .word { font: 600 11px var(--mono); letter-spacing: .32em; color: var(--ink2); display: flex; align-items: center; gap: 10px; }
+  .live { display: inline-flex; align-items: center; gap: 6px; font: 500 11px var(--mono); letter-spacing: .08em; color: var(--ink2); }
+  .live i { width: 6px; height: 6px; border-radius: 50%; background: var(--ink3); }
+  .live.on i { background: var(--bad); box-shadow: 0 0 0 3px rgba(255,69,58,.22); animation: breathe 1.6s infinite; }
+  @keyframes breathe { 50% { opacity: .35; } }
+  .headline { margin-top: 10px; font-size: clamp(26px, 3.2vw, 40px); font-weight: 500; letter-spacing: -.03em; line-height: 1.05;
+    text-shadow: 0 2px 18px rgba(0,0,0,.45); }
+  .headline .alt { font-family: var(--mono); font-weight: 400; letter-spacing: -.04em; }
+  .headline .alt small { font-size: .5em; color: var(--ink2); margin-left: 2px; letter-spacing: 0; }
+  .sub { margin-top: 8px; color: var(--ink2); font-size: 13px; display: flex; gap: 14px; flex-wrap: wrap; }
+  .sub span { display: inline-flex; align-items: center; gap: 6px; }
+  .sub .bad { color: var(--bad); } .sub .warn { color: var(--warn); }
+  .batt { width: 20px; height: 9px; border: 1.2px solid currentColor; border-radius: 2.5px; position: relative; opacity: .9; }
+  .batt::after { content: ""; position: absolute; right: -3.5px; top: 2px; width: 1.6px; height: 3px; border-radius: 1px; background: currentColor; }
+  .batt b { position: absolute; left: 1.2px; top: 1.2px; bottom: 1.2px; border-radius: 1px; background: currentColor; }
+  .who { margin-left: auto; text-align: right; font-size: 12.5px; color: var(--ink2); }
+  .who b { display: block; color: var(--ink); font-weight: 500; }
+  .who .mine { color: var(--ok); }
+
+  .alerts { position: absolute; top: 22px; left: 50%; transform: translateX(-50%); display: grid; gap: 8px; justify-items: center; z-index: 5; width: max-content; max-width: 46%; }
+  @media (max-width: 960px) { .alerts { top: auto; bottom: 104px; max-width: 92%; } .alert { border-radius: 14px; flex-wrap: wrap; row-gap: 0; }
+    .alert small { flex-basis: 100%; padding-left: 17px; } .alert:nth-last-child(n+3) { display: none; } #w-sub { display: none; } }
+  .alert { display: flex; align-items: center; gap: 10px; padding: 9px 14px 9px 12px; border-radius: 999px; font-size: 13px; font-weight: 500;
+    background: rgba(12,12,14,.72); backdrop-filter: blur(16px) saturate(1.4); -webkit-backdrop-filter: blur(16px) saturate(1.4);
+    border: 1px solid var(--hair); animation: drop .28s cubic-bezier(.2,.9,.3,1.2); }
+  .alert i { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  .alert.bad i { background: var(--bad); box-shadow: 0 0 10px var(--bad); } .alert.warn i { background: var(--warn); } .alert.qnx i { background: var(--qnx); box-shadow: 0 0 10px var(--qnx); }
+  .alert small { color: var(--ink2); font-weight: 400; }
+  @keyframes drop { from { opacity: 0; transform: translateY(-8px) scale(.97); } }
+
+  .reticle { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); opacity: .55; pointer-events: none; }
+
+  #fence { position: absolute; left: 26px; bottom: 30px; width: 150px; height: 150px; pointer-events: none; }
+  .fence-cap { position: absolute; left: 26px; bottom: 14px; font: 500 10px var(--mono); letter-spacing: .12em; color: var(--ink3); }
+  @media (max-width: 960px) { #fence { width: 96px; height: 96px; left: 16px; bottom: 132px; } .fence-cap { display: none; } }
+
+  /* dock: STOP · hold to talk · LAND */
+  .dock { position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%); display: flex; align-items: center; gap: 14px; z-index: 4; }
+  @media (max-width: 960px) { .dock { bottom: 22px; gap: 10px; } }
+  .round { width: 62px; height: 62px; border-radius: 50%; display: grid; place-items: center; font: 600 11px var(--mono); letter-spacing: .12em;
+    transition: transform .12s; }
+  .round:active { transform: scale(.94); }
+  #b-stop { background: var(--bad); color: #fff; box-shadow: 0 10px 30px -6px rgba(255,69,58,.65), inset 0 1px 0 rgba(255,255,255,.25); }
+  #b-land { background: rgba(20,20,22,.6); border: 1px solid rgba(255,255,255,.22); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+  #talk { height: 62px; min-width: 260px; padding: 0 26px 0 8px; border-radius: 999px; display: flex; align-items: center; gap: 14px;
+    background: rgba(250,250,250,.94); color: #0a0a0a; font-weight: 600; font-size: 15px; letter-spacing: -.01em;
+    box-shadow: 0 18px 40px -12px rgba(0,0,0,.7); user-select: none; -webkit-user-select: none; transition: background .2s, transform .12s; }
+  #talk:active { transform: scale(.98); }
+  #talk .mic { width: 46px; height: 46px; border-radius: 50%; background: #0a0a0a; color: #fff; display: grid; place-items: center; flex: none; }
+  #talk .mic svg { width: 20px; height: 20px; }
+  #talk .lbl { display: grid; text-align: left; line-height: 1.15; }
+  #talk .lbl small { font: 500 10.5px var(--mono); color: rgba(10,10,10,.5); letter-spacing: .04em; }
+  #wave { display: none; height: 26px; width: 120px; }
+  #talk.rec { background: var(--accent); color: #1a0d03; }
+  #talk.rec #wave { display: block; } #talk.rec .lbl small { color: rgba(26,13,3,.6); }
+  #talk.busy .mic { animation: spin 1s linear infinite; background: conic-gradient(var(--accent), #0a0a0a 70%); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (max-width: 960px) { #talk { min-width: 0; flex: 1; padding-right: 16px; } .dock { left: 14px; right: 14px; transform: none; } #talk .lbl small { display: none; } }
+
+  /* ================= rail ================= */
+  .rail { background: var(--rail); border-left: 1px solid var(--hair); display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+  @media (max-width: 960px) { .rail { border-left: 0; border-top: 1px solid var(--hair); min-height: 70svh; } }
+  .tabs { display: flex; gap: 22px; padding: 22px 26px 0; border-bottom: 1px solid var(--hair); }
+  .tabs button { padding: 0 0 14px; color: var(--ink3); font-weight: 500; font-size: 13.5px; border-bottom: 1.5px solid transparent; margin-bottom: -1px; }
+  .tabs button.on { color: var(--ink); border-color: var(--ink); }
+  .tabs .count { font: 500 10.5px var(--mono); color: var(--ink3); margin-left: 4px; }
+  .pane { display: none; flex: 1; min-height: 0; flex-direction: column; } .pane.on { display: flex; }
+  .scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 26px 26px; scrollbar-width: thin; scrollbar-color: #2a2a2d transparent; }
+  .intro { color: var(--ink3); font-size: 13px; padding: 18px 0 6px; line-height: 1.55; }
+  .intro b { color: var(--ink2); font-weight: 500; }
+
+  /* conversation */
+  .ex { padding: 20px 0 18px; border-bottom: 1px solid var(--hair); }
+  .live-feed .ex:last-child { animation: rise .3s ease-out; }
+  @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+  .meta { display: flex; justify-content: space-between; font: 500 10.5px var(--mono); letter-spacing: .08em; color: var(--ink3); text-transform: uppercase; }
+  .said { font-size: 19px; font-weight: 400; letter-spacing: -.02em; line-height: 1.3; margin: 6px 0 0; color: var(--ink); }
+  .said::before { content: "“"; color: var(--ink3); } .said::after { content: "”"; color: var(--ink3); }
+  .steps { list-style: none; margin: 14px 0 0; padding: 0 0 0 2px; position: relative; }
+  .steps::before { content: ""; position: absolute; left: 5px; top: 8px; bottom: 8px; width: 1px; background: var(--hair); }
+  .steps li { position: relative; padding: 3px 0 3px 22px; font: 400 12.5px var(--mono); color: var(--ink2); }
+  .steps li::before { content: ""; position: absolute; left: 1px; top: 9px; width: 9px; height: 9px; border-radius: 50%; background: var(--rail); border: 1.5px solid var(--ink3); }
+  .steps li b { color: var(--ink); font-weight: 500; }
+  .reply { margin: 12px 0 0; display: flex; gap: 10px; color: var(--accent); font-size: 14.5px; line-height: 1.45; }
+  .reply::before { content: ""; flex: none; width: 2px; border-radius: 2px; background: var(--accent); opacity: .7; }
+  .verdict { margin-top: 12px; font: 500 12px/1.5 var(--mono); }
+  .verdict.ok { color: var(--ok); } .verdict.no { color: var(--bad); }
+  .verdict span { color: var(--ink2); font-weight: 400; }
+  .sys { padding: 10px 0; font: 400 12px var(--mono); color: var(--ink3); border-bottom: 1px solid var(--hair); display: flex; gap: 10px; }
+  .sys time { flex: none; } .sys.bad { color: var(--bad); } .sys.qnx { color: var(--qnx); } .sys.stop { color: var(--ink); }
+
+  .composer { border-top: 1px solid var(--hair); padding: 14px 26px 18px; }
+  .composer form { display: flex; align-items: center; gap: 10px; margin: 0; background: #151517; border: 1px solid var(--hair); border-radius: 14px; padding: 4px 4px 4px 14px;
+    transition: border-color .15s; }
+  .composer form:focus-within { border-color: rgba(255,255,255,.28); }
+  .composer input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; color: var(--ink); font: inherit; font-size: 14px; padding: 9px 0; }
+  .composer input::placeholder { color: var(--ink3); }
+  .send { width: 34px; height: 34px; border-radius: 10px; background: var(--ink); color: #000; display: grid; place-items: center; flex: none; }
+  .prefs { display: flex; gap: 18px; align-items: center; margin-top: 10px; font-size: 12px; color: var(--ink3); }
+  .prefs label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+  .prefs input[type=checkbox] { accent-color: var(--accent); margin: 0; }
+  #i-pin { width: 84px; background: none; border: 0; border-bottom: 1px solid var(--hair); color: var(--ink); font: 500 12px var(--mono); padding: 3px 2px; outline: 0; }
+  #i-pin:focus { border-color: var(--ink2); }
+
+  /* QNX */
+  .big { padding: 18px 0; border-bottom: 1px solid var(--hair); display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 4px 12px; }
+  .big .k { color: var(--ink2); font-size: 13px; }
+  .big .v { font: 400 30px var(--mono); letter-spacing: -.04em; text-align: right; }
+  .big .h { grid-column: 1 / -1; color: var(--ink3); font-size: 12px; }
+  .sect { font: 500 10.5px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink3); margin: 24px 0 10px; }
+  #loopc { width: 100%; height: 130px; display: block; }
+  .legend { font-size: 11.5px; color: var(--ink3); margin-top: 6px; display: flex; gap: 14px; flex-wrap: wrap; }
+  .legend i { display: inline-block; width: 10px; height: 2px; vertical-align: middle; margin-right: 5px; }
+  table.q { width: 100%; border-collapse: collapse; font: 12px var(--mono); }
+  table.q th { text-align: left; font-weight: 400; color: var(--ink3); padding: 6px 0; }
+  table.q td { padding: 9px 0; border-top: 1px solid var(--hair); }
+  table.q .n { text-align: right; white-space: nowrap; padding-left: 10px; }
+  .bar { height: 3px; border-radius: 2px; background: var(--accent); min-width: 2px; }
   .bar.bad { background: var(--bad); } .bar.ok { background: var(--ok); }
-  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--muted); }
+  .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 8px; background: var(--ink3); vertical-align: middle; }
   .dot.up { background: var(--ok); } .dot.down { background: var(--warn); } .dot.failed { background: var(--bad); }
-  .empty-q { color: var(--muted); font-size: 12.5px; }
-  #log .qnx { color: #b48cff; }
-  label.small { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .muted { color: var(--ink3); font: 13px var(--sans); }
+
+  /* memory */
+  .search { display: flex; gap: 8px; margin: 18px 0 6px; }
+  .search input { flex: 1; min-width: 0; background: #151517; border: 1px solid var(--hair); border-radius: 12px; color: var(--ink); font: inherit; padding: 11px 14px; outline: 0; }
+  .search input:focus { border-color: rgba(255,255,255,.28); }
+  .search button { padding: 0 16px; border-radius: 12px; background: var(--ink); color: #000; font-weight: 600; }
+  #hits { list-style: none; margin: 0; padding: 0; }
+  #hits li { display: flex; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--hair); font-size: 13px; color: var(--ink2); }
+  #hits img { width: 76px; aspect-ratio: 4/3; object-fit: cover; border-radius: 8px; flex: none; }
+  #photos { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  #photos:empty::before { content: "No photos yet. Try “take a photo of the door”."; color: var(--ink3); font-size: 13px; grid-column: 1 / -1; }
+  #photos figure { margin: 0; }
+  #photos img { width: 100%; aspect-ratio: 4/3; object-fit: cover; border-radius: 10px; display: block; }
+  #photos figcaption { font-size: 12px; color: var(--ink3); margin-top: 6px; }
 </style>
 </head>
 <body>
-<main>
-  <header>
-    <h1>Hope Drone</h1>
-    <span id="st-station" class="pill bad">drone offline</span>
-    <span id="st-ctrl" class="pill">watching</span>
-  </header>
+<div class="app">
+  <!-- ================= LIVE VIEW ================= -->
+  <section class="view">
+    <div class="nosig" id="nosig"><div><b>Waiting for the drone's camera</b>The live view appears as soon as frames arrive.</div></div>
+    <img id="video" alt="Drone forward camera">
+    <div class="vignette"></div>
+    <svg class="reticle" width="64" height="64" viewBox="0 0 64 64" fill="none" stroke="#fff" stroke-width="1.2">
+      <path d="M32 18v8M32 38v8M18 32h8M38 32h8"/><circle cx="32" cy="32" r="1.6" fill="#fff" stroke="none"/></svg>
 
-  <section class="card">
-    <img id="video" alt="Forward camera">
-    <div class="tele">
-      <div><span>State</span><b id="t-state">–</b></div>
-      <div><span>Alt</span><b id="t-alt">–</b></div>
-      <div><span>Battery</span><b id="t-bat">–</b></div>
-      <div><span>Position</span><b id="t-pos">–</b></div>
-    </div>
-  </section>
-
-  <section class="card">
-    <div class="row">
-      <button class="stop" id="b-stop">STOP</button>
-      <button class="land" id="b-land">LAND</button>
-    </div>
-    <button id="talk">Hold to talk</button>
-    <form id="f-text">
-      <input id="i-text" type="text" placeholder="…or type: fly to the door and take a photo" autocomplete="off">
-      <button>Send</button>
-    </form>
-    <p id="reply" class="empty">Jarvis is listening.</p>
-    <label class="small"><input id="c-audio" type="checkbox" checked> Play replies on this device</label>
-    <label class="small" id="pin-row">Pilot PIN <input id="i-pin" type="password" inputmode="numeric" autocomplete="off" placeholder="needed to fly; STOP works without it"></label>
-  </section>
-
-  <section class="card">
-    <h2>Flight log</h2>
-    <ul id="log"></ul>
-  </section>
-
-  <section class="card qnx">
-    <h2>QNX: real-time safety</h2>
-    <div class="tiles">
-      <div><span>Loop p99</span><b id="q-p99">–</b></div>
-      <div><span>Loop max</span><b id="q-max">–</b></div>
-      <div><span>Stop latency</span><b id="q-stop">–</b></div>
-      <div><span>Restarts</span><b id="q-rest">0</b></div>
-    </div>
-    <div class="qgrid">
+    <div class="hud-top">
       <div>
+        <div class="word">HOPE <span class="live" id="v-live"><i></i><span id="v-fps">NO SIGNAL</span></span></div>
+        <div class="headline"><span id="h-state">Connecting</span><span id="h-alt"></span></div>
+        <div class="sub"><span id="s-batt"><span class="batt"><b id="s-battbar"></b></span><span id="s-batt-t">–</span></span><span id="s-link">Offline</span></div>
+      </div>
+      <div class="who"><b id="w-ctrl">Watching</b><span id="w-sub">Hold the mic to take control</span></div>
+    </div>
+
+    <div class="alerts" id="alerts"></div>
+
+    <canvas id="fence"></canvas>
+    <div class="fence-cap">SAFETY FENCE ±3 M</div>
+
+    <div class="dock">
+      <button class="round" id="b-stop" title="Stop and hover (always works)">STOP</button>
+      <button id="talk" aria-label="Hold to talk">
+        <span class="mic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></span>
+        <span class="lbl"><span id="talk-t">Hold to talk</span><small id="talk-s">or hold Space</small></span>
+        <canvas id="wave"></canvas>
+      </button>
+      <button class="round" id="b-land" title="Land now (needs the pilot PIN)">LAND</button>
+    </div>
+  </section>
+
+  <!-- ================= RAIL ================= -->
+  <aside class="rail">
+    <nav class="tabs">
+      <button data-tab="talk" class="on">Jarvis</button>
+      <button data-tab="qnx">QNX safety</button>
+      <button data-tab="mem">Memory<span class="count" id="mem-n"></span></button>
+    </nav>
+
+    <div class="pane on" id="p-talk">
+      <div class="scroll" id="feed">
+        <p class="intro"><b>Talk to it like a person.</b> “Take off”, “fly to the door and take a photo”, “where did I leave my keys?”
+          Every plan the AI makes goes through the QNX safety gate on the drone before it moves.</p>
+      </div>
+      <div class="composer">
+        <form id="f-text">
+          <input id="i-text" type="text" placeholder="Or type a command…" autocomplete="off">
+          <button class="send" aria-label="Send"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+        </form>
+        <div class="prefs">
+          <label><input id="c-audio" type="checkbox" checked> Voice replies here</label>
+          <label>Pilot PIN <input id="i-pin" type="password" inputmode="numeric" autocomplete="off" placeholder="····"></label>
+        </div>
+      </div>
+    </div>
+
+    <div class="pane" id="p-qnx">
+      <div class="scroll">
+        <p class="intro"><b>The AI suggests, QNX decides.</b> A 50 Hz safety loop on the drone checks every command and keeps flying even if the cloud, the laptop or a process dies.</p>
+        <div class="big"><span class="k">Safety loop lateness, p99</span><span class="v" id="q-p99">–</span><span class="h">Budget 2 ms. Max <span id="q-max">–</span></span></div>
+        <div class="big"><span class="k">Person seen → stop sent</span><span class="v" id="q-stop">–</span></div>
+        <div class="big"><span class="k">Processes restarted</span><span class="v" id="q-rest">0</span><span class="h">Kill any process; the supervisor brings it back.</span></div>
+        <div class="sect">Loop lateness · last 2 min</div>
         <canvas id="loopc"></canvas>
-        <div class="legend"><span><i style="background:var(--accent)"></i>p99 lateness</span>
-          <span><i style="background:var(--warn)"></i>max</span>
-          <span><i style="background:var(--bad)"></i>2 ms budget</span>
-          <span>50 Hz safety loop, last 2 min</span></div>
-        <h2 style="margin-top:14px">Jitter benchmark (CPU hog)</h2>
-        <table class="q" id="q-jit"><tbody><tr><td class="empty-q">Run <code>tools.jitter --compare --udp &lt;laptop&gt;:7010</code> on the Pi.</td></tr></tbody></table>
-      </div>
-      <div>
-        <h2>Processes (supervisor)</h2>
-        <table class="q" id="q-procs"><tbody><tr><td class="empty-q">Waiting for the supervisor.</td></tr></tbody></table>
+        <div class="legend"><span><i style="background:var(--accent)"></i>p99</span><span><i style="background:var(--warn)"></i>max</span><span><i style="background:var(--bad)"></i>2 ms budget</span></div>
+        <div class="sect">Processes</div>
+        <table class="q" id="q-procs"><tbody><tr><td class="muted">Waiting for the supervisor.</td></tr></tbody></table>
+        <div class="sect">Jitter under CPU hog</div>
+        <table class="q" id="q-jit"><tbody><tr><td class="muted">Run <code>tools.jitter --compare</code> on the Pi.</td></tr></tbody></table>
       </div>
     </div>
-  </section>
 
-  <section class="card">
-    <h2>Photos</h2>
-    <div id="photos"></div>
-    <h2 style="margin-top:14px">Memory</h2>
-    <form id="f-mem"><input id="i-mem" type="text" placeholder="where did I leave my keys?"><button>Search</button></form>
-    <ul id="hits"></ul>
-  </section>
-</main>
+    <div class="pane" id="p-mem">
+      <div class="scroll">
+        <form class="search" id="f-mem"><input id="i-mem" type="text" placeholder="Where did I leave my keys?"><button>Ask</button></form>
+        <ul id="hits"></ul>
+        <div class="sect">Photos</div>
+        <div id="photos"></div>
+      </div>
+    </div>
+  </aside>
+</div>
+
 <script>
 const $ = (id) => document.getElementById(id);
 const clientId = (() => {
   try { let c = localStorage.getItem("hd-client"); if (!c) { c = "phone-" + Math.random().toString(36).slice(2, 7); localStorage.setItem("hd-client", c); } return c; }
   catch { return "phone-" + Math.random().toString(36).slice(2, 7); }
 })();
-let ws, me = clientId;
+let ws, me = clientId, online = false, holder = null;
 // Pilot PIN (review3 #4): sent with every command that can move the drone. STOP never needs it.
 const pin = () => $("i-pin").value.trim();
 try { $("i-pin").value = localStorage.getItem("hd-pin") || ""; } catch {}
@@ -167,54 +281,192 @@ function connect() {
   ws.onclose = () => { station(false); setTimeout(connect, 1500); };
 }
 function send(m) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); }
+const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+const hhmm = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
+// ---------- status ----------
 function station(on) {
-  const el = $("st-station");
-  el.textContent = on ? "drone online" : "drone offline";
-  el.className = "pill " + (on ? "ok" : "bad");
+  online = on;
+  $("s-link").textContent = on ? "Drone linked" : "Offline";
+  $("s-link").className = on ? "" : "bad";
+  if (!on) { $("h-state").textContent = "Drone offline"; $("h-alt").textContent = ""; }
+  conditions();
 }
-function control(holder) {
-  const el = $("st-ctrl");
-  el.textContent = !holder ? "controls free" : holder === me ? "you have the controls" : `${holder} is flying`;
-  el.className = "pill" + (holder === me ? " ok" : "");
+function control(h) {
+  holder = h;
+  $("w-ctrl").innerHTML = !h ? "Controls free" : h === me ? '<span class="mine">You have control</span>' : `${esc(h)} is flying`;
+  $("w-sub").textContent = !h ? "Hold the mic to take control" : h === me ? "Others can only watch and press STOP" : "You can still press STOP";
 }
-function fmtTime(t) { return new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
-function logLine(r) {
-  const li = document.createElement("li");
-  const cls = r.who === "jarvis" ? "jarvis" : r.who === "edge" ? "edge" : r.who === "qnx" ? "qnx" : "who";
-  li.innerHTML = `<time>${fmtTime(r.t)}</time><span class="${cls}"></span> `;
-  li.querySelector("span").textContent = r.who;
-  li.append(document.createTextNode(r.text));
-  const log = $("log"); const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 20;
-  log.append(li); while (log.children.length > 200) log.firstChild.remove();
-  if (atBottom) log.scrollTop = log.scrollHeight;
-}
+const STATE = { DISCONNECTED: "Drone offline", IDLE: "On the ground", TAKING_OFF: "Taking off", BUSY: "Flying", HOVER: "Hovering", LANDING: "Landing", FAILSAFE: "Failsafe" };
+let T = null, yawNow = 0; const trail = []; let lastPos = null;
 function telemetry(t) {
   if (!t || !t.state) return;
-  $("t-state").textContent = t.state + (t.active_cmd ? " · " + t.active_cmd : "");
-  $("t-alt").textContent = (t.alt ?? 0).toFixed(2) + " m";
-  $("t-bat").textContent = t.battery_v ? t.battery_v.toFixed(1) + " V" : "–";
-  $("t-bat").style.color = t.battery_v && t.battery_v < 10.6 ? "var(--bad)" : "";
-  $("t-pos").textContent = `${(t.n ?? 0).toFixed(1)}, ${(t.e ?? 0).toFixed(1)} · ${Math.round(t.yaw ?? 0)}°`;
+  T = t; yawNow = t.yaw ?? 0;
+  const air = t.state !== "IDLE" && t.state !== "DISCONNECTED";
+  let s = STATE[t.state] || t.state.toLowerCase();
+  if (t.state === "BUSY" && t.active_cmd) s = t.active_cmd[0].toUpperCase() + t.active_cmd.slice(1).replace(/_/g, " ");
+  $("h-state").textContent = s;
+  $("h-alt").innerHTML = air ? ` <span style="color:var(--ink3)">·</span> <span class="alt">${(t.alt ?? 0).toFixed(2)}<small>m</small></span>` : "";
+  const v = t.battery_v, pct = v ? Math.max(0, Math.min(1, (v - 10.5) / 2.1)) : 0;   // 3S LiPo, rough
+  $("s-battbar").style.width = `calc(${(pct * 100).toFixed(0)}% - 2.4px)`;
+  $("s-batt-t").textContent = v ? `${Math.round(pct * 100)}% · ${v.toFixed(1)} V` : "–";
+  $("s-batt").className = !v ? "" : v < 10.6 ? "bad" : v < 11.0 ? "warn" : "";
+  if (t.n != null) {
+    const p = [t.n, t.e ?? 0];
+    if (!lastPos || Math.hypot(p[0] - lastPos[0], p[1] - lastPos[1]) > 0.05) { trail.push(p); lastPos = p; if (trail.length > 300) trail.shift(); }
+  }
+  drawFence(); conditions();
 }
+
+// ---------- alerts: only things that need a decision ----------
+const toasts = [];  // {cls, text, sub, until}
+function toast(cls, text, sub, secs = 7) {
+  const dup = toasts.find((x) => x.text === text && x.sub === sub); if (dup) { dup.until = Date.now() + secs * 1000; return; }
+  toasts.push({ cls, text, sub, until: Date.now() + secs * 1000 }); conditions(); setTimeout(conditions, secs * 1000 + 50); }
+function conditions() {
+  const list = [];
+  if (!online) list.push({ cls: "bad", text: "No link to the drone", sub: "commands won't reach it" });
+  else if (T) {
+    const mode = (T.mode || "").toUpperCase();
+    if (T.armed && mode && !mode.includes("GUIDED") && !mode.includes("LAND")) list.push({ cls: "warn", text: "Pilot has control", sub: mode.replace(/_/g, " ") });
+    if (T.state === "FAILSAFE") list.push({ cls: "bad", text: "Failsafe active", sub: "the drone is protecting itself" });
+    if (T.battery_v && T.battery_v < 10.6) list.push({ cls: "bad", text: "Battery critical", sub: "land now" });
+    else if (T.battery_v && T.battery_v < 11.0) list.push({ cls: "warn", text: "Battery low" });
+    if (T.state === "IDLE" && T.flow_quality != null && T.flow_quality < 50) list.push({ cls: "warn", text: "Can't see the floor", sub: "optical flow too weak to take off" });
+  }
+  const now = Date.now();
+  while (toasts.length && toasts[0].until < now) toasts.shift();
+  toasts.forEach((x) => list.push(x));
+  $("alerts").innerHTML = list.slice(-3).map((a) => `<div class="alert ${a.cls}"><i></i>${esc(a.text)}${a.sub ? ` <small>${esc(a.sub)}</small>` : ""}</div>`).join("");
+}
+
+// ---------- fence overlay (no box: lines on the vignette) ----------
+function canvasCtx(c) {
+  const dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+  if (!w || !h) return null;
+  if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); }
+  const g = c.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h); return [g, w, h];
+}
+const FENCE = 3.0;  // edge/config.py fence_half
+function drawFence() {
+  const r = canvasCtx($("fence")); if (!r) return; const [g, w, h] = r;
+  const k = (Math.min(w, h) - 8) / (2 * FENCE), X = (e) => w / 2 + e * k, Y = (n) => h / 2 - n * k;
+  g.strokeStyle = "rgba(255,255,255,.28)"; g.lineWidth = 1; g.setLineDash([3, 4]);
+  g.strokeRect(X(-FENCE) + .5, Y(FENCE) + .5, 2 * FENCE * k - 1, 2 * FENCE * k - 1); g.setLineDash([]);
+  g.strokeStyle = "rgba(255,255,255,.5)"; g.beginPath(); g.moveTo(X(0) - 4, Y(0)); g.lineTo(X(0) + 4, Y(0)); g.moveTo(X(0), Y(0) - 4); g.lineTo(X(0), Y(0) + 4); g.stroke();
+  if (trail.length > 1) {
+    g.strokeStyle = "rgba(255,138,61,.85)"; g.lineWidth = 1.5; g.lineJoin = "round"; g.beginPath();
+    trail.forEach(([n, e], i) => i ? g.lineTo(X(e), Y(n)) : g.moveTo(X(e), Y(n))); g.stroke();
+  }
+  if (T && T.n != null) {
+    g.save(); g.translate(X(T.e ?? 0), Y(T.n)); g.rotate((yawNow * Math.PI) / 180);
+    g.fillStyle = "#fff"; g.shadowColor = "rgba(0,0,0,.6)"; g.shadowBlur = 6;
+    g.beginPath(); g.moveTo(0, -7); g.lineTo(5, 5); g.lineTo(0, 2.5); g.lineTo(-5, 5); g.closePath(); g.fill(); g.restore();
+  }
+}
+
+// ---------- video ----------
+let lastFrameAt = 0, fpsEma = 0;
+function frame(m) {
+  const now = performance.now();
+  if (lastFrameAt) { const f = 1000 / Math.max(1, now - lastFrameAt); fpsEma = fpsEma ? fpsEma * 0.8 + f * 0.2 : f; }
+  lastFrameAt = now; $("video").src = "data:image/jpeg;base64," + m.jpeg; $("nosig").classList.add("hide");
+}
+setInterval(() => {
+  const stale = !lastFrameAt || performance.now() - lastFrameAt > 2500;
+  $("nosig").classList.toggle("hide", !stale);
+  $("v-live").classList.toggle("on", !stale);
+  $("v-fps").textContent = stale ? "NO SIGNAL" : `LIVE · ${Math.round(fpsEma)} FPS`;
+}, 500);
+
+// ---------- conversation feed ----------
+const SYSTEM = new Set(["cloud", "station", "qnx", "plan", "jarvis", "edge"]);
+let cur = null;  // the exchange new plan / reply / verdict lines attach to
+function feedAppend(el) {
+  const f = $("feed"), atBottom = f.scrollTop + f.clientHeight >= f.scrollHeight - 40;
+  f.append(el); while (f.children.length > 160) f.children[1].remove();
+  if (atBottom) f.scrollTop = f.scrollHeight;
+}
+const fmtM = (v) => `${Math.abs(v) % 1 ? Math.abs(v).toFixed(1) : Math.abs(v)} m`;
+function stepText(a) {
+  const k = a.kind || a.op || "step";
+  if (k === "move") {
+    const p = [];
+    if (a.fwd) p.push(`${a.fwd > 0 ? "forward" : "back"} <b>${fmtM(a.fwd)}</b>`);
+    if (a.right) p.push(`${a.right > 0 ? "right" : "left"} <b>${fmtM(a.right)}</b>`);
+    if (a.up) p.push(`${a.up > 0 ? "up" : "down"} <b>${fmtM(a.up)}</b>`);
+    if (a.yaw_deg) p.push(`turn ${a.yaw_deg > 0 ? "right" : "left"} <b>${Math.abs(a.yaw_deg)}°</b>`);
+    return p.join(", ") || "hold position";
+  }
+  if (k === "takeoff") return `take off to <b>${fmtM(a.alt ?? 1)}</b>`;
+  const rest = Object.entries(a).filter(([key]) => key !== "kind" && key !== "op")
+    .map(([key, v]) => `${esc(key)} <b>${esc(typeof v === "object" ? JSON.stringify(v) : v)}</b>`).join(" · ");
+  return `<b>${esc(k.replace(/_/g, " "))}</b>${rest ? " · " + rest : ""}`;
+}
+function logLine(r) {
+  const who = r.who || "", text = r.text || "";
+  if (!SYSTEM.has(who)) {
+    if (/^\[(STOP|LAND) button\]$/.test(text)) {
+      const op = text.slice(1, 5).trim();
+      const d = document.createElement("div"); d.className = "sys stop";
+      d.innerHTML = `<time>${hhmm(r.t)}</time><span><b>${op}</b> pressed by ${esc(who === me ? "you" : who)}</span>`; feedAppend(d); cur = null; return;
+    }
+    cur = document.createElement("div"); cur.className = "ex"; cur.dataset.t = r.t;
+    cur.innerHTML = `<div class="meta"><span>${esc(who === me ? "You" : who)}</span><span>${hhmm(r.t)}</span></div><p class="said"></p>`;
+    cur.querySelector(".said").textContent = text; feedAppend(cur); return;
+  }
+  const fresh = cur && r.t - (+cur.dataset.t) < 120;
+  if (who === "plan" && fresh) {
+    let acts = []; try { acts = JSON.parse(text); } catch {}
+    if (acts.length) {
+      const ul = document.createElement("ol"); ul.className = "steps";
+      ul.innerHTML = acts.map((a) => `<li>${stepText(a)}</li>`).join(""); cur.append(ul);
+      const v = document.createElement("div"); v.className = "verdict ok"; v.innerHTML = "✓ Passed the QNX safety gate <span>· sent to the drone</span>";
+      v.dataset.pending = "1"; cur.append(v);
+    }
+    return;
+  }
+  if (who === "jarvis" && fresh) {
+    if (/^Safety says no/i.test(text) && markBlocked(text.replace(/^Safety says no:\s*/i, "").replace(/\.$/, ""))) return;  // the verdict line says it
+    const p = document.createElement("p"); p.className = "reply"; p.textContent = text;
+    const v = cur.querySelector(".verdict"); v ? cur.insertBefore(p, v) : cur.append(p);
+    if (/^Safety says no/i.test(text)) markBlocked(text.replace(/^Safety says no:\s*/i, "").replace(/\.$/, ""));
+    return;
+  }
+  if (who === "edge" && /^safety_reject/.test(text)) {
+    const reason = text.replace(/^safety_reject:\s*/, "");
+    toast("qnx", "QNX blocked a command", reason);
+    if (fresh && markBlocked(reason)) return;
+  }
+  if (who === "edge" && /failsafe|person|palm|watchdog|link/i.test(text)) toast("bad", text.split(":")[0].replace(/_/g, " "), text.split(":").slice(1).join(":").trim());
+  const d = document.createElement("div");
+  d.className = "sys" + (who === "qnx" ? " qnx" : who === "edge" && /reject|fail/i.test(text) ? " bad" : "");
+  d.innerHTML = `<time>${hhmm(r.t)}</time><span></span>`; d.querySelector("span").textContent = (who === "jarvis" ? "" : who + " · ") + text;
+  feedAppend(d);
+}
+function markBlocked(reason) {
+  const v = cur && cur.querySelector(".verdict"); if (!v) return false;
+  v.className = "verdict no"; v.innerHTML = `✕ Blocked by QNX <span>· ${esc(reason)}</span>`; return true;
+}
+
+// ---------- audio + photos ----------
 const audioQ = []; let playing = false;
-function playAudio(b64) {
-  if (!$("c-audio").checked) return;
-  audioQ.push(b64); if (!playing) nextAudio();
-}
+function playAudio(b64) { if (!$("c-audio").checked) return; audioQ.push(b64); if (!playing) nextAudio(); }
 function nextAudio() {
   const b64 = audioQ.shift(); if (!b64) { playing = false; return; }
   playing = true; const a = new Audio("data:audio/mpeg;base64," + b64);
   a.onended = a.onerror = nextAudio; a.play().catch(nextAudio);
 }
+let nPhotos = 0;
 function photo(url, caption) {
   const f = document.createElement("figure");
   f.innerHTML = `<a target="_blank"><img></a><figcaption></figcaption>`;
   f.querySelector("a").href = url; f.querySelector("img").src = url;
   f.querySelector("figcaption").textContent = caption || "";
-  $("photos").prepend(f);
+  $("photos").prepend(f); $("mem-n").textContent = ++nPhotos;
 }
-// --- QNX card -------------------------------------------------------------------------------
+
+// ---------- QNX ----------
 const Q = { loop: [], jitter: {}, procs: {}, stops: [] };
 const ms = (v) => v == null ? "–" : (v < 10 ? v.toFixed(2) : v.toFixed(0)) + " ms";
 function qnxAdd(m) {
@@ -239,28 +491,24 @@ function qnxState(m) {
 function tilesLoop() {
   const l = Q.loop[Q.loop.length - 1]; if (!l) return;
   $("q-p99").textContent = ms(l.p99_ms); $("q-p99").style.color = l.p99_ms > 2 ? "var(--bad)" : "var(--ok)";
-  $("q-max").textContent = ms(l.max_ms); $("q-max").style.color = l.max_ms > 2 ? "var(--warn)" : "";
+  $("q-max").textContent = ms(l.max_ms);
 }
 function tileStop() {
   const s = Q.stops[Q.stops.length - 1]; if (!s) return;
   $("q-stop").textContent = ms(s.ms ?? s.edge_ms);
-  $("q-stop").title = `${s.what}: ${s.ms != null ? "camera frame → stop sent" : "detector msg → stop sent (no frame time)"}`
-    + (s.infer_ms != null ? `, inference ${s.infer_ms} ms` : "");
 }
 function drawLoop() {
-  const c = $("loopc"), dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
-  if (!w) return;
-  c.width = w * dpr; c.height = h * dpr; const g = c.getContext("2d"); g.scale(dpr, dpr);
+  const r = canvasCtx($("loopc")); if (!r) return; const [g, w, h] = r;
   const css = getComputedStyle(document.documentElement), col = (n) => css.getPropertyValue(n).trim();
   const top = Math.max(4, ...Q.loop.map((l) => l.max_ms)) * 1.15, pad = 4;
   const y = (v) => h - pad - (Math.min(v, top) / top) * (h - 2 * pad), x = (i) => pad + (i / 119) * (w - 2 * pad);
-  g.strokeStyle = col("--line"); g.lineWidth = 1; g.font = "10px system-ui"; g.fillStyle = col("--muted");
-  g.fillText(top.toFixed(0) + " ms", pad + 2, 11);
-  g.setLineDash([4, 4]); g.strokeStyle = col("--bad"); g.beginPath(); g.moveTo(pad, y(2)); g.lineTo(w - pad, y(2)); g.stroke(); g.setLineDash([]);
-  if (!Q.loop.length) { g.fillText("waiting for edge --stats-udp", w / 2 - 70, h / 2); return; }
+  g.strokeStyle = "rgba(255,255,255,.06)"; for (let i = 0; i <= 4; i++) { g.beginPath(); g.moveTo(0, pad + i * (h - 2 * pad) / 4); g.lineTo(w, pad + i * (h - 2 * pad) / 4); g.stroke(); }
+  g.font = "11px Geist Mono, monospace"; g.fillStyle = "rgba(244,244,245,.36)"; g.fillText(top.toFixed(0) + " ms", 2, 14);
+  g.setLineDash([3, 4]); g.strokeStyle = col("--bad"); g.lineWidth = 1; g.beginPath(); g.moveTo(0, y(2)); g.lineTo(w, y(2)); g.stroke(); g.setLineDash([]);
+  if (!Q.loop.length) { g.textAlign = "center"; g.fillText("waiting for the drone's safety loop", w / 2, h / 2); g.textAlign = "start"; return; }
   const off = 120 - Q.loop.length;
   for (const [key, color] of [["max_ms", col("--warn")], ["p99_ms", col("--accent")]]) {
-    g.strokeStyle = color; g.lineWidth = 2; g.beginPath();
+    g.strokeStyle = color; g.lineWidth = 1.6; g.beginPath();
     Q.loop.forEach((l, i) => i ? g.lineTo(x(off + i), y(l[key])) : g.moveTo(x(off + i), y(l[key]))); g.stroke();
   }
 }
@@ -268,34 +516,41 @@ function drawJitter() {
   const cases = Object.values(Q.jitter); if (!cases.length) return;
   cases.sort((a, b) => (a.hog - b.hog) || ((a.prio_applied ? 1 : 0) - (b.prio_applied ? 1 : 0)));
   const top = Math.max(...cases.map((c) => c.max_ms), 2);
-  const rows = cases.map((c) => {
-    const name = `${c.hog ? "CPU hog" : "idle"}, ${c.prio_applied ? "FIFO " + c.prio : (c.prio ? "FIFO not applied" : "normal prio")}`;
-    const cls = c.p99_ms > 2 ? "bad" : "ok";
+  $("q-jit").innerHTML = `<thead><tr><th>Case</th><th class="n">p99</th><th class="n">max</th><th></th></tr></thead><tbody>` + cases.map((c) => {
+    const name = `${c.hog ? "CPU hog" : "idle"}, ${c.prio_applied ? "FIFO " + c.prio : (c.prio ? "FIFO not applied" : "normal")}`;
     return `<tr><td>${name}</td><td class="n">${ms(c.p99_ms)}</td><td class="n">${ms(c.max_ms)}</td>
-      <td style="width:35%"><div class="bar ${cls}" style="width:${(Math.log1p(c.max_ms) / Math.log1p(top) * 100).toFixed(1)}%"></div></td></tr>`;
-  });
-  $("q-jit").innerHTML = `<thead><tr><th>Case</th><th class="n">p99</th><th class="n">max</th><th>max (log)</th></tr></thead><tbody>${rows.join("")}</tbody>`;
+      <td class="n" style="width:26%"><div class="bar ${c.p99_ms > 2 ? "bad" : "ok"}" style="width:${(Math.log1p(c.max_ms) / Math.log1p(top) * 100).toFixed(1)}%"></div></td></tr>`;
+  }).join("") + "</tbody>";
 }
 function drawProcs() {
   const ps = Object.values(Q.procs); if (!ps.length) return;
   $("q-rest").textContent = ps.reduce((n, p) => n + (p.restarts || 0), 0);
-  const esc = (t) => String(t).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
-  $("q-procs").innerHTML = `<thead><tr><th>Process</th><th class="n">Restarts</th><th class="n">Respawn</th><th class="n">Serving</th></tr></thead><tbody>` +
+  $("q-procs").innerHTML = `<thead><tr><th>Process</th><th class="n">Restarts</th><th class="n">Back in</th></tr></thead><tbody>` +
     ps.map((p) => `<tr><td><span class="dot ${esc(p.state || "")}"></span>${esc(p.name)}</td><td class="n">${p.restarts || 0}</td>
-      <td class="n">${ms(p.spawn_ms)}</td><td class="n">${ms(p.ready_ms)}</td></tr>`).join("") + "</tbody>";
+      <td class="n">${ms(p.ready_ms ?? p.spawn_ms)}</td></tr>`).join("") + "</tbody>";
 }
-window.addEventListener("resize", drawLoop);
+
+// ---------- tabs ----------
+function showTab(name) {
+  document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
+  document.querySelectorAll(".pane").forEach((p) => p.classList.toggle("on", p.id === "p-" + name));
+  try { localStorage.setItem("hd-tab", name); } catch {}
+  drawLoop();
+}
+document.querySelectorAll(".tabs button").forEach((b) => b.onclick = () => showTab(b.dataset.tab));
+try { const t = localStorage.getItem("hd-tab"); if (t && $("p-" + t)) showTab(t); } catch {}
+window.addEventListener("resize", () => { drawLoop(); drawFence(); });
 
 function handle(m) {
   switch (m.type) {
-    case "hello": me = m.you; station(m.station); control(m.holder); (m.log || []).forEach(logLine); telemetry(m.telemetry); break;
+    case "hello": me = m.you; station(m.station); control(m.holder); $("feed").classList.remove("live-feed"); (m.log || []).forEach(logLine);
+      $("feed").classList.add("live-feed"); $("feed").scrollTop = $("feed").scrollHeight; toasts.length = 0; telemetry(m.telemetry); break;
     case "station": station(m.connected); break;
     case "control": control(m.holder); break;
-    case "telemetry": station(true); telemetry(m); break;
-    case "frame": $("video").src = "data:image/jpeg;base64," + m.jpeg; break;
+    case "telemetry": if (!online) station(true); telemetry(m); break;
+    case "frame": frame(m); break;
     case "log": logLine(m); break;
-    case "reply": $("reply").textContent = m.text; $("reply").className = ""; break;
-    case "heard": if (m.who === me) $("reply").textContent = "“" + m.text + "”"; break;
+    case "heard": if (m.who === me) $("talk-s").textContent = "heard: " + m.text; break;
     case "audio": playAudio(m.mp3); break;
     case "photo": photo(m.url, m.caption); break;
     case "qnx": qnxAdd(m); break;
@@ -309,39 +564,106 @@ $("f-text").onsubmit = (e) => { e.preventDefault(); const v = $("i-text").value.
 $("f-mem").onsubmit = async (e) => {
   e.preventDefault(); const q = $("i-mem").value.trim(); if (!q) return;
   const hits = await (await fetch("/memory/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ q }) })).json();
-  const ul = $("hits"); ul.innerHTML = hits.length ? "" : "<li>Nothing remembered.</li>";
-  hits.forEach((h) => { const li = document.createElement("li"); li.innerHTML = `<img>`; li.querySelector("img").src = h.jpeg_url;
-    li.append(`${h.caption} — (${h.n.toFixed(1)}, ${h.e.toFixed(1)}) at ${fmtTime(h.t)}`); ul.append(li); });
+  const ul = $("hits"); ul.innerHTML = hits.length ? "" : '<li>Nothing remembered yet.</li>';
+  hits.forEach((h) => { const li = document.createElement("li"); li.innerHTML = `<img><span></span>`; li.querySelector("img").src = h.jpeg_url;
+    li.querySelector("span").textContent = `${h.caption} · N ${h.n.toFixed(1)}, E ${h.e.toFixed(1)} · ${hhmm(h.t)}`; ul.append(li); });
 };
 
-// push-to-talk: hold the button, release to send. getUserMedia needs HTTPS.
-let rec, chunks = [];
+// ---------- push-to-talk with a live waveform ----------
+let rec, chunks = [], actx, raf;
+const setTalk = (t, s) => { $("talk-t").textContent = t; $("talk-s").textContent = s; };
+function wave(stream) {
+  try {
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    const an = actx.createAnalyser(); an.fftSize = 256; actx.createMediaStreamSource(stream).connect(an);
+    const data = new Uint8Array(an.frequencyBinCount), c = $("wave");
+    const loop = () => {
+      const r = canvasCtx(c); if (r) {
+        const [g, w, h] = r; an.getByteFrequencyData(data); const n = 18, bw = w / n;
+        g.fillStyle = "#1a0d03";
+        for (let i = 0; i < n; i++) { const v = data[2 + i * 3] / 255, bh = Math.max(3, v * h); g.beginPath(); g.roundRect(i * bw + 1.5, (h - bh) / 2, bw - 3, bh, 2); g.fill(); }
+      }
+      raf = requestAnimationFrame(loop);
+    };
+    loop();
+  } catch {}
+}
+// Live speech-to-text: 24 kHz mono 16-bit PCM over /ws/voice while the button is held, so the
+// text is ready ~0.4 s after release. The recorded clip is the fallback (POST /voice), used
+// only when the stream failed before any command ran (an {error} reply or a closed socket).
+let vs = null;
+function openStream(stream) {
+  try {
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume && actx.resume();
+    const proto = location.protocol === "https:" ? "wss://" : "ws://";
+    const ws = new WebSocket(`${proto}${location.host}/ws/voice?client=${encodeURIComponent(me)}&pin=${encodeURIComponent(pin())}`);
+    ws.binaryType = "arraybuffer";
+    const st = { ws, queue: [] };
+    st.result = new Promise((res) => {
+      ws.onmessage = (ev) => { try { res(JSON.parse(ev.data)); } catch { res({ error: "bad reply" }); } };
+      ws.onclose = () => res({ error: "closed" }); ws.onerror = () => res({ error: "socket error" });
+    });
+    ws.onopen = () => { st.queue.forEach((b) => ws.send(b)); st.queue = []; };
+    const src = actx.createMediaStreamSource(stream), proc = actx.createScriptProcessor(2048, 1, 1), mute = actx.createGain();
+    const ratio = actx.sampleRate / 24000;
+    proc.onaudioprocess = (ev) => {
+      const x = ev.inputBuffer.getChannelData(0), n = Math.floor(x.length / ratio), out = new Int16Array(n);
+      for (let i = 0; i < n; i++) {  // box-filter downsample to 24 kHz
+        const a = Math.floor(i * ratio), b = Math.min(x.length, Math.max(a + 1, Math.floor((i + 1) * ratio)));
+        let s = 0; for (let j = a; j < b; j++) s += x[j];
+        out[i] = Math.max(-1, Math.min(1, s / (b - a))) * 0x7fff;
+      }
+      if (ws.readyState === 1) ws.send(out.buffer); else if (ws.readyState === 0) st.queue.push(out.buffer);
+    };
+    mute.gain.value = 0; src.connect(proc); proc.connect(mute); mute.connect(actx.destination);
+    st.stop = () => { try { proc.disconnect(); src.disconnect(); mute.disconnect(); } catch {} };
+    return st;
+  } catch { return null; }
+}
+async function finishStream(st) {
+  // true: handled (or must not be retried); false: fall back to uploading the clip
+  if (!st) return false;
+  st.stop();
+  if (st.ws.readyState !== 1) { try { st.ws.close(); } catch {} return false; }
+  st.ws.send("end");
+  const j = await Promise.race([st.result, new Promise((r) => setTimeout(() => r({ timeout: true }), 8000))]);
+  if (j.timeout) { toast("warn", "Voice timed out"); try { st.ws.close(); } catch {} return true; }  // may have run: don't resend
+  if (j.error) { console.log("voice stream fell back:", j.error); return false; }
+  return true;
+}
 async function startTalk(e) {
-  e.preventDefault(); if (rec && rec.state === "recording") return;
+  e && e.preventDefault(); if (rec && rec.state === "recording") return;
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find((t) => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || "";
     rec = new MediaRecorder(stream, mime ? { mimeType: mime } : {}); chunks = [];
     rec.ondataavailable = (ev) => ev.data.size && chunks.push(ev.data);
+    vs = openStream(stream);
     rec.onstop = async () => {
-      stream.getTracks().forEach((t) => t.stop());
-      $("talk").classList.remove("rec"); $("talk").textContent = "Thinking…";
+      cancelAnimationFrame(raf); stream.getTracks().forEach((t) => t.stop());
+      $("talk").classList.remove("rec"); $("talk").classList.add("busy"); setTalk("Thinking…", "transcribing and planning");
+      const st = vs; vs = null;
+      if (await finishStream(st)) { $("talk").classList.remove("busy"); setTalk("Hold to talk", "or hold Space"); return; }
       const type = rec.mimeType || "audio/webm"; const ext = type.includes("mp4") ? "m4a" : "webm";
       const fd = new FormData(); fd.append("audio", new Blob(chunks, { type }), "clip." + ext); fd.append("client", me); fd.append("pin", pin());
       try {
         const r = await fetch("/voice", { method: "POST", body: fd });
-        const j = await r.json(); if (!r.ok) $("reply").textContent = j.detail || "Voice failed.";
-      } catch { $("reply").textContent = "Voice upload failed."; }
-      $("talk").textContent = "Hold to talk";
+        const j = await r.json(); if (!r.ok) toast("warn", "Voice failed", j.detail || "");
+      } catch { toast("warn", "Voice upload failed"); }
+      $("talk").classList.remove("busy"); setTalk("Hold to talk", "or hold Space");
     };
-    rec.start(); $("talk").classList.add("rec"); $("talk").textContent = "Listening… release to send";
-  } catch (err) { $("reply").textContent = "Mic unavailable: " + err.message; }
+    rec.start(); $("talk").classList.add("rec"); setTalk("Listening", "release to send"); wave(stream);
+  } catch (err) { toast("warn", "Microphone unavailable", err.message); }
 }
-function stopTalk(e) { e.preventDefault(); if (rec && rec.state === "recording") rec.stop(); }
+function stopTalk(e) { e && e.preventDefault(); if (rec && rec.state === "recording") rec.stop(); }
 const talk = $("talk");
 talk.addEventListener("pointerdown", startTalk); talk.addEventListener("pointerup", stopTalk);
 talk.addEventListener("pointerleave", stopTalk); talk.addEventListener("contextmenu", (e) => e.preventDefault());
+const typing = () => /INPUT|TEXTAREA/.test(document.activeElement?.tagName || "");
+document.addEventListener("keydown", (e) => { if (e.code === "Space" && !e.repeat && !typing()) startTalk(e); });
+document.addEventListener("keyup", (e) => { if (e.code === "Space" && !typing()) stopTalk(e); });
 
+drawFence(); drawLoop(); station(false);
 connect();
 </script>
 </body>
