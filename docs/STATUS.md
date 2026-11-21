@@ -15,13 +15,16 @@ Last updated: 2026-11-21. Update this at the end of every session.
 | Video server + sim camera (fake room: door, whiteboard, keys, chair, plant) | `edge/video.py` | manual: `/forward.jpg`, `X-Pose`, `/camera.json` |
 | MAVLink vehicle (GUIDED, arm, takeoff, position targets, origin, telemetry, `OPTICAL_FLOW` forwarding, GCS heartbeat, FC pre-arm reasons in `done`) | `edge/mav.py` | **ArduPilot SITL** (Copter stable, `tools/sitl_flight.py`): takeoff, fwd/yaw/right moves, gate rejection, return home, watchdog hover → land → disarm all pass with altitude held within 0.15 m. `OPTICAL_FLOW` forwarding is **not** tested (SITL has no flow). Not run on the real FC yet |
 | SITL harness | `tools/sitl/Dockerfile`, `tools/sitl_flight.py` | see above |
+| **USB MAVLink transport** (`--mav usb`): pymavlink `StreamMav` over Anton's pyusb CDC-ACM code | `edge/mavlink_usb.py` | Full SITL flight passes through `StreamMav` (`sitl_flight rawtcp:127.0.0.1:5760`) + regression test. The `UsbCdc` libusb calls are copied from the verified probe but **not yet run inside the edge on the Pi** |
 | Entry point + `SCHED_FIFO` flag | `edge/__main__.py` | manual smoke test with `--sim` |
 | Protocol REPL | `tools/cmd.py` | not run interactively yet |
 
-The test suite has 21 passing tests (`.venv/bin/python -m pytest -q`), plus `tools/sitl_flight.py`, which
+The test suite has 23 passing tests (`.venv/bin/python -m pytest -q`), plus `tools/sitl_flight.py`, which
 must print ALL PASS.
 
-Fixed after SITL: relative moves now build on the last *commanded* target, not the measured
+Fixed after SITL: the stream transport handed pymavlink whole chunks, so messages queued up
+and telemetry lagged further and further behind (the drone armed but never took off). It now
+hands over only the bytes pymavlink asks for. Relative moves now build on the last *commanded* target, not the measured
 position (altitude used to sag about 0.1 m per command).
 
 ## Next for Person A, in order
@@ -36,9 +39,10 @@ position (altitude used to sag about 0.1 m per command).
 5. **Vultr cloud + dashboard** (`cloud/`).
 6. **QNX port** (Pi facts in qnx.md, "Verified on our Pi"): copy `edge/` and `shared/` to the Pi
    and run with `--rt-prio`.
-   - **FC link: USB, verified.** UART needs soldering. Write a pyusb CDC-ACM transport for
-     `MavVehicle` from `tools/fc_usb_probe.py` (two-way MAVLink proven on the Pi; must run as
-     root), e.g. `--mav usb`.
+   - **FC link: USB.** Transport done (`--mav usb`). Next: on the Pi, run
+     `sudo env PYTHONPATH=$HOME/.local/lib/python3.14/site-packages python3 -m edge --mav usb
+     --no-video` with the props **off**, connect `tools.cmd` from the laptop and check that
+     telemetry and arm/disarm work.
    - **Camera grabber: required, and blocks B's flow and the real video server.** OpenCV can't
      open the C270 on QNX; frames come only from QNX's camera API (unit 5, 640×480 @ 30 fps,
      verified). Write a small C helper on `libcamapi` that streams frames to Python (pipe or
