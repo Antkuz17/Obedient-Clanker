@@ -67,8 +67,8 @@ class UsbCdc:
         be = libusb1.get_backend(find_library=lambda _: libusb_path)
         dev = usb.core.find(idVendor=vid, idProduct=pid, backend=be)
         if dev is None:
-            raise RuntimeError(f"flight controller {vid:04x}:{pid:04x} not found on USB "
-                               "(cable? running as root?)")
+            raise RuntimeError(f"USB device {vid:04x}:{pid:04x} not found (unplugged, data-less "
+                               "cable, shorted board? running as root?)")
         cfg = dev.get_active_configuration()
         comm = next(i for i in cfg if i.bInterfaceClass == 0x02)
         data = next(i for i in cfg if i.bInterfaceClass == 0x0A)
