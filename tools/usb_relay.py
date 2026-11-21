@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import socket
 import threading
 import time
@@ -24,6 +25,7 @@ from edge.mavlink_usb import UsbCdc
 
 log = logging.getLogger("usb_relay")
 SILENT_REOPEN_S = 3.0  # FC silent this long -> reopen the USB device
+SILENT_EXIT_S = 5.0    # still silent (read stuck inside libusb) -> exit; the supervisor restarts us
 
 
 class TcpStream:
@@ -85,6 +87,7 @@ class Relay:
         self.write_lock = threading.Lock()  # core + aux writers: never interleave two frames
         self.stop = threading.Event()
         self.bytes_up = self.bytes_down = 0
+        self.last_rx = time.monotonic()
 
     def _ensure_source(self):
         while not self.stop.is_set():
@@ -109,6 +112,18 @@ class Relay:
                     pass
             self.src = None
 
+    def watchdog(self) -> None:
+        """After an FC reboot, libusb on QNX can block inside the stale read forever, so the read
+        loop never sees the silence (seen on the Pi). Exit and let the supervisor restart a fresh
+        relay; the edge re-runs its stream/origin setup when the FC heartbeat returns."""
+        while not self.stop.is_set():
+            time.sleep(0.5)
+            silent = time.monotonic() - self.last_rx
+            if silent > SILENT_EXIT_S:
+                log.error("no FC bytes for %.1f s (USB read stuck?); exiting for a clean restart",
+                          silent)
+                os._exit(3)
+
     def fc_to_core(self) -> None:
         last_rx = time.monotonic()
         while not self.stop.is_set():
@@ -127,7 +142,7 @@ class Relay:
                 last_rx = time.monotonic()
                 continue
             if data:
-                last_rx = time.monotonic()
+                last_rx = self.last_rx = time.monotonic()
                 self.udp.sendto(data, self.core_addr)
                 self.bytes_down += len(data)
                 if self.tap_peer is not None:
@@ -153,7 +168,9 @@ class Relay:
             except Exception as e:
                 self._drop_source(e)
 
-    def run(self) -> None:
+    def run(self, exit_on_silence: bool = True) -> None:
+        if exit_on_silence:
+            threading.Thread(target=self.watchdog, daemon=True, name="relay-watchdog").start()
         threading.Thread(target=self.core_to_fc, daemon=True, name="relay-up").start()
         if self.aux:
             threading.Thread(target=self.core_to_fc, args=(self.aux,), daemon=True,
