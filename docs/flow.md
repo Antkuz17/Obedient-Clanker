@@ -39,8 +39,8 @@ Example: *"fly to the door and take a photo"*.
 |---|---|---|---|---|
 | 1 | You → phone | Mic | Speech while holding the button | The browser's `getUserMedia` needs **HTTPS**, so Vultr needs a domain + TLS (GoDaddy domain + Let's Encrypt) |
 | 2 | Phone → Vultr `POST /voice` | HTTPS | Audio clip (webm/opus, about 2–5 s) | **Fallback:** the laptop mic with a push-to-talk key, posted to the same endpoint |
-| 3 | Vultr: speech-to-text | **faster-whisper on our own Vultr VM** (CPU `small.en` int8 about 1 s per clip; GPU if credits allow) | Text: "fly to the door and take a photo" | Vultr has no *hosted* STT, so we run it ourselves. Convert to 16 kHz mono wav first (iOS records mp4/AAC). Laptop faster-whisper is the fallback if the VM is down |
-| 4 | Vultr: LLM brain | Vultr Serverless Inference, `api.vultrinference.com/v1/chat/completions`, `kimi-k2-instruct` (tool calling documented) | System prompt (personality, rules) + text + latest telemetry → **one tool call** `mission(where="the door", what="photo", after="come_back")` + a spoken one-liner ("On it.") | Dumb or dangerous requests: no tool call, just a sassy refusal |
+| 3 | Vultr: speech-to-text | **Vultr hosted** `whisper-large-v3-turbo` (or `voxtral` streaming) | Text: "fly to the door and take a photo" | No VM needed ([models.md](models.md)). Convert to 16 kHz mono wav first (iOS records mp4/AAC) |
+| 4 | Vultr: LLM brain | Vultr Serverless Inference, `glm-5.3-flash` (verified 0.6–0.8 s tool calls) | System prompt (personality, rules) + text + latest telemetry → **one tool call** `mission(where="the door", what="photo", after="come_back")` + a spoken one-liner ("On it.") | Dumb or dangerous requests: no tool call, just a sassy refusal |
 | 5 | Vultr → laptop | The WSS connection the laptop opened at startup | `{mission, reply_text, request_id}` | The laptop is behind NAT, so it **dials out**; the cloud never connects in |
 | 6 | Vultr: text-to-speech | **ElevenLabs** streaming API (the Jarvis voice), Vultr TTS as fallback | `reply_text` → mp3 | Sent to the laptop (and the phone) right away, so it talks while it starts moving |
 | 7 | Laptop → Nest Mini | Bluetooth A2DP | Plays the mp3 | The Nest is the laptop's default audio output |
@@ -54,8 +54,8 @@ Example: *"fly to the door and take a photo"*.
 | 15 | Laptop → Vultr | WSS | Telemetry at 2–5 Hz, JPEG at about 5 fps, `done`/`event`, the photo | Vultr fans out to every open dashboard |
 | 16 | Vultr: VLM (for "read" / "solve" / "describe") | Serverless Inference | Frame + question → answer text → TTS → back through steps 6–7 | |
 
-**Latency budget, voice to "moving":** upload 0.3 s + STT on the VM 1.0 s + LLM 1.0 s + WSS
-0.2 s + first `cmd` 0.1 s ≈ **2.6 s**. Target is under 3 s (PRD section 8).
+**Latency budget, voice to "moving":** upload 0.3 s + STT 0.7 s + LLM 0.8 s + WSS
+0.2 s + first `cmd` 0.1 s ≈ **2.1 s**. Target is under 3 s (PRD section 8).
 
 ## 2. Inside the drone (QNX Pi)
 
