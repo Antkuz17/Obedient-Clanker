@@ -11,6 +11,8 @@ chown -R qnxuser:qnxuser logs  # children run as qnxuser (blackbox writes logs/b
 slay -f sensor 2>/dev/null; sleep 1
 sensor -U 521:521 -b external -r /data/share/sensor -c /etc/config/sensor/sensor_rpi5.conf > logs/sensor.out 2>&1 < /dev/null &
 sleep 3
+# where the dashboard's QNX card listens (written by deploy_pi --stations: <laptop>:7010)
+EV=$(cat qnx_stats_to 2>/dev/null)
 exec env PYTHONPATH=/data/home/qnxuser/hope:/data/home/qnxuser/.local/lib/python3.14/site-packages \
     python3 -u -m tools.supervisor supervisor_local.json --child-logs logs \
-    --log logs/supervisor_events.jsonl > logs/supervisor.out 2>&1 < /dev/null
+    --log logs/supervisor_events.jsonl ${EV:+--events-udp $EV} > logs/supervisor.out 2>&1 < /dev/null

@@ -25,7 +25,7 @@ def main() -> None:
     import paramiko
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default=os.environ.get("QNX_HOST", "192.168.68.131"))
-    ap.add_argument("--build", action="store_true", help="rebuild camgrab and hbwd on the Pi")
+    ap.add_argument("--build", action="store_true", help="rebuild camgrab, hbwd and slog2d on the Pi")
     ap.add_argument("--run", help="then run this command in ~/hope on the Pi and print its output")
     ap.add_argument("--autostart", choices=("on", "off"),
                     help="on: install tools/onboot.sh as /boot/onboot (stack starts at power-on); "
@@ -75,6 +75,9 @@ def main() -> None:
                     sf.chmod(remote, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP)
                 sent += 1
     print(f"synced {sent} changed file(s) to {a.host}:{REMOTE}")
+    # the boot auto-start runs start_sup.sh: keep it the same as tools/start_pi.sh
+    c.exec_command(f"cd {REMOTE} && cp tools/start_pi.sh start_sup.sh && chmod +x start_sup.sh",
+                   timeout=30)[1].read()
 
     def run(cmd: str) -> None:
         _, out, err = c.exec_command(f"cd {REMOTE} && {cmd}", timeout=300)
@@ -100,6 +103,8 @@ def main() -> None:
             child["cmd"] = out
         with sf.open(f"{REMOTE}/supervisor_local.json", "w") as f:
             f.write(json.dumps(cfg, indent=2))
+        with sf.open(f"{REMOTE}/qnx_stats_to", "w") as f:  # start_pi.sh: supervisor events
+            f.write(f"{ips[0]}:7010\n")
         print(f"wrote supervisor_local.json: stations {ips}"
               + (", DEMO MODE (never flies)" if a.demo else "") + " (restart the stack to apply)")
 
@@ -114,7 +119,8 @@ def main() -> None:
 
     if a.build:
         run("cc -O2 -o edge/camgrab/camgrab edge/camgrab/camgrab.c -lcamapi && echo camgrab ok;"
-            " [ -f edge/hbwd/hbwd.c ] && cc -O2 -o edge/hbwd/hbwd edge/hbwd/hbwd.c -lsocket && echo hbwd ok")
+            " [ -f edge/hbwd/hbwd.c ] && cc -O2 -o edge/hbwd/hbwd edge/hbwd/hbwd.c -lsocket && echo hbwd ok;"
+            " cc -O2 -o edge/slog2d/slog2d edge/slog2d/slog2d.c /usr/lib/libslog2.so.1 -lsocket && echo slog2d ok")
     if a.run:
         run(f"env {PYPATH} {a.run}")
 
