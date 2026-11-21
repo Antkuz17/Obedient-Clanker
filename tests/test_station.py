@@ -709,6 +709,27 @@ def test_cloud_keeps_qnx_state_for_late_viewers(tmp_path):
     assert any("person stop: 41.0 ms" in r["text"] for r in log)
 
 
+def test_cloud_process_list_from_supervisor_status(tmp_path):
+    """A dashboard that connects after the start events still sees every process."""
+    from fastapi.testclient import TestClient
+    from cloud.app import create_app
+
+    app = create_app(Settings(vultr_key="", station_token="tok", data_dir=tmp_path), ai=FakeAI())
+    with TestClient(app) as c, c.websocket_connect("/ws/station?token=tok") as st:
+        for m in [{"src": "supervisor", "kind": "status", "name": "edge", "pid": 5,
+                   "state": "up", "restarts": 0, "prio": 45},
+                  {"src": "supervisor", "kind": "status", "name": "vision", "pid": None,
+                   "state": "down", "restarts": 2, "prio": 11}]:
+            st.send_json({"type": "qnx", **m})
+        st.send_json({"type": "telemetry", "state": "IDLE"})
+        with c.websocket_connect("/ws/ui") as ui:
+            while ui.receive_json()["type"] != "qnx_state":
+                pass
+        q = c.get("/qnx").json()
+    assert {p["name"]: p["state"] for p in q["procs"]} == {"edge": "up", "vision": "down"}
+    assert q["events"] == []                       # snapshots aren't events
+
+
 async def test_station_forwards_qnx_datagrams(tmp_path):
     import socket
     from station import station as st_mod

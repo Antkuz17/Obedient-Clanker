@@ -41,6 +41,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable
 
+from edge.slog import slog  # stdlib only
+
 log = logging.getLogger("supervisor")
 
 POLL_S = 0.02          # 50 Hz death check
@@ -48,6 +50,13 @@ STABLE_S = 10.0        # up this long -> crash backoff resets
 BACKOFF_MAX_S = 5.0
 READY_TIMEOUT_S = 10.0
 STOP_GRACE_S = 2.0
+STATUS_S = 5.0         # --events-udp: every child's state this often
+SLOG_TEXT = {          # kind -> (slog2 level, line); the event's fields fill it in
+    "start": ("I", "supervisor: {name} started (pid {pid})"),
+    "exit": ("W", "supervisor: {name} died (signal {signal}, code {code}) after {up_s} s"),
+    "restart": ("N", "supervisor: {name} restarted: respawn {spawn_ms} ms, serving {ready_ms} ms"),
+    "spawn_failed": ("E", "supervisor: {name} failed to start: {error}"),
+}
 
 
 @dataclass
@@ -187,6 +196,10 @@ class Supervisor:
                 self._udp.sendto(line.encode(), self._udp_addr)
             except OSError:
                 pass
+        if kind in SLOG_TEXT and "name" in kw:  # QNX system log (edge/slog2d)
+            text = SLOG_TEXT[kind][1].format(**{"signal": None, "code": None, "up_s": 0,
+                                                "spawn_ms": None, "ready_ms": None, **kw})
+            slog(text.replace(", serving None ms", ""), SLOG_TEXT[kind][0])
         return ev
 
     # --- lifecycle ---------------------------------------------------------------------------
@@ -272,11 +285,30 @@ class Supervisor:
                 c.died_at, c.next_start = time.monotonic(), time.monotonic() + 1.0
                 self.emit("spawn_failed", name=c.name, error=str(e))
 
+    def send_status(self) -> None:
+        """Every child's state, UDP only (not the log): a dashboard that connects after the
+        start events still shows the whole process list."""
+        if not self._udp:
+            return
+        for c in self.children:
+            up = c.proc is not None and c.proc.poll() is None
+            line = json.dumps({"t": time.time(), "kind": "status", "name": c.name,
+                               "pid": c.proc.pid if up else None, "state": "up" if up else "down",
+                               "restarts": c.restarts, "prio": c.prio})
+            try:
+                self._udp.sendto(line.encode(), self._udp_addr)
+            except OSError:
+                pass
+
     def run(self) -> None:
         self.start()
+        last_status = 0.0
         try:
             while not self._stop.is_set():
                 self.step()
+                if time.monotonic() - last_status >= STATUS_S:
+                    self.send_status()
+                    last_status = time.monotonic()
                 self._stop.wait(POLL_S)
         finally:
             self.shutdown()

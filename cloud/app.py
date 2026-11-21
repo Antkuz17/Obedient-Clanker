@@ -88,6 +88,11 @@ class QnxState:
             self.stops = (self.stops + [m])[-QNX_STOPS_KEEP:]
         elif src == "jitter" and kind == "jitter_case":
             self.jitter[f"{bool(m.get('hog'))}|{m.get('prio', 0)}"] = m
+        elif src == "supervisor" and kind == "status" and (name := m.get("name")):
+            # periodic snapshot (tools/supervisor.py send_status): the process list, not an event
+            p = self.procs.setdefault(name, {"name": name, "restarts": 0})
+            p.update(state=m.get("state"), pid=m.get("pid"), restarts=m.get("restarts", 0),
+                     prio=m.get("prio"))
         elif src == "supervisor" and (name := m.get("name")):
             self.events = (self.events + [m])[-QNX_EVENTS_KEEP:]
             p = self.procs.setdefault(name, {"name": name, "restarts": 0})
