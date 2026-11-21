@@ -1,28 +1,41 @@
 # To-do
 
+## 🔴 KEYS FIRST: every key and setting (nothing smart runs without these)
+
+**Names only here, never the values.** This file is in git. The real values go in `.env`
+(git-ignored) on the laptop **and** on the Vultr VM; template: `.env.example`.
+Without the Vultr key the station silently uses the rule brain: no LLM, no speech-to-text,
+no vision, no memory, no voice.
+
+Status on the cloud lead's laptop, checked 2026-11-21:
+
+| ✓ | `.env` variable | Where | What it powers / how to get it | Status |
+|---|---|---|---|---|
+| [ ] | 🔴 `VULTR_INFERENCE_KEY` | laptop + VM | Brain (`glm-5.3-flash`), STT (`whisper-large-v3-turbo`), vision (`qwen3.8-27b`), embeddings, rerank, `chatterbox` TTS. Vultr dashboard → Serverless Inference. A working key was used for `docs/models.md` timings; get it from whoever ran those | **blank** |
+| [ ] | 🔴 `ELEVENLABS_API_KEY` | laptop + VM | Jarvis voice. elevenlabs.io → Profile → API keys. Without it: `chatterbox`, then text only | **blank** |
+| [ ] | 🔴 `ELEVENLABS_VOICE_ID` | laptop + VM | The cloned/chosen Jarvis voice. ElevenLabs → Voices → copy ID | **blank** |
+| [x] | `STATION_TOKEN` | laptop + VM (same value) | Laptop ↔ cloud link auth. Generated 2026-11-21; `cloud/deploy.sh` copies it | set |
+| [ ] | `CONTROL_PIN` | VM only | Dashboard pilot PIN (without it viewers can only watch + STOP). Any PIN you choose | **missing from `.env`** (add the line) |
+| [ ] | `CLOUD_URL` | laptop only | `wss://<your-domain>` of the Vultr VM. Needs the VM + domain below | **blank** |
+| [ ] | `EDGE_HOST` | laptop only | The Pi's IP on the drone network | **blank** |
+| [ ] | 🔴 Vultr VM + credits + **domain** | n/a | Hosts cloud app + dashboard; phones need HTTPS for the mic. Steps: [cloud/deploy.md](../cloud/deploy.md) | not done |
+
+Optional overrides (defaults are fine): `VULTR_INFERENCE_BASE`, `BRAIN_MODEL`,
+`BRAIN_BACKUP_MODEL`, `VISION_MODEL`, `STT_MODEL`, `EMBED_MODEL`, `RERANK_MODEL`,
+`VULTR_TTS_MODEL`, `ELEVENLABS_MODEL`, `EDGE_PORT`, `VIDEO_PORT`, `DATA_DIR`.
+
+**Verify once filled:**
+- [ ] `python -m station.check_ai` on the laptop: brain, STT, vision boxes, read/solve,
+      embeddings, rerank, TTS, voice latency (also answers models.md "Still to test")
+- [ ] `curl https://<cloud>/health` → `"keys": {"vultr": true, "elevenlabs": true}`
+
+---
+
 Last updated: 2026-11-21. A = Person A (Flight + Voice + all off-drone software),
 B = Person B (on-drone perception + hardware). Split changed 2026-11-21: A took over B's
 software that isn't tied to drone hardware (localization, VLM tasks, visual memory).
 Details and commands: [STATUS.md](STATUS.md). Plan and split: [PRD.md](PRD.md). Tick items
 here as they're done.
-
-## 🔴 CRITICAL: keys and accounts (the voice/vision demo does not run without these)
-
-The software is written and tested as if these exist. Without them: rule-based commands
-only, no speech-to-text, no vision, no memory, no voice. Put them in `.env` on the laptop **and**
-on the Vultr VM (template: `.env.example`; `.env` is git-ignored, never commit it).
-Check with `curl https://<cloud>/health` → `"keys": {"vultr": true, "elevenlabs": true}`.
-
-- [ ] 🔴 **A: Vultr Serverless Inference key** → `VULTR_INFERENCE_KEY`. Powers the brain
-      (`glm-5.3-flash`), speech-to-text (`whisper-large-v3-turbo`), vision (`qwen3.8-27b`:
-      locate / read / solve / describe) and memory embeddings (`qwen3-embedding-4b`)
-- [ ] 🔴 **A: ElevenLabs API key + voice ID** → `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`
-      (the Jarvis voice). Without it: Vultr `chatterbox` TTS, then text only
-- [ ] 🔴 **A: Vultr account/credits for a VM** (cloud app + dashboard) and a **domain** pointing
-      at it (phones need HTTPS for the mic). Steps: [cloud/deploy.md](../cloud/deploy.md)
-- [x] **A: `STATION_TOKEN`**: generated into this laptop's `.env` (2026-11-21). Copy the same `.env` to the VM (`cloud/deploy.sh` does it)
-- [ ] **A: check the models on the real key**: **one command, `python -m station.check_ai`** (brain, STT, vision boxes on a sim frame, read/solve, embeddings, rerank, TTS, voice latency): vision model returns usable boxes on real C270
-      frames; STT latency; ElevenLabs vs chatterbox (models.md "Still to test")
 
 ## Now: before anything flies
 
