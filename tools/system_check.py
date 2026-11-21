@@ -124,7 +124,9 @@ async def edge_checks() -> None:
         await edge.run("move_body", fwd=-0.5, timeout=5)
         check("edge safety gate", False, "a move while landed was NOT refused")
     except CommandRejected as e:
-        check("edge safety gate", "not flying" in str(e) or "take off" in str(e), f"refused: {e}")
+        demo = t.get("mode") == "GUIDED-DEMO" or "indoors" in str(e)  # edge --demo refuses all
+        check("edge safety gate", demo or "not flying" in str(e) or "take off" in str(e),
+              ("DEMO MODE, refused: " if demo else "refused: ") + str(e)[:70])
 
 
 def http_checks(env: dict) -> None:
