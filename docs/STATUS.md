@@ -13,17 +13,20 @@ Last updated: 2026-11-21. Update this at the end of every session.
 | Server: TCP protocol, 10 Hz telemetry, 50 Hz safety loop, watchdog (hover 1 s, land 5 s), battery auto-land, perception UDP :7001, flow UDP :7002 → FC | `edge/server.py` | e2e tests vs the sim |
 | Kinematic sim vehicle | `edge/sim.py` | e2e tests |
 | Video server + sim camera (fake room: door, whiteboard, keys, chair, plant) | `edge/video.py` | manual: `/forward.jpg`, `X-Pose`, `/camera.json` |
-| MAVLink vehicle (GUIDED, arm, takeoff, position targets, origin, telemetry, `OPTICAL_FLOW` forwarding, GCS heartbeat) | `edge/mav.py` | **NOT tested yet**: no SITL run so far |
+| MAVLink vehicle (GUIDED, arm, takeoff, position targets, origin, telemetry, `OPTICAL_FLOW` forwarding, GCS heartbeat, FC pre-arm reasons in `done`) | `edge/mav.py` | **ArduPilot SITL** (Copter stable, `tools/sitl_flight.py`): takeoff, fwd/yaw/right moves, gate rejection, return home, watchdog hover → land → disarm all pass with altitude held within 0.15 m. `OPTICAL_FLOW` forwarding is **not** tested (SITL has no flow). Not run on the real FC yet |
+| SITL harness | `tools/sitl/Dockerfile`, `tools/sitl_flight.py` | see above |
 | Entry point + `SCHED_FIFO` flag | `edge/__main__.py` | manual smoke test with `--sim` |
 | Protocol REPL | `tools/cmd.py` | not run interactively yet |
 
-The test suite has 20 passing tests (`.venv/bin/python -m pytest -q`).
+The test suite has 21 passing tests (`.venv/bin/python -m pytest -q`), plus `tools/sitl_flight.py`, which
+must print ALL PASS.
+
+Fixed after SITL: relative moves now build on the last *commanded* target, not the measured
+position (altitude used to sag about 0.1 m per command).
 
 ## Next for Person A, in order
 
-1. **SITL run of `edge/mav.py`.** ArduPilot Copter SITL in Docker, then `python -m edge --mav
-   tcp:127.0.0.1:5760`; fly takeoff/move/yaw/land from `tools.cmd`. Expect issues with arming
-   checks (`ARMING_SKIPCHK`), the EKF origin and `landed` detection.
+1. ~~SITL run of `edge/mav.py`~~ done.
 2. **Planner** (`station/planner.py`): `mission(where, what, after)` → primitive sequence using
    `shared/client.py`. Include scan-until-found with a stub `locate()`
    (`station/localize_stub.py`, reading `edge.video.SIM_WORLD`).
@@ -39,6 +42,9 @@ The test suite has 20 passing tests (`.venv/bin/python -m pytest -q`).
 
 - Is `flow_rate_x/y` (vs `flow_x/y` pixels) what ArduPilot 4.7's MAV flow backend reads? The
   docs say rate. Confirm in SITL or in `AP_OpticalFlow_MAV.cpp`.
+- SITL needs about 20 s after boot for the EKF ("Need Position Estimate"); the flight script
+  retries takeoff. On the real drone the same error means no origin or no flow; see
+  flight-setup.md.
 - `MavVehicle` reports `flow_quality` from what the Pi last forwarded. With no flow process
   running, it's 0, so the gate refuses takeoff. That's intended on the real drone; for SITL
   without flow, lower `flow_quality_min` or feed fake flow.

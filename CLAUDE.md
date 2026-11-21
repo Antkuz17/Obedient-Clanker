@@ -24,8 +24,12 @@ uv venv --python 3.11 .venv && uv pip install --python .venv -e '.[dev]'
 .venv/bin/python -m pytest -q                  # all tests (sim-based, about 20 s)
 .venv/bin/python -m edge --sim                 # fake drone: TCP :7000, video :8080
 .venv/bin/python -m tools.cmd                  # REPL: takeoff alt=1 / move_body fwd=1 / t / land
-.venv/bin/python -m edge --mav tcp:127.0.0.1:5760   # ArduPilot SITL
+# ArduPilot SITL (Docker/OrbStack; x86 binary runs under Rosetta)
+docker build -t hope-sitl tools/sitl && docker run --rm -d --name hope-sitl -p 5760:5760 hope-sitl
+.venv/bin/python -m tools.sitl_flight              # scripted flight, must print ALL PASS
+.venv/bin/python -m edge --mav tcp:127.0.0.1:5760 --sitl   # or fly it by hand with tools.cmd
 ```
+Restart the SITL container (`docker restart hope-sitl`) between runs.
 
 ## Rules
 
