@@ -8,6 +8,14 @@
     ]
   },
   {
+    "name": "slog2d",
+    "prio": 30,
+    "user": "qnxuser",
+    "cmd": [
+      "./edge/slog2d/slog2d"
+    ]
+  },
+  {
     "name": "usb_relay",
     "prio": 50,
     "cmd": [

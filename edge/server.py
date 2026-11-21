@@ -23,6 +23,7 @@ from shared import protocol as P
 from . import demo
 from .config import SafetyConfig, WatchdogConfig
 from .executor import Executor
+from .slog import slog
 from .safety import SafetyGate
 from .vehicle import Vehicle
 
@@ -128,6 +129,9 @@ class EdgeServer:
 
     # --- station link ------------------------------------------------------------------------
     def _emit(self, msg: dict) -> None:
+        if msg.get("type") == P.EVENT:  # QNX system log too (edge/slog2d), station or not
+            slog(f"edge {msg.get('kind')}: {msg.get('detail')}",
+                 "I" if msg.get("kind") == "restart" else "W")
         w = self._writer
         if w is None or w.is_closing():
             return
