@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import math
 import shutil
 import subprocess
 import sys
@@ -108,6 +109,17 @@ async def check_vision(ai: AI) -> None:
             continue
         if not hit:
             record("vision", "FAIL", f"locate({name}) found nothing (VLM gave no usable box)", dt)
+            continue
+        if hit.get("upper_bound"):
+            # box cut off by the frame bottom (the chair at 2.2 m with the camera 1 m up): the
+            # range is only "at most this far" and the planner won't fly to it; check what
+            # locate() promises then: the right direction, and a bound that isn't too close
+            true_brg = math.degrees(math.atan2(e, n)) % 360
+            brg_err = abs((hit["bearing"] - true_brg + 180) % 360 - 180)
+            good = brg_err < 5 and hit["dist"] >= math.hypot(n, e) - 0.3
+            record("vision", "PASS" if good else "FAIL",
+                   f"locate({name}) bearing error {brg_err:.1f} deg, range <= {hit['dist']:.1f} m "
+                   f"(true {math.hypot(n, e):.1f} m, bottom out of frame; conf {hit['conf']:.2f})", dt)
             continue
         err = ((hit["n"] - n) ** 2 + (hit["e"] - e) ** 2) ** 0.5
         record("vision", "PASS" if err < 0.8 else "FAIL",

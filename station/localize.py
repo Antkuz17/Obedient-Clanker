@@ -117,7 +117,8 @@ def box_to_goal(name: str, box: list[float], pose: Pose, K: dict, conf: float = 
 
 async def locate(ai: AI, name: str, jpeg: bytes, pose: Pose, K: dict) -> dict | None:
     try:
-        text = await ai.vision(PROMPT.format(name=name), jpeg, max_tokens=120)
+        # no reasoning: it ate all 120 tokens and the box never came (fast, too: ~40 tokens)
+        text = await ai.vision(PROMPT.format(name=name), jpeg, max_tokens=200, think=False)
     except Exception as e:
         log.warning("locate(%s) failed: %s", name, e)
         return None

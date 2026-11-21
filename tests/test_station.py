@@ -50,7 +50,7 @@ class FakeAI:
             raise httpx.ConnectError("down")
         return self.chat_reply
 
-    async def vision(self, prompt, jpeg, system="", max_tokens=400):
+    async def vision(self, prompt, jpeg, system="", max_tokens=400, think=None):
         self.calls.append("vision")
         return self.vision_reply
 

@@ -69,7 +69,10 @@ class AI:
         return r.json()["choices"][0]["message"]
 
     async def vision(self, prompt: str, jpeg: bytes, system: str = "",
-                     max_tokens: int = 400) -> str:
+                     max_tokens: int = 400, think: bool | None = None) -> str:
+        """think=False turns the model's reasoning off (Qwen3 chat template). The vision model
+        thinks before it answers: with a short max_tokens the reasoning used all of them and
+        the reply came back empty (locate() "found nothing" in check_ai)."""
         url = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()
         msgs = ([{"role": "system", "content": system}] if system else []) + [{
             "role": "user",
@@ -77,6 +80,8 @@ class AI:
                         {"type": "image_url", "image_url": {"url": url}}]}]
         body = {"model": self.s.vision_model, "messages": msgs, "temperature": 0.1,
                 "max_tokens": max_tokens}
+        if think is not None:
+            body["chat_template_kwargs"] = {"enable_thinking": think}
         r = await self._post("vision", "/chat/completions", json=body)
         return (r.json()["choices"][0]["message"].get("content") or "").strip()
 
