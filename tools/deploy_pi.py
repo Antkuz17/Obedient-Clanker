@@ -27,6 +27,9 @@ def main() -> None:
     ap.add_argument("--host", default=os.environ.get("QNX_HOST", "192.168.68.131"))
     ap.add_argument("--build", action="store_true", help="rebuild camgrab and hbwd on the Pi")
     ap.add_argument("--run", help="then run this command in ~/hope on the Pi and print its output")
+    ap.add_argument("--stations", help="comma-separated laptop IPs allowed to command the drone; "
+                    "writes ~/hope/supervisor_local.json from tools/supervisor_pi.json (the first "
+                    "IP also gets the QNX stats). Restart the stack to apply")
     a = ap.parse_args()
     c = paramiko.SSHClient()
     c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -70,6 +73,26 @@ def main() -> None:
     def run(cmd: str) -> None:
         _, out, err = c.exec_command(f"cd {REMOTE} && {cmd}", timeout=300)
         print(out.read().decode(errors="replace") + err.read().decode(errors="replace"), end="")
+
+    if a.stations:
+        import json
+        ips = [ip.strip() for ip in a.stations.split(",") if ip.strip()]
+        cfg = json.loads((ROOT / "tools" / "supervisor_pi.json").read_text())
+        for child in cfg:
+            cmd, out = child["cmd"], []
+            i = 0
+            while i < len(cmd):
+                if cmd[i] == "--station-ip":
+                    for ip in ips:
+                        out += ["--station-ip", ip]
+                    i += 2
+                    continue
+                out.append(cmd[i].replace("LAPTOP_IP", ips[0]))
+                i += 1
+            child["cmd"] = out
+        with sf.open(f"{REMOTE}/supervisor_local.json", "w") as f:
+            f.write(json.dumps(cfg, indent=2))
+        print(f"wrote supervisor_local.json: stations {ips} (restart the stack to apply)")
 
     if a.build:
         run("cc -O2 -o edge/camgrab/camgrab edge/camgrab/camgrab.c -lcamapi && echo camgrab ok;"
