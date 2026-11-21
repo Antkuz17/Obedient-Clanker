@@ -34,6 +34,14 @@ async def main(a) -> None:
         cfg.flow_quality_min = 0
     if a.mav and not a.sitl and not a.no_person_check:
         cfg.require_person_detector = True  # real drone: no detector -> no forward moves
+    if a.mav and not a.sitl and not a.full_limits:
+        # Slow-and-low profile for the real drone (drone lead, 2026-11-21), indoors and out,
+        # until it has proven itself: 2 m ceiling, gentle speeds, and a 2 m cap per move (which
+        # also catches a misread unit: "50 cm" parsed as 50 m flew 16.7 m in sim).
+        cfg.alt_max, cfg.max_takeoff_alt, cfg.max_step = 2.0, 1.5, 2.0
+        cfg.speed_xy, cfg.speed_z, cfg.speed_dn = 0.5, 0.5, 0.5
+        cfg.accel_xy, cfg.jerk_xy = 2.0, 5.0
+        logging.info("slow-and-low profile: ceiling 2 m, takeoff <= 1.5 m, move <= 2 m, 0.5 m/s")
     if cfg.speed_xy > (fastest := max_checked_speed(cfg)):
         # the person / obstacle checks couldn't stop it in time any faster (edge/config.py)
         logging.warning("speed_xy %.2f m/s is faster than the checks can stop; using %.2f",
@@ -86,6 +94,9 @@ if __name__ == "__main__":
     ap.add_argument("--gps", action="store_true",
                     help="outdoors: the FC navigates on GPS (tools/fc_profile.py --outdoor). No "
                          "fake EKF origin, no optical-flow requirement, no 2 m height cap")
+    ap.add_argument("--full-limits", action="store_true",
+                    help="real drone: use edge/config.py's limits instead of the slow-and-low "
+                         "profile (2 m ceiling, 0.5 m/s). Only once the drone has proven itself")
     ap.add_argument("--require-obstacle-sensor", action="store_true",
                     help="refuse forward moves while the forward ultrasonic sensor is silent "
                          "(turn on once it is mounted)")
