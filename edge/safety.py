@@ -36,12 +36,14 @@ class SafetyGate:
 
     def check(self, op: str, args: dict, s: VehicleState, airborne: bool,
               perception: Perception | None = None,
-              base: tuple[float, float, float, float] | None = None) -> Verdict:
+              base: tuple[float, float, float, float] | None = None,
+              home: tuple[float, float] | None = None) -> Verdict:
         """base = last commanded (n, e, alt, yaw). Relative moves build on it, not on the
         measured position, so small tracking errors don't compound move after move."""
         c = self.cfg
         p = perception or Perception()
         bn, be, balt, byaw = base if base is not None else (s.n, s.e, s.alt, s.yaw)
+        hn, he = home if home is not None else (0.0, 0.0)
 
         if op in ("stop", "hover"):
             return Verdict(True, target=(s.n, s.e, s.alt, s.yaw))
@@ -62,11 +64,17 @@ class SafetyGate:
                 return _reject(f"battery {s.battery_v:.2f} V below {c.batt_reject_v} V")
             if s.flow_quality < c.flow_quality_min:
                 return _reject(f"optical flow quality {s.flow_quality} too low to hold position")
+            if not s.pos_ok:
+                return _reject("flight controller has no position estimate (EKF)")
             return Verdict(True, target=(s.n, s.e, alt, s.yaw))
 
         # everything below needs to be in the air
         if not airborne:
             return _reject("not flying; take off first")
+        if s.mode != "GUIDED":
+            return _reject(f"pilot has control (mode {s.mode}); not sending moves")
+        if not s.pos_ok:
+            return _reject("flight controller lost its position estimate")
         if s.battery_v < c.batt_reject_v:
             return _reject(f"battery {s.battery_v:.2f} V below {c.batt_reject_v} V; land now")
 
@@ -86,7 +94,7 @@ class SafetyGate:
         elif op == "goto":
             n, e, alt = args["n"], args["e"], args.get("alt", balt)
         elif op == "return_home":
-            n, e, alt = 0.0, 0.0, balt
+            n, e, alt = hn, he, balt
         else:
             return _reject(f"unknown op {op}")
 
@@ -97,8 +105,8 @@ class SafetyGate:
             return _reject(f"move of {step:.1f} m exceeds the {c.max_step} m limit")
         if not c.alt_min <= alt <= c.alt_max:
             return _reject(f"target altitude {alt:.1f} m outside {c.alt_min}-{c.alt_max} m")
-        if abs(n) > c.fence_half or abs(e) > c.fence_half:
-            return _reject(f"target ({n:.1f}, {e:.1f}) is outside the "
+        if abs(n - hn) > c.fence_half or abs(e - he) > c.fence_half:
+            return _reject(f"target ({n - hn:.1f}, {e - he:.1f}) from home is outside the "
                            f"+-{c.fence_half} m geofence")
         fwd, _ = ned_to_body(n - s.n, e - s.e, s.yaw)
         if fwd > 0.2:

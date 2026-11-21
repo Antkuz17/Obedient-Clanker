@@ -53,7 +53,8 @@ TELEMETRY_FIELDS = (
 )
 
 # event.kind
-EVENT_KINDS = ("safety_reject", "watchdog", "person_close", "palm_stop", "restart", "battery")
+EVENT_KINDS = ("safety_reject", "watchdog", "person_close", "palm_stop", "restart", "battery",
+               "position")  # position: EKF lost its estimate in flight -> landing
 
 
 class ProtocolError(ValueError):

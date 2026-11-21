@@ -53,6 +53,7 @@ class EdgeServer:
         self._last_hb: float | None = None
         self._perception_t = 0.0
         self._palm_latched = False
+        self._pos_bad_since: float | None = None
         self._server: asyncio.base_events.Server | None = None
         self._tasks: list[asyncio.Task] = []
         self.loop_stats: list[float] = []  # control-loop period samples (s), for the jitter graph
@@ -157,8 +158,11 @@ class EdgeServer:
             self.safety_tick(now)
 
     def safety_tick(self, now: float) -> None:
+        self.v.tick(now)  # FC heartbeat + LAND retries live in this loop (review A3, A2)
         ex, s = self.exec, self.v.state()
-        flying = ex.airborne
+        # Only act while we're in control. If the pilot switched to AltHold/Land/Stabilize,
+        # the edge must not override them; ArduPilot's own failsafes still apply.
+        flying = ex.airborne and s.mode in ("GUIDED", "LAND")
         # watchdog
         if flying and self._last_hb is not None:
             gap = now - self._last_hb
@@ -171,6 +175,14 @@ class EdgeServer:
         elif flying and self._last_hb is None:
             # flying with no station ever connected (e.g. RC takeoff): start the clock now
             self._last_hb = now
+        # position estimate lost in flight -> land (review A6)
+        if flying and not s.pos_ok:
+            if self._pos_bad_since is None:
+                self._pos_bad_since = now
+            elif now - self._pos_bad_since > 1.0:
+                ex.trigger_failsafe("land", "position", "position estimate lost: landing")
+        else:
+            self._pos_bad_since = None
         # battery
         if flying and 0 < s.battery_v < self.safety_cfg.batt_land_v:
             ex.trigger_failsafe("land", "battery", f"battery {s.battery_v:.2f} V: landing")

@@ -21,6 +21,7 @@ class VehicleState:
     flow_quality: int = 0
     range_m: float | None = None
     landed: bool = True
+    pos_ok: bool = True     # EKF has a usable local position (MavVehicle: EKF_STATUS_REPORT)
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -49,6 +50,12 @@ class Vehicle:
 
     def land(self) -> None:
         raise NotImplementedError
+
+    def tick(self, now: float) -> None:
+        """Called from the edge safety loop at 50 Hz (heartbeats, retries)."""
+
+    def cancel_takeoff(self) -> None:
+        """Abort a takeoff that hasn't climbed yet (no-op if there isn't one)."""
 
     def hold(self) -> None:
         s = self.state()

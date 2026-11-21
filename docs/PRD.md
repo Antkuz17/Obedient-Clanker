@@ -115,7 +115,7 @@ Ops (all distances in metres, angles in degrees, local frame = NED from the take
 | `ack` | `id`, `ok`, `reason` (rejection text from the safety gate) |
 | `done` | `id`, `status` = `ok` / `aborted` / `failed`, `reason` |
 | `telemetry` (10 Hz) | `t`, `state`, `armed`, `mode`, `n`, `e`, `alt`, `yaw`, `vn`, `ve`, `vd`, `battery_v`, `flow_quality`, `range_m`, `active_cmd` |
-| `event` | `kind` (`safety_reject`, `watchdog`, `person_close`, `palm_stop`, `restart`, `battery`), `detail` |
+| `event` | `kind` (`safety_reject`, `watchdog`, `person_close`, `palm_stop`, `restart`, `battery`, `position`), `detail` |
 
 `state` ∈ `DISCONNECTED, IDLE, TAKING_OFF, BUSY, HOVER, LANDING, FAILSAFE`.
 

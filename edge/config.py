@@ -7,7 +7,7 @@ from dataclasses import dataclass
 @dataclass
 class SafetyConfig:
     alt_min: float = 0.3          # m; below this only takeoff/land
-    alt_max: float = 1.8          # m; HC-SR04 tops out ~2 m
+    alt_max: float = 1.5          # m; baro-only height is +-0.3 m (review C)
     fence_half: float = 3.0       # m; box +-fence_half N/E around home
     max_step: float = 3.0         # m; largest single move
     max_takeoff_alt: float = 1.5  # m
@@ -32,6 +32,6 @@ class WatchdogConfig:
 
 @dataclass
 class ExecConfig:
-    pos_tolerance: float = 0.15   # m
+    pos_tolerance: float = 0.3    # m; optical flow can't do better (review A13)
     yaw_tolerance: float = 5.0    # deg
     cmd_timeout_pad_s: float = 8.0

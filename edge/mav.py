@@ -1,16 +1,25 @@
 """MAVLink vehicle (ArduPilot Copter 4.7, GUIDED). Works against SITL and the real Matek H743.
 
 Device examples:
-  usb                       QNX Pi 5 USB -> FC (primary, verified; run as root) - mavlink_usb.py
+  udpin:127.0.0.1:14555     QNX Pi: through tools/usb_relay.py (root) -> USB -> FC  (primary)
+  usb                       QNX Pi: USB directly from this process (needs root)
   /dev/ser1                 QNX Pi 5 GPIO UART -> FC SERIAL1 (115200), if we solder later
   rawtcp:127.0.0.1:5760     SITL through the same StreamMav path the USB link uses
   tcp:127.0.0.1:5760        ArduPilot SITL
-  udpin:0.0.0.0:14550       SITL / MAVProxy output
 
-We heartbeat as a GCS (sysid 255), so ArduPilot's own GCS failsafe (FS_GCS_ENABLE) lands the
-drone if this whole process dies: a second watchdog that lives inside the flight controller.
-We never switch the FC *into* GUIDED except on takeoff: if the pilot flips SwA to Stabilize or
-Land, our targets are ignored, which is exactly what we want.
+Safety notes (docs/review.md section A):
+- The GCS heartbeat to the FC is sent from tick(), i.e. from the edge's safety loop, not from
+  a thread of its own. If the safety loop hangs, the FC stops hearing us and its own GCS
+  failsafe (FS_GCS_ENABLE=5) lands it. (A3)
+- Every send goes through one lock. (A11)
+- Reader errors mark the link dead and reconnect; the setup is re-run after a reconnect. (A5)
+- pos_ok comes from EKF_STATUS_REPORT; stale or bad means "no position". (A6)
+- `landed` is inferred from armed + altitude when EXTENDED_SYS_STATE goes stale. (A7)
+- land() is retried until the FC reports LAND or disarms. (A2)
+- cancel_takeoff() stops a takeoff that is still arming: no NAV_TAKEOFF, and a disarm if it
+  already armed on the ground. (A1)
+We never switch the FC *into* GUIDED except on takeoff: if the pilot flips to AltHold or Land,
+our targets are ignored, which is what we want.
 """
 from __future__ import annotations
 
@@ -32,140 +41,240 @@ MASK_POS_YAW = 8 | 16 | 32 | 64 | 128 | 256 | 2048
 # Western University, London ON; any fixed point works, the EKF just needs an origin
 ORIGIN_LAT, ORIGIN_LON, ORIGIN_ALT_MM = 430096000, -812737000, 250000
 
+M = mavutil.mavlink
 STREAMS = {  # message id -> Hz
-    mavutil.mavlink.MAVLINK_MSG_ID_LOCAL_POSITION_NED: 20,
-    mavutil.mavlink.MAVLINK_MSG_ID_ATTITUDE: 30,
-    mavutil.mavlink.MAVLINK_MSG_ID_SYS_STATUS: 2,
-    mavutil.mavlink.MAVLINK_MSG_ID_DISTANCE_SENSOR: 10,
-    mavutil.mavlink.MAVLINK_MSG_ID_EXTENDED_SYS_STATE: 5,
+    M.MAVLINK_MSG_ID_LOCAL_POSITION_NED: 20,
+    M.MAVLINK_MSG_ID_ATTITUDE: 30,
+    M.MAVLINK_MSG_ID_SYS_STATUS: 2,
+    M.MAVLINK_MSG_ID_DISTANCE_SENSOR: 10,
+    M.MAVLINK_MSG_ID_EXTENDED_SYS_STATE: 5,
+    M.MAVLINK_MSG_ID_EKF_STATUS_REPORT: 5,
 }
+EKF_NEEDED = M.EKF_VELOCITY_HORIZ | M.EKF_POS_HORIZ_REL
+STALE_S = 1.0          # EKF / EXTENDED_SYS_STATE older than this = unknown
+FC_LINK_TIMEOUT_S = 3.0
+LAND_RETRY_S = 0.5
 
 
 class MavVehicle(Vehicle):
     def __init__(self, device: str, baud: int = 115200, speed_xy: float = 0.5):
         self.device, self.baud, self.speed_xy = device, baud, speed_xy
         self.m = None
-        self.s = VehicleState()
-        self._lock = threading.Lock()
+        self.s = VehicleState(pos_ok=False)
+        self._lock = threading.Lock()      # state
+        self._tx = threading.Lock()        # all MAVLink sends (A11)
         self._stop = threading.Event()
+        self._abort_takeoff = threading.Event()
+        self._land_req = False
+        self._last_land_send = 0.0
+        self._last_hb_sent = 0.0
         self._last_fc_hb = 0.0
+        self._ess_t = 0.0
+        self._ekf_t = 0.0
+        self._ekf_flags = 0
         self._last_flow_q = 0
         self._last_flow_t = 0.0
         self._t0 = time.monotonic()
+        self.reconnects = 0
 
     # --- lifecycle ---------------------------------------------------------------------------
-    async def start(self) -> None:
+    def _open(self) -> None:
         self.m = mavlink_usb.connect(self.device) or mavutil.mavlink_connection(
             self.device, baud=self.baud, source_system=255, source_component=191,
             autoreconnect=True)
+
+    async def start(self) -> None:
+        self._open()
         threading.Thread(target=self._reader, daemon=True, name="mav-rx").start()
-        threading.Thread(target=self._heartbeat, daemon=True, name="mav-hb").start()
         threading.Thread(target=self._setup, daemon=True, name="mav-setup").start()
 
     async def close(self) -> None:
         self._stop.set()
 
+    def _send(self, fn, *args) -> None:
+        with self._tx:
+            fn(*args)
+
     def _setup(self) -> None:
-        if not self.m.wait_heartbeat(timeout=30):
+        """Run on every (re)connect: stream rates and the EKF origin."""
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and not self._stop.is_set():
+            if time.monotonic() - self._last_fc_hb < FC_LINK_TIMEOUT_S:
+                break
+            time.sleep(0.2)
+        else:
             log.error("no heartbeat from flight controller on %s", self.device)
             return
-        log.info("FC heartbeat: sys %d comp %d", self.m.target_system, self.m.target_component)
+        log.info("FC link up: sys %d comp %d", self.m.target_system, self.m.target_component)
         for msg_id, hz in STREAMS.items():
-            self._cmd(mavutil.mavlink.MAV_CMD_SET_MESSAGE_INTERVAL, msg_id, int(1e6 / hz))
+            self._cmd(M.MAV_CMD_SET_MESSAGE_INTERVAL, msg_id, int(1e6 / hz))
         self.set_origin()
 
     def set_origin(self) -> None:
-        self.m.mav.set_gps_global_origin_send(self.m.target_system, ORIGIN_LAT, ORIGIN_LON,
-                                              ORIGIN_ALT_MM)
+        self._send(self.m.mav.set_gps_global_origin_send, self.m.target_system, ORIGIN_LAT,
+                   ORIGIN_LON, ORIGIN_ALT_MM)
 
     def _cmd(self, command: int, *params: float) -> None:
         p = list(params) + [0.0] * (7 - len(params))
-        self.m.mav.command_long_send(self.m.target_system, self.m.target_component, command, 0,
-                                     *p)
+        self._send(self.m.mav.command_long_send, self.m.target_system,
+                   self.m.target_component, command, 0, *p)
 
-    def _heartbeat(self) -> None:
-        while not self._stop.is_set():
-            self.m.mav.heartbeat_send(mavutil.mavlink.MAV_TYPE_GCS,
-                                      mavutil.mavlink.MAV_AUTOPILOT_INVALID, 0, 0, 0)
-            with self._lock:
-                self.s.connected = time.monotonic() - self._last_fc_hb < 3.0
-            time.sleep(1.0)
+    def _set_mode(self, mode: int) -> None:
+        self._send(self.m.mav.set_mode_send, self.m.target_system,
+                   M.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, mode)
 
+    # --- called from the edge's safety loop (50 Hz) -----------------------------------------
+    def tick(self, now: float) -> None:
+        if self.m is None:
+            return
+        if now - self._last_hb_sent >= 1.0:  # A3: heartbeat only while the safety loop runs
+            self._last_hb_sent = now
+            try:
+                self._send(self.m.mav.heartbeat_send, M.MAV_TYPE_GCS, M.MAV_AUTOPILOT_INVALID,
+                           0, 0, 0)
+            except Exception as e:  # link broken; the reader thread reconnects
+                log.warning("heartbeat send failed: %s", e)
+        with self._lock:
+            self.s.connected = now - self._last_fc_hb < FC_LINK_TIMEOUT_S
+            armed, mode = self.s.armed, self.s.mode
+        if self._land_req:  # A2: keep asking for LAND until the FC is in it (or disarmed)
+            if not armed:
+                self._land_req = False
+            elif mode != "LAND" and now - self._last_land_send >= LAND_RETRY_S:
+                self._last_land_send = now
+                try:
+                    self._set_mode(COPTER_LAND)
+                except Exception as e:
+                    log.warning("LAND send failed: %s", e)
+
+    # --- receive -----------------------------------------------------------------------------
     def _reader(self) -> None:
-        mav = mavutil.mavlink
         while not self._stop.is_set():
-            msg = self.m.recv_match(blocking=True, timeout=0.5)
-            if msg is None:
-                continue
-            t = msg.get_type()
-            with self._lock:
-                s = self.s
-                if t == "HEARTBEAT":
-                    if msg.type == mav.MAV_TYPE_GCS or msg.get_srcSystem() != self.m.target_system:
-                        continue
-                    self._last_fc_hb = time.monotonic()
-                    s.connected = True
-                    s.armed = bool(msg.base_mode & mav.MAV_MODE_FLAG_SAFETY_ARMED)
-                    s.mode = mavutil.mode_string_v10(msg)
-                elif t == "LOCAL_POSITION_NED":
-                    s.n, s.e, s.alt = msg.x, msg.y, -msg.z
-                    s.vn, s.ve, s.vd = msg.vx, msg.vy, msg.vz
-                elif t == "ATTITUDE":
-                    s.yaw = wrap360(math.degrees(msg.yaw))
-                elif t == "SYS_STATUS":
-                    if msg.voltage_battery not in (0, 65535):
-                        s.battery_v = msg.voltage_battery / 1000.0
-                elif t == "DISTANCE_SENSOR":
-                    s.range_m = msg.current_distance / 100.0
-                elif t == "EXTENDED_SYS_STATE":
-                    s.landed = msg.landed_state in (mav.MAV_LANDED_STATE_ON_GROUND,
-                                                    mav.MAV_LANDED_STATE_UNDEFINED)
-                elif t == "STATUSTEXT":
-                    log.info("FC: %s", msg.text)
-                    if msg.text.startswith(("PreArm", "Arm", "Takeoff")):
-                        self.last_error = msg.text
-                # flow quality is what *we* last sent; stale flow = 0
-                s.flow_quality = (self._last_flow_q
-                                  if time.monotonic() - self._last_flow_t < 0.5 else 0)
+            try:
+                msg = self.m.recv_match(blocking=True, timeout=0.5)
+                if msg is not None:
+                    self._handle(msg)
+            except Exception as e:  # A3/A5: never freeze silently; mark dead, reconnect
+                log.error("MAVLink link error: %r; reconnecting", e)
+                with self._lock:
+                    self.s.connected = False
+                self._last_fc_hb = 0.0
+                self._reconnect()
+
+    def _reconnect(self) -> None:
+        while not self._stop.is_set():
+            try:
+                try:
+                    self.m.close()
+                except Exception:
+                    pass
+                time.sleep(1.0)
+                self._open()
+                self.reconnects += 1
+                threading.Thread(target=self._setup, daemon=True, name="mav-setup").start()
+                return
+            except Exception as e:
+                log.error("reconnect failed: %r", e)
+
+    def _handle(self, msg) -> None:
+        t = msg.get_type()
+        now = time.monotonic()
+        with self._lock:
+            s = self.s
+            if t == "HEARTBEAT":
+                if msg.type == M.MAV_TYPE_GCS or msg.get_srcSystem() != self.m.target_system:
+                    return
+                self._last_fc_hb = now
+                s.connected = True
+                s.armed = bool(msg.base_mode & M.MAV_MODE_FLAG_SAFETY_ARMED)
+                s.mode = mavutil.mode_string_v10(msg)
+            elif t == "LOCAL_POSITION_NED":
+                s.n, s.e, s.alt = msg.x, msg.y, -msg.z
+                s.vn, s.ve, s.vd = msg.vx, msg.vy, msg.vz
+            elif t == "ATTITUDE":
+                s.yaw = wrap360(math.degrees(msg.yaw))
+            elif t == "SYS_STATUS":
+                if msg.voltage_battery not in (0, 65535):
+                    s.battery_v = msg.voltage_battery / 1000.0
+            elif t == "DISTANCE_SENSOR":
+                s.range_m = msg.current_distance / 100.0
+            elif t == "EXTENDED_SYS_STATE":
+                self._ess_t = now
+                s.landed = msg.landed_state in (M.MAV_LANDED_STATE_ON_GROUND,
+                                                M.MAV_LANDED_STATE_UNDEFINED)
+            elif t == "EKF_STATUS_REPORT":
+                self._ekf_t, self._ekf_flags = now, msg.flags
+            elif t == "STATUSTEXT":
+                log.info("FC: %s", msg.text)
+                if msg.text.startswith(("PreArm", "Arm", "Takeoff", "EKF")):
+                    self.last_error = msg.text
 
     def state(self) -> VehicleState:
+        now = time.monotonic()
         with self._lock:
             s = VehicleState(**self.s.as_dict())
+        if now - self._ess_t > STALE_S:  # A7: no landed_state -> infer it
+            s.landed = not (s.armed and s.alt > 0.15)
         if not s.armed:
             s.landed = True
+        f = self._ekf_flags
+        s.pos_ok = (now - self._ekf_t <= STALE_S and (f & EKF_NEEDED) == EKF_NEEDED
+                    and not f & M.EKF_CONST_POS_MODE and not f & M.EKF_UNINITIALIZED)
+        # flow quality is what *we* last forwarded; stale flow = 0
+        s.flow_quality = self._last_flow_q if now - self._last_flow_t < 0.5 else 0
         return s
 
     # --- primitives --------------------------------------------------------------------------
     def takeoff(self, alt: float) -> None:
-        threading.Thread(target=self._takeoff, args=(alt,), daemon=True).start()
+        self._abort_takeoff.clear()
+        self._land_req = False
+        threading.Thread(target=self._takeoff, args=(alt,), daemon=True,
+                         name="mav-takeoff").start()
+
+    def cancel_takeoff(self) -> None:
+        self._abort_takeoff.set()
 
     def _takeoff(self, alt: float) -> None:
+        ab = self._abort_takeoff
+        if ab.is_set():
+            return
         self.set_origin()
-        self.m.set_mode(COPTER_GUIDED)
-        self._cmd(mavutil.mavlink.MAV_CMD_DO_CHANGE_SPEED, 1, self.speed_xy, -1)
-        self._cmd(mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 1)
+        self._set_mode(COPTER_GUIDED)
+        self._cmd(M.MAV_CMD_DO_CHANGE_SPEED, 1, self.speed_xy, -1)
+        if ab.is_set():
+            return
+        self._cmd(M.MAV_CMD_COMPONENT_ARM_DISARM, 1)
         deadline = time.monotonic() + 5.0
-        while time.monotonic() < deadline and not self.state().armed:
-            time.sleep(0.1)
+        while time.monotonic() < deadline and not self.state().armed and not ab.is_set():
+            time.sleep(0.05)
+        if ab.is_set():  # A1: aborted while arming: make sure we end up disarmed on the ground
+            if self.state().armed and self.state().alt < 0.2:
+                self._cmd(M.MAV_CMD_COMPONENT_ARM_DISARM, 0)
+            log.warning("takeoff aborted before NAV_TAKEOFF")
+            return
         if not self.state().armed:
             log.error("arming failed: %s", self.last_error or "no reason from FC")
             return
-        self._cmd(mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 0, 0, 0, 0, alt)
+        self._cmd(M.MAV_CMD_NAV_TAKEOFF, 0, 0, 0, 0, 0, 0, alt)
 
     def set_target(self, n: float, e: float, alt: float, yaw: float) -> None:
-        self.m.mav.set_position_target_local_ned_send(
-            int((time.monotonic() - self._t0) * 1000) & 0xFFFFFFFF,
-            self.m.target_system, self.m.target_component,
-            mavutil.mavlink.MAV_FRAME_LOCAL_NED, MASK_POS_YAW,
-            n, e, -alt, 0, 0, 0, 0, 0, 0, math.radians(yaw), 0)
+        self._send(self.m.mav.set_position_target_local_ned_send,
+                   int((time.monotonic() - self._t0) * 1000) & 0xFFFFFFFF,
+                   self.m.target_system, self.m.target_component,
+                   M.MAV_FRAME_LOCAL_NED, MASK_POS_YAW,
+                   n, e, -alt, 0, 0, 0, 0, 0, 0, math.radians(yaw), 0)
 
     def land(self) -> None:
-        self.m.set_mode(COPTER_LAND)
+        self.cancel_takeoff()
+        self._land_req = True
+        self._last_land_send = time.monotonic()
+        self._set_mode(COPTER_LAND)
 
     def send_optical_flow(self, flow_x: float, flow_y: float, quality: int, dt_us: int,
                           ground_m: float | None) -> None:
-        """flow_x/flow_y in rad/s (see docs/flight-setup.md)."""
+        """flow_x/flow_y in rad/s (see docs/flight-setup.md). ground_m is ignored by ArduPilot;
+        height must come from DISTANCE_SENSOR (review C)."""
         self._last_flow_q, self._last_flow_t = quality, time.monotonic()
-        self.m.mav.optical_flow_send(
-            int(time.time() * 1e6), 0, 0, 0, 0.0, 0.0, max(0, min(255, quality)),
-            -1.0 if ground_m is None else float(ground_m), float(flow_x), float(flow_y))
+        self._send(self.m.mav.optical_flow_send,
+                   int(time.time() * 1e6), 0, 0, 0, 0.0, 0.0, max(0, min(255, quality)),
+                   -1.0 if ground_m is None else float(ground_m), float(flow_x), float(flow_y))

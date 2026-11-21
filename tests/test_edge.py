@@ -82,6 +82,27 @@ def test_gate_requires_live_detector_when_configured():
     assert SafetyGate().check("move_body", {"fwd": 0.5}, FLYING, True).ok  # default: off
 
 
+def test_gate_needs_guided_and_position():
+    g = SafetyGate()
+    althold = VehicleState(**{**FLYING.as_dict(), "mode": "ALT_HOLD"})
+    assert "pilot has control" in g.check("move_body", {"fwd": 0.5}, althold, True).reason
+    lost = VehicleState(**{**FLYING.as_dict(), "pos_ok": False})
+    assert "position" in g.check("move_body", {"fwd": 0.5}, lost, True).reason
+    assert g.check("land", {}, lost, True).ok and g.check("stop", {}, althold, True).ok
+    ground = VehicleState(connected=True, battery_v=12.4, flow_quality=200, pos_ok=False)
+    assert "EKF" in g.check("takeoff", {"alt": 1.0}, ground, False).reason
+
+
+def test_gate_fence_and_home_follow_takeoff_point():
+    g = SafetyGate()
+    s = VehicleState(**{**FLYING.as_dict(), "n": 5.0, "e": 5.0})
+    assert g.check("move_body", {"fwd": 1.0}, s, True, home=(5.0, 5.0)).ok
+    assert "geofence" in g.check("move_body", {"fwd": 1.0}, s, True).reason   # home (0,0)
+    v = g.check("return_home", {}, VehicleState(**{**s.as_dict(), "n": 6.0}), True,
+                home=(5.0, 5.0))
+    assert v.target[:2] == (5.0, 5.0)
+
+
 def test_gate_takeoff_rules():
     g = SafetyGate()
     ground = VehicleState(connected=True, battery_v=12.4, flow_quality=200)
@@ -114,13 +135,15 @@ async def rig():
 async def test_takeoff_move_yaw_return_land(rig):
     srv, sim, edge = rig
     assert (await edge.run("takeoff", alt=1.0))["status"] == P.OK
-    assert sim.s.alt == pytest.approx(1.0, abs=0.15)
+    assert sim.s.alt == pytest.approx(1.0, abs=0.3)    # done fires within pos_tolerance
     await edge.run("yaw", deg=90.0)
     await edge.run("move_body", fwd=1.0)              # facing east -> +e
-    assert (sim.s.n, sim.s.e) == pytest.approx((0, 1.0), abs=0.15)
+    assert (sim.s.n, sim.s.e) == pytest.approx((0, 1.0), abs=0.3)
+    await asyncio.sleep(0.5)                          # ...and then settles on the exact target
+    assert (sim.s.n, sim.s.e, sim.s.alt) == pytest.approx((0, 1.0, 1.0), abs=0.03)
     await edge.run("return_home")
-    assert (sim.s.n, sim.s.e) == pytest.approx((0, 0), abs=0.15)
-    await asyncio.sleep(0.15)
+    await asyncio.sleep(0.5)
+    assert (sim.s.n, sim.s.e) == pytest.approx((0, 0), abs=0.03)
     assert edge.telemetry["state"] == "HOVER"
     await edge.run("land")
     assert not sim.s.armed
@@ -233,6 +256,50 @@ async def test_scan_turns_full_circle(rig):
         await asyncio.sleep(0.1)
     assert (await edge.wait_done(cid))["status"] == P.OK
     assert max(yaws) > 300 and min(yaws) < 60
+
+
+async def test_land_during_takeoff_cancels_it(rig):
+    srv, sim, edge = rig
+    calls = []
+    sim.cancel_takeoff = lambda: calls.append("cancel")
+    c1, _ = await edge.send("takeoff", alt=1.0)
+    c2, ack = await edge.send("land")
+    assert ack["ok"] and calls                       # review A1: the takeoff is told to stop
+    assert (await edge.wait_done(c1))["status"] == P.ABORTED
+
+
+async def test_land_that_never_disarms_is_reported_failed(rig, monkeypatch):
+    srv, sim, edge = rig
+    await edge.run("takeoff", alt=1.0)
+    sim.land = lambda: None                           # FC ignores LAND
+    monkeypatch.setattr(srv.exec, "_wait", _instant_false)
+    d = await edge.run("land")
+    assert d["status"] == P.FAILED and "still armed" in d["reason"]   # review A2
+
+
+async def _instant_false(pred, timeout):
+    return False
+
+
+async def test_watchdog_does_not_override_pilot_mode(rig):
+    srv, sim, edge = rig
+    await edge.run("takeoff", alt=1.0)
+    sim.s.mode = "ALT_HOLD"                           # pilot flipped the switch
+    edge.heartbeat = False
+    await asyncio.sleep(1.6)
+    assert sim.s.armed and srv.exec.failsafe is None  # edge stays out of the pilot's way
+
+
+async def test_position_loss_in_flight_lands(rig):
+    srv, sim, edge = rig
+    await edge.run("takeoff", alt=1.0)
+    sim.s.pos_ok = False
+    for _ in range(200):
+        if not sim.s.armed:
+            break
+        await asyncio.sleep(0.05)
+    assert not sim.s.armed
+    assert any(e["kind"] == "position" for e in edge.events)
 
 
 async def test_bad_message_gets_error_ack(rig):

@@ -32,6 +32,7 @@ class Executor:
         self._phase = ""          # TAKING_OFF / LANDING while those run
         self.failsafe: str | None = None  # None | "hover" | "land"
         self.target: tuple[float, float, float, float] | None = None  # last commanded
+        self.home: tuple[float, float] | None = None  # set at takeoff (review A12)
 
     def _set(self, n: float, e: float, alt: float, yaw: float) -> None:
         self.target = (n, e, alt, wrap360(yaw))
@@ -81,7 +82,7 @@ class Executor:
             if not airborne:
                 self.target = None
             verdict = self.gate.check(op, args, s, airborne, self.perception,
-                                      base=self.target)
+                                      base=self.target, home=self.home)
             verdict_ok, reason = verdict.ok, verdict.reason
         self.log({"t": time.time(), "kind": "cmd", "id": cid, "op": op, "args": args,
                   "ok": verdict_ok, "reason": reason,
@@ -93,6 +94,8 @@ class Executor:
         if self.failsafe == "hover":
             self.failsafe = None  # a fresh accepted command from a live station clears it
         self._cancel(f"superseded by {op}")
+        if op == "takeoff":
+            self.home = (s.n, s.e)
         self._active = (cid, op)
         self._task = asyncio.create_task(self._run(cid, op, args, verdict))
         return True
@@ -128,6 +131,7 @@ class Executor:
             self._abort_reason = reason
             self._task.cancel()
         if self._phase == "TAKING_OFF":
+            self.v.cancel_takeoff()  # review A1: don't let a background arm/takeoff continue
             self._phase = ""
 
     async def _watch_landing(self) -> None:
@@ -163,12 +167,15 @@ class Executor:
                 self._hold()
             return P.OK, ""
         if op == "land":
+            self.v.cancel_takeoff()  # review A1: land before arming finished must stop it
             if not self.v.state().armed:
                 return P.OK, "already landed"
             self._phase = "LANDING"
             self.v.land()
-            await self._wait(lambda s: not s.armed, timeout=30.0)
+            ok = await self._wait(lambda s: not s.armed, timeout=30.0)
             self._phase = ""
+            if not ok:  # review A2: never report a landing that didn't happen
+                return P.FAILED, "still armed 30 s after LAND; pilot: take over"
             return P.OK, ""
         if op == "takeoff":
             alt = verdict.target[2]
