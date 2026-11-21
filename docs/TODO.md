@@ -7,15 +7,15 @@ here as they're done.
 ## Now: before anything flies
 
 - [ ] **A + B: Pi bench test, props OFF.** Commands in STATUS.md "QNX port".
-  - [ ] Copy `edge/`, `shared/` and `tools/` to the Pi
-  - [ ] Run `tools/usb_relay.py` as root, then `python3 -m edge --mav udpin:127.0.0.1:14555 --station-ip <laptop> --no-video`
-  - [ ] From the laptop: `python -m tools.cmd <pi ip>`, then `t` shows live telemetry
+  - [x] Copy `edge/`, `shared/` and `tools/` to the Pi (`~/hope`)
+  - [x] Run `tools/usb_relay.py` as root, then `python3 -m edge --mav udpin:127.0.0.1:14555 --station-ip <laptop> --no-video`
+  - [x] From the laptop: `python -m tools.cmd <pi ip>`, then `t` shows live telemetry (2026-11-21: battery, mode, attitude; gate rejected takeoff for flow quality 0 and a move while landed)
   - [ ] Arm/disarm works; the gate's rejection reasons show up
   - [ ] Pull the laptop's Wi-Fi → edge hovers, then lands (watch the mode change)
   - [ ] `slay` the edge core → the FC lands on its own (needs A4 params)
-- [ ] **A: FC failsafe params (review A4)**: `FS_GCS_ENABLE=5`, `FS_GCS_TIMEOUT=2`, `FS_EKF_ACTION=1`. Never connect Mission Planner as sysid 255 at the same time
+- [x] **A: FC failsafe params (review A4)**, set and read back 2026-11-21; stopping the edge core raised "GCS Failsafe" on the FC (disarmed, so no action): `FS_GCS_ENABLE=5`, `FS_GCS_TIMEOUT=2`, `FS_EKF_ACTION=1`. Never connect Mission Planner as sysid 255 at the same time
 - [ ] **A: transmitter**: 3-position switch AltHold / Land / GUIDED (not Land only)
-- [ ] **A: build `camgrab` on the Pi**: `apk add qnx-sf-base-dev`, `cc -O2 -o camgrab edge/camgrab/camgrab.c -lcamapi`, `./camgrab -l`. If it fails on `stride` / `uv_stride` / `camera_get_supported_cameras`, check `/usr/include/camera/camera_api.h`
+- [x] **A: build `camgrab` on the Pi**: needs `apk add qnx-sf-base-dev qnx-screen-dev`. Verified: unit 5 → `camgrab_fwd`, 640×480 NV12, **30 fps, about 3 ms frame age** in Python (after the `edge/camera.py` mmap fix). Note: it warns "640x480 not accepted, keeping the camera default" (the default is 640×480 anyway); `-l` lists units 1, 2 and 5: `apk add qnx-sf-base-dev`, `cc -O2 -o camgrab edge/camgrab/camgrab.c -lcamapi`, `./camgrab -l`. If it fails on `stride` / `uv_stride` / `camera_get_supported_cameras`, check `/usr/include/camera/camera_api.h`
 - [ ] **B: two cameras**: does QNX give the second C270 its own unit? Each camera on its own USB controller; the down camera at 320×240
 
 ## Next: get it hovering
