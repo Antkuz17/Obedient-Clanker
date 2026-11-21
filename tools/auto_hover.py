@@ -21,6 +21,17 @@ import time
 from shared.client import CommandRejected, EdgeClient
 
 
+def height_disagrees(t: dict, tol: float = 0.35) -> str | None:
+    """The FC's height vs the rangefinder (the real distance to the floor). None when they agree
+    or the rangefinder has no echo. A big gap means the FC's height is wrong."""
+    r, alt = t.get("range_m"), t.get("alt")
+    if r is None or alt is None or r > 1.9:  # 2.01 = no echo
+        return None
+    if abs(alt - r) > tol:
+        return f"FC height {alt:.2f} m but rangefinder {r:.2f} m: FC height is wrong, landing"
+    return None
+
+
 def pos(t: dict) -> str:
     return (f"n={t.get('n', 0):+.2f} e={t.get('e', 0):+.2f} alt={t.get('alt', 0):.2f} "
             f"range={t.get('range_m')} mode={t.get('mode')} state={t.get('state')}")
@@ -40,14 +51,26 @@ async def main(a) -> int:
             await edge.run("land", timeout=60)
             return 1
         print("airborne:", pos(edge.telemetry))
+        bad = height_disagrees(edge.telemetry)
+        if bad:  # first try: EKF (baro) said 0.4 m while the rangefinder said 0.16 m: on the ground
+            print("ABORT: " + bad)
+            return 1
 
         t0, n0, e0 = time.monotonic(), edge.telemetry["n"], edge.telemetry["e"]
-        alts, drift = [], []
+        alts, drift, disagree = [], [], 0
         while time.monotonic() - t0 < a.hold:
             await asyncio.sleep(0.5)
             t = edge.telemetry
             alts.append(t["alt"])
             drift.append(math.hypot(t["n"] - n0, t["e"] - e0))
+            bad = height_disagrees(t)
+            if bad:
+                disagree += 1
+                if disagree >= 4:  # 2 s
+                    print("ABORT: " + bad)
+                    return 1
+            else:
+                disagree = 0
             if not t.get("armed") or t.get("mode") not in ("GUIDED",):
                 print("pilot or failsafe took over:", pos(t))
                 return 1

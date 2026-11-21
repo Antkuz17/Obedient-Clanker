@@ -41,6 +41,10 @@ PROFILE: dict[str, tuple[float, bool, str]] = {
     "EK3_SRC1_POSXY": (0, False, "no absolute horizontal position"),
     "EK3_SRC1_VELXY": (5, False, "optical flow"),
     "EK3_SRC1_POSZ": (1, False, "baro (SITL flow-only pass used baro)"),
+    # first autonomous try: the baro read prop wash near the floor as a 1 m climb while the
+    # rangefinder said 0.16 m, so the FC cut throttle on the ground. Use the rangefinder for
+    # height whenever it's below 70% of its max range (1.4 m), baro above that.
+    "EK3_RNG_USE_HGT": (70, False, "rangefinder height below 1.4 m (baro lies in prop wash)"),
     "EK3_SRC1_VELZ": (0, False, "none"),
     "EK3_SRC1_YAW": (1, False, "compass"),
     # HC-SR04 via Arduino -> tools/rangefinder.py (verified end to end on the board)
