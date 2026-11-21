@@ -856,7 +856,8 @@ def test_streamed_voice_runs_the_command_and_reports_errors(tmp_path, monkeypatc
             pass
 
     monkeypatch.setattr(cloud_app, "StreamingSTT", FakeStream)
-    s = Settings(vultr_key="", station_token="tok", data_dir=tmp_path, control_pin="1234")
+    s = Settings(vultr_key="", station_token="tok", data_dir=tmp_path, control_pin="1234",
+                 stt_stream_model="voxtral-mini-4b-realtime")
     with TestClient(cloud_app.create_app(s, ai=FakeAI())) as c:
         with c.websocket_connect("/ws/station?token=tok") as st:
             with c.websocket_connect("/ws/voice?client=judge&pin=1234") as v:
