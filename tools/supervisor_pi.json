@@ -44,7 +44,9 @@
       "--station-ip",
       "LAPTOP_IP",
       "--hbwd",
-      "127.0.0.1:14560"
+      "127.0.0.1:14560",
+      "--video-proc",
+      "127.0.0.1:7003"
     ],
     "ready": "tcp:127.0.0.1:7000"
   },
@@ -72,5 +74,20 @@
       "--shm",
       "camgrab_fwd"
     ]
+  },
+  {
+    "name": "video",
+    "prio": 10,
+    "user": "qnxuser",
+    "cmd": [
+      "python3",
+      "-m",
+      "edge.video",
+      "--pose-port",
+      "7003",
+      "--camera",
+      "shm:camgrab_fwd"
+    ],
+    "ready": "tcp:127.0.0.1:8080"
   }
 ]

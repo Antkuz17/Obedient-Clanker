@@ -93,7 +93,7 @@ to end on the sim with no keys). Still to do with real keys / hardware:
 - [x] **A: watchdog/heartbeat loop in C** at top `SCHED_FIFO`, pinned to a core (`edge/hbwd/hbwd.c`; SITL: hung core → LAND in 273 ms). On the Pi: `cc -O2 -o edge/hbwd/hbwd edge/hbwd/hbwd.c -lpthread`, then the supervisor runs it at FIFO 60 on CPU 3
 - [x] **A: jitter histogram** (`tools/jitter.py`; run on the Pi as root) under a CPU hog, with and without priority
 - [x] **A: supervisor** (no HAM; `tools/supervisor.py`): restarts camgrab / flow / vision / relay, logs restart time in ms
-- [ ] **A: video server as its own process** (pose from the core over localhost UDP)
+- [x] **A: video server as its own process** (pose from the core over localhost UDP; `python -m edge.video`, core `--video-proc 127.0.0.1:7003`; in the Pi supervisor config at prio 10)
 - [ ] **B: TFLite person detection** → UDP :7001 (`person_m`); show inference ms
 - [ ] **B: palm stop** (QNX workshop hand model)
 - [ ] **A + B: person → motor-stop latency** shown on screen

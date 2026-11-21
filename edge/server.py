@@ -44,7 +44,8 @@ class EdgeServer:
                  port: int = P.EDGE_PORT, perception_port: int | None = PERCEPTION_PORT,
                  flow_port: int | None = FLOW_PORT, log_path: Path | None = None,
                  allowed_peers: set[str] | None = None,
-                 hbwd_addr: tuple[str, int] | None = None):
+                 hbwd_addr: tuple[str, int] | None = None,
+                 video_addr: tuple[str, int] | None = None):
         self.v = vehicle
         self.safety_cfg = safety or SafetyConfig()
         self.wd = watchdog or WatchdogConfig()
@@ -67,6 +68,9 @@ class EdgeServer:
         self.hbwd_addr = hbwd_addr
         self._hbwd_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) if hbwd_addr else None
         self._hbwd_seq = 0
+        # separate video process (python -m edge.video): stream the pose to it every tick
+        self.video_addr = video_addr
+        self._video_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) if video_addr else None
 
     # --- lifecycle ---------------------------------------------------------------------------
     async def start(self) -> None:
@@ -181,6 +185,11 @@ class EdgeServer:
             try:
                 self._hbwd_sock.sendto(f"PET {self._hbwd_seq} {int(s.armed)} {ours}\n".encode(),
                                        self.hbwd_addr)
+            except OSError:
+                pass
+        if self._video_sock:
+            try:
+                self._video_sock.sendto(json.dumps(s.as_dict()).encode(), self.video_addr)
             except OSError:
                 pass
         # pilot took another mode in flight -> stand down, forget targets (review2 #5)

@@ -44,10 +44,12 @@ async def main(a) -> None:
                      flow_port=a.flow_port, log_path=Path(a.log) if a.log else None,
                      allowed_peers=set(a.station_ip) if a.station_ip else None,
                      hbwd_addr=(a.hbwd.rsplit(":", 1)[0], int(a.hbwd.rsplit(":", 1)[1]))
-                     if a.hbwd else None)
+                     if a.hbwd else None,
+                     video_addr=(a.video_proc.rsplit(":", 1)[0], int(a.video_proc.rsplit(":", 1)[1]))
+                     if a.video_proc else None)
     await srv.start()
 
-    if not a.no_video:
+    if not a.no_video and not a.video_proc:
         from .video import ShmCamera, SimCamera, UsbCamera, serve_video
         if a.camera is None:
             cam = SimCamera(vehicle.state) if a.sim else ShmCamera(vehicle.state)
@@ -86,6 +88,8 @@ if __name__ == "__main__":
     ap.add_argument("--speedup", type=float, default=1.0, help="sim only")
     ap.add_argument("--log", default="flight_log.jsonl", help="JSONL flight log ('' = off)")
     ap.add_argument("--rt-prio", type=int, default=0, help="SCHED_FIFO priority (0 = off)")
+    ap.add_argument("--video-proc", help="video runs as its own process (python -m edge.video); "
+                    "send it the pose at this UDP address, e.g. 127.0.0.1:7003")
     ap.add_argument("--hbwd", help="pet the C heartbeat watchdog at this UDP address, "
                     "e.g. 127.0.0.1:14560 (edge/hbwd)")
     a = ap.parse_args()

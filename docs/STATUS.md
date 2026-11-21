@@ -110,6 +110,10 @@ position (altitude used to sag about 0.1 m per command).
      prints p50/p99/max lateness + a histogram; the JSON (every sample) feeds the dashboard graph.
      macOS baseline (no FIFO): p50 ~2.5-3.4 ms, p99 5-12 ms, max up to 34 ms under the hog.
      Not yet: the edge's own `EdgeServer.loop_stats` streamed live.
+   - **Video as its own process: done** (`python -m edge.video --camera shm:camgrab_fwd`, core
+     `--video-proc 127.0.0.1:7003` streams its pose as JSON each safety tick). Same endpoints and
+     `X-Pose`; adds `X-Pose-Age` (large = core gone, don't trust the pose for `locate()`). In the
+     Pi supervisor config at FIFO 10, so under load it's the one that suffers, not the core.
    - **C heartbeat watchdog: done** (`edge/hbwd/hbwd.c`, review D). The core pets it every safety
      tick over UDP :14560 (`edge --hbwd 127.0.0.1:14560`); hbwd (50 Hz, SCHED_FIFO, pinned)
      sends the FC's GCS heartbeat through the relay's write-only aux inlet
