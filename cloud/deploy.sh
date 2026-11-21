@@ -35,6 +35,8 @@ if [ -f /root/hope.env ]; then install -m 600 -o hope /root/hope.env "$DIR/.env"
 [ -f "$DIR/.env" ] || { echo "no $DIR/.env: scp your .env to /root/hope.env first"; exit 1; }
 grep -q '^VULTR_INFERENCE_KEY=.' "$DIR/.env" || echo "WARNING: VULTR_INFERENCE_KEY empty"
 grep -q '^STATION_TOKEN=.' "$DIR/.env" || { echo "STATION_TOKEN empty: refusing"; exit 1; }
+# without it nobody on the internet can fly the drone (not even you): set it (review3 #4)
+grep -q '^CONTROL_PIN=.' "$DIR/.env" || { echo "CONTROL_PIN empty: refusing (pilot PIN)"; exit 1; }
 mkdir -p "$DIR/data" && chown -R hope "$DIR/data" "$DIR/.env"
 
 echo "== service"

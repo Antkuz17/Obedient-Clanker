@@ -38,7 +38,7 @@
     color: #041526; margin: 10px 0; user-select: none; -webkit-user-select: none; }
   #talk.rec { background: var(--bad); color: #fff; }
   form { display: flex; gap: 8px; }
-  input[type=text] { flex: 1; min-width: 0; font: inherit; padding: 11px 12px; border-radius: 10px;
+  input[type=text], input[type=password] { flex: 1; min-width: 0; font: inherit; padding: 11px 12px; border-radius: 10px;
     border: 1px solid var(--line); background: var(--bg); color: var(--text); }
   #reply { min-height: 44px; font-size: 16px; margin: 10px 0 0; }
   #reply.empty { color: var(--muted); }
@@ -107,6 +107,7 @@
     </form>
     <p id="reply" class="empty">Jarvis is listening.</p>
     <label class="small"><input id="c-audio" type="checkbox" checked> Play replies on this device</label>
+    <label class="small" id="pin-row">Pilot PIN <input id="i-pin" type="password" inputmode="numeric" autocomplete="off" placeholder="needed to fly; STOP works without it"></label>
   </section>
 
   <section class="card">
@@ -154,6 +155,10 @@ const clientId = (() => {
   catch { return "phone-" + Math.random().toString(36).slice(2, 7); }
 })();
 let ws, me = clientId;
+// Pilot PIN (review3 #4): sent with every command that can move the drone. STOP never needs it.
+const pin = () => $("i-pin").value.trim();
+try { $("i-pin").value = localStorage.getItem("hd-pin") || ""; } catch {}
+$("i-pin").onchange = () => { try { localStorage.setItem("hd-pin", pin()); } catch {} };
 
 function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -299,8 +304,8 @@ function handle(m) {
 }
 
 $("b-stop").onclick = () => send({ type: "op", op: "stop" });
-$("b-land").onclick = () => send({ type: "op", op: "land" });
-$("f-text").onsubmit = (e) => { e.preventDefault(); const v = $("i-text").value.trim(); if (v) { send({ type: "text", text: v }); $("i-text").value = ""; } };
+$("b-land").onclick = () => send({ type: "op", op: "land", pin: pin() });
+$("f-text").onsubmit = (e) => { e.preventDefault(); const v = $("i-text").value.trim(); if (v) { send({ type: "text", text: v, pin: pin() }); $("i-text").value = ""; } };
 $("f-mem").onsubmit = async (e) => {
   e.preventDefault(); const q = $("i-mem").value.trim(); if (!q) return;
   const hits = await (await fetch("/memory/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ q }) })).json();
@@ -322,7 +327,7 @@ async function startTalk(e) {
       stream.getTracks().forEach((t) => t.stop());
       $("talk").classList.remove("rec"); $("talk").textContent = "Thinking…";
       const type = rec.mimeType || "audio/webm"; const ext = type.includes("mp4") ? "m4a" : "webm";
-      const fd = new FormData(); fd.append("audio", new Blob(chunks, { type }), "clip." + ext); fd.append("client", me);
+      const fd = new FormData(); fd.append("audio", new Blob(chunks, { type }), "clip." + ext); fd.append("client", me); fd.append("pin", pin());
       try {
         const r = await fetch("/voice", { method: "POST", body: fd });
         const j = await r.json(); if (!r.ok) $("reply").textContent = j.detail || "Voice failed.";

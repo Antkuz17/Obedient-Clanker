@@ -238,12 +238,21 @@ def rule_parse(text: str, telemetry: dict | None = None) -> BrainResult:
         mv = {"kind": "move", "fwd": 0.0, "right": 0.0, "up": 0.0, "yaw_deg": 0.0}
         _DIR = r"(forward|ahead|back(?:wards?)?|left|right|up|down)"
         _UNIT = r" ?(?:m|metres?|meters?)?\b"
+        # "back up a bit" = move back 0.5 m (it used to read as back 0.5 + up 1: "a" = 1)
+        td = re.sub(r"\bback up\b", "back", t)
+        td = re.sub(r"\ba (?:little )?bit\b|\ba little\b", "0.5", td)
         hits = [(m.start(), m.group(1), m.group(2)) for m in re.finditer(
-            _DIR + r" (?:by )?" + _NUM + _UNIT, t)]  # "back 1 metre"
+            _DIR + r" (?:by )?" + _NUM + _UNIT, td)]  # "back 1 metre"
         taken = {h[0] for h in hits}
         hits += [(m.start(2), m.group(2), m.group(1)) for m in re.finditer(
-            r"(?:" + _NUM + _UNIT + r" )?" + _DIR, t) if m.start(2) not in taken]  # "1 m back"
+            r"(?:" + _NUM + _UNIT + r" )?" + _DIR, td) if m.start(2) not in taken]  # "1 m back"
+        # a bare direction word is everyday speech ("take off right now", "calm down",
+        # "what's up"): it only counts with a distance or a movement verb (review3 #9)
+        moving = re.search(r"\b(move|go|fly|head|back up|come|drift|slide|climb|rise|"
+                           r"descend|lower|drop|step|scoot|inch|strafe)\b", t)
         for _, word, num in hits:
+            if num is None and not moving:
+                continue
             d = _n(num, 0.5)
             if word in ("forward", "ahead"):
                 mv["fwd"] += d

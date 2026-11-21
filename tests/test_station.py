@@ -197,14 +197,39 @@ def test_parse_box_formats():
 
 async def test_locate_with_vlm_box():
     K = intrinsics()
-    pose = Pose(0, 0, 1.0, 0, 0)
+    pose = Pose(-1.0, 0, 1.0, 0, 0)  # 4 m back: the whole door fits in a ~45 deg frame
     x0, y0, x1, y1 = sim_box("door", pose, K)
     norm = [x0 / 640 * 1000, y0 / 480 * 1000, x1 / 640 * 1000, y1 / 480 * 1000]
     ai = FakeAI(vision_reply=json.dumps({"found": True, "box": norm, "conf": 0.8}))
     hit = await locate(ai, "door", b"jpg", pose, K)
     assert hit["n"] == pytest.approx(3.0, abs=0.15) and hit["conf"] == 0.8
+    assert not hit["upper_bound"]
     ai.vision_reply = '{"found": true, "box": [1, 1, 900, 900], "conf": 0.1}'
     assert await locate(ai, "door", b"jpg", pose, K) is None  # low confidence
+
+
+@pytest.mark.parametrize("dist", [1.2, 1.6, 2.0])
+def test_close_door_filling_the_frame_is_never_placed_further_away(dist):
+    """review3 #3: a door cut off by the frame read as 2.3-2.9 m away at any closer range,
+    and the planner flew towards it. Now: range from a cut-off box is never beyond the truth,
+    and with the bottom cut off it is flagged as an upper bound (the planner won't approach)."""
+    K = intrinsics()
+    pose = Pose(3.0 - dist, 0, 1.0, 0, 0)
+    x0, y0, x1, y1 = sim_box("door", pose, K)
+    clipped = [max(0, x0), max(0, y0), min(640, x1), min(480, y1)]   # what a VLM can return
+    hit = box_to_goal("door", clipped, pose, K)
+    assert hit is not None and hit["upper_bound"]                      # bottom off-frame too
+
+
+def test_door_with_top_cut_off_uses_the_floor_range():
+    """Top cut off, bottom (on the floor) visible: the floor-contact range is used, not the
+    too-far size range."""
+    K = intrinsics()
+    pose = Pose(0.5, 0, 0.6, 0, 0)  # 2.5 m from the door, camera low: top cut, bottom in view
+    x0, y0, x1, y1 = sim_box("door", pose, K)
+    assert y0 < 0 < y1 < 479
+    hit = box_to_goal("door", [x0, 0, x1, y1], pose, K)
+    assert not hit["upper_bound"] and hit["dist"] == pytest.approx(2.5, abs=0.1)
 
 
 # --- planner against the sim edge -----------------------------------------------------------
@@ -663,3 +688,97 @@ async def test_edge_stats_loop_and_stop_latency():
     finally:
         await srv.close()
         rx.close()
+
+
+# --- review3 ---------------------------------------------------------------------------------
+async def test_target_filling_the_frame_is_not_approached(rig):
+    """review3 #3: a range that is only an upper bound must not be flown towards."""
+    sim, edge = rig
+    p, said, _ = make_planner(sim, edge)
+
+    async def upper(ai, name, jpeg, pose, K):
+        hit = await localize_stub.locate(ai, name, jpeg, pose, K)
+        return {**hit, "upper_bound": True} if hit else None
+    p.locate = upper
+    await run_plan(p, [{"kind": "takeoff", "alt": 1.0}])
+    n0 = sim.state().n
+    await run_plan(p, [{"kind": "mission", "target": "door", "action": "none",
+                        "question": "", "after": "stay"}])
+    assert abs(sim.state().n - n0) < 0.1 and not any(l.startswith("goto") for l in p.log)
+    assert "right in front of me" in said[-2]
+
+
+def test_planner_clamps_around_the_first_takeoff_point():
+    """review3: the planner's fence clamp must agree with the edge's (first takeoff point)."""
+    p = Planner(None, None, locate=None)
+    p.home = (2.0, 2.0)
+    assert p._clamp(6.0, -3.0) == pytest.approx((4.6, -0.6))
+    p.home = None
+    assert p._clamp(6.0, -3.0) == pytest.approx((2.6, -2.6))
+
+
+@pytest.mark.parametrize("text", ["take off right now", "calm down", "what's up", "shut down",
+                                  "ok back to work everyone", "is anything left in the battery"])
+def test_rule_parse_ignores_stray_direction_words(text):
+    """review3 #9: everyday words used to move the drone in the no-key fallback."""
+    r = rule_parse(text, {"armed": True})
+    assert not any(a["kind"] == "move" for a in r.actions), r.actions
+
+
+def test_rule_parse_back_up_a_bit():
+    a = rule_parse("back up a bit", {"armed": True}).actions
+    assert a == [{"kind": "move", "fwd": -0.5, "right": 0.0, "up": 0.0, "yaw_deg": 0.0}]
+
+
+def _next_actions(st) -> list[dict]:
+    """The next `actions` the cloud sends the station (skipping spoken replies)."""
+    for _ in range(20):
+        m = st.receive_json()
+        if m["type"] == "actions":
+            return m["actions"]
+    raise AssertionError("no actions sent to the station")
+
+
+def test_dashboard_needs_the_pilot_pin_to_fly(tmp_path):
+    """review3 #4: the 'one viewer has the controls' lock trusted a name the browser sends."""
+    from fastapi.testclient import TestClient
+    from cloud.app import create_app
+
+    s = Settings(vultr_key="", station_token="tok", data_dir=tmp_path, control_pin="4321")
+    app = create_app(s, ai=FakeAI())
+    with TestClient(app) as c, c.websocket_connect("/ws/station?token=tok") as st:
+        r = c.post("/text", json={"text": "take off", "client": "judge"}).json()
+        assert not r["ok"] and r.get("need_pin")
+        r = c.post("/text", json={"text": "take off", "client": "judge", "pin": "0000"}).json()
+        assert not r["ok"] and r.get("need_pin")
+        r = c.post("/text", json={"text": "take off", "client": "judge", "pin": "4321"}).json()
+        assert r["ok"] and r["actions"][0]["kind"] == "takeoff"
+        assert _next_actions(st)[0]["kind"] == "takeoff"   # the refusals sent only audio
+        with c.websocket_connect("/ws/ui?client=stranger") as ui:
+            assert ui.receive_json()["pin_required"] is True
+            ui.send_json({"type": "op", "op": "land"})              # LAND needs the PIN
+            ui.send_json({"type": "op", "op": "stop"})              # STOP never does
+            assert _next_actions(st) == [{"kind": "stop"}]
+        assert c.post("/memory/reset", json={}).status_code == 403
+        assert c.post("/memory/reset", json={"pin": "4321"}).json() == {"deleted": 0}
+
+
+def test_no_pin_means_only_this_machine_can_fly(tmp_path):
+    """Without CONTROL_PIN only a local client may fly; behind Caddy every phone arrives from
+    127.0.0.1, so anything forwarded by a proxy is never local (also for the dev token)."""
+    from fastapi.testclient import TestClient
+    from cloud.app import create_app
+
+    s = Settings(vultr_key="", station_token="dev-token", data_dir=tmp_path, control_pin="")
+    app = create_app(s, ai=FakeAI())
+    fwd = {"X-Forwarded-For": "203.0.113.9"}
+    with TestClient(app) as c:
+        with pytest.raises(Exception):  # the dev token through the proxy: refused
+            with c.websocket_connect("/ws/station?token=dev-token", headers=fwd) as ws:
+                ws.receive_json()
+        with c.websocket_connect("/ws/station?token=dev-token") as st:
+            r = c.post("/text", json={"text": "take off"}, headers=fwd).json()
+            assert not r["ok"] and r.get("need_pin")
+            r = c.post("/text", json={"text": "take off"}).json()
+            assert r["ok"]
+            assert _next_actions(st)[0]["kind"] == "takeoff"

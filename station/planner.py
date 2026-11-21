@@ -49,7 +49,7 @@ class PlanAborted(Exception):
 class PlannerConfig:
     takeoff_alt: float = 1.0
     approach_m: float = 1.0        # stop this far short of a target
-    scan_step: float = 45.0        # deg per look while searching (60 deg HFOV, some overlap)
+    scan_step: float = 40.0        # deg per look while searching (~45 deg HFOV, some overlap)
     fence_margin: float = 0.4      # stay this far inside the edge's geofence
     max_step: float = SafetyConfig.max_step
     refine_beyond: float = 2.0     # target further than this: fly half way, look again, correct
@@ -86,6 +86,7 @@ class Planner:
         self.safety = safety or SafetyConfig()
         self._task: asyncio.Task | None = None
         self.log: list[str] = []  # human-readable trace, for the dashboard and tests
+        self.home: tuple[float, float] | None = None  # first takeoff point (the edge's fence)
 
     # --- public ------------------------------------------------------------------------------
     def submit(self, actions: list[dict]) -> asyncio.Task | None:
@@ -156,13 +157,21 @@ class Planner:
     def _airborne(self) -> bool:
         return bool(self.tel.get("armed")) and self.tel.get("alt", 0.0) > 0.2
 
+    async def _takeoff(self, alt: float) -> None:
+        # the edge centres its fence on the first takeoff point and keeps it there (review3
+        # #2); remember the same point so our clamp agrees with the edge's fence
+        if self.home is None and self.tel:
+            self.home = (self.tel.get("n", 0.0), self.tel.get("e", 0.0))
+        await self._prim("takeoff", alt=alt)
+
     async def _ensure_airborne(self) -> None:
         if not self._airborne():
-            await self._prim("takeoff", alt=self.cfg.takeoff_alt)
+            await self._takeoff(self.cfg.takeoff_alt)
 
     def _clamp(self, n: float, e: float) -> tuple[float, float]:
         lim = self.safety.fence_half - self.cfg.fence_margin
-        return max(-lim, min(lim, n)), max(-lim, min(lim, e))
+        hn, he = self.home or (0.0, 0.0)
+        return hn + max(-lim, min(lim, n - hn)), he + max(-lim, min(lim, e - he))
 
     async def _goto(self, n: float, e: float) -> None:
         """goto in legs of at most max_step (the gate refuses longer single moves)."""
@@ -199,7 +208,7 @@ class Planner:
     async def _do_takeoff(self, a: dict) -> None:
         if self._airborne():
             return
-        await self._prim("takeoff", alt=a.get("alt") or self.cfg.takeoff_alt)
+        await self._takeoff(a.get("alt") or self.cfg.takeoff_alt)
 
     async def _do_land(self, a: dict) -> None:
         await self._prim("land")
@@ -256,10 +265,16 @@ class Planner:
         if not found:
             raise PlanAborted(f"I looked all the way round and couldn't find the {target}.")
         hit, _ = found
-        hit = await self._refine(target, hit)
+        if not hit.get("upper_bound"):
+            hit = await self._refine(target, hit)
         cn, ce = self.tel.get("n", 0.0), self.tel.get("e", 0.0)
         d = math.hypot(hit["n"] - cn, hit["e"] - ce)
-        if d > self.cfg.approach_m + 0.2:
+        if hit.get("upper_bound"):
+            # it fills the frame: it is closer than any range we could compute, so flying
+            # "1 m short" of a guess would fly into it (review3 #3). Just face it.
+            self.log.append("target fills the frame: not approaching")
+            await self.say(f"The {target} is right in front of me.")
+        elif d > self.cfg.approach_m + 0.2:
             f = (d - self.cfg.approach_m) / d
             await self._goto(cn + f * (hit["n"] - cn), ce + f * (hit["e"] - ce))
         cn, ce = self.tel.get("n", 0.0), self.tel.get("e", 0.0)
@@ -300,6 +315,8 @@ class Planner:
             if not again:
                 break
             hit = again[0]
+            if hit.get("upper_bound"):  # now filling the frame: close enough, stop refining
+                break
         return hit
 
     async def _pointed_at(self) -> str:

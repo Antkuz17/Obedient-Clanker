@@ -19,7 +19,7 @@ def _match(query: str, name: str) -> bool:
 
 
 async def locate(ai, name: str, jpeg: bytes, pose: Pose, K: dict) -> dict | None:
-    half = math.radians(K.get("hfov_deg", 60.0)) / 2
+    half = math.radians(K.get("hfov_deg", 45.0)) / 2
     for obj, n, e, *_ in SIM_WORLD:
         if not _match(name, obj):
             continue

@@ -78,26 +78,41 @@ def parse_box(text: str, width: int, height: int) -> tuple[list[float], float] |
 
 
 def box_to_goal(name: str, box: list[float], pose: Pose, K: dict, conf: float = 1.0) -> dict | None:
-    """Pixel box + capture pose + intrinsics -> {n, e, dist, bearing, conf}. Pure geometry."""
+    """Pixel box + capture pose + intrinsics -> {n, e, dist, bearing, conf, upper_bound}.
+
+    A box cut off by the top or bottom of the frame shows less of the object than there is,
+    so the size-based range is only an *upper bound*: the object is at most that far away
+    (review3 #3: a door filling the frame read as 2.3-2.9 m at any closer distance, and the
+    drone flew towards it). Then:
+      - bottom visible: the floor-contact range is used if it is closer (both overestimate,
+        never underestimate, so the smaller one is the safer one);
+      - bottom cut off too: no usable range, the result is flagged `upper_bound` and the
+        planner doesn't fly towards it ("it's right in front of me").
+    """
     fx, fy, cx, cy = K["fx"], K["fy"], K["cx"], K["cy"]
     x0, y0, x1, y1 = box
     u = (x0 + x1) / 2
-    depth = None
     h_real = size_prior(name)
-    clipped = y0 <= 1 or y1 >= K["height"] - 1  # box cut by the frame edge: size is a lie
-    if h_real and not clipped:
-        depth = fy * h_real / max(y1 - y0, 1.0)
-    elif y1 > cy + 2 and y1 < K["height"] - 1 and pose.alt > 0.1:
-        depth = pose.alt * fy / (y1 - cy)        # box bottom on the floor
-    elif h_real or not clipped:
-        depth = fy * (h_real or DEFAULT_SIZE) / max(y1 - y0, 1.0)
-    if depth is None or not (0.2 < depth < 15):
+    top_cut, bottom_cut = y0 <= 1, y1 >= K["height"] - 1
+    size = fy * (h_real or DEFAULT_SIZE) / max(y1 - y0, 1.0)
+    floor = (pose.alt * fy / (y1 - cy)
+             if not bottom_cut and y1 > cy + 2 and pose.alt > 0.1 else None)  # bottom on floor
+    upper = False
+    if h_real and not top_cut and not bottom_cut:
+        depth = size
+    elif not top_cut and not bottom_cut:
+        depth = floor if floor is not None else size   # unknown object: floor first
+    elif floor is not None:
+        depth = min(size, floor)                        # top cut: both are upper bounds
+    else:
+        depth, upper = size, True                       # bottom cut: closer than this, unknown
+    if not (0.2 < depth < 15):
         return None
     right = depth * (u - cx) / fx
     dn, de = body_to_ned(depth, right, pose.yaw)
     bearing = (pose.yaw + math.degrees(math.atan2(u - cx, fx))) % 360
     return {"n": pose.n + dn, "e": pose.e + de, "dist": math.hypot(depth, right),
-            "bearing": bearing, "conf": conf}
+            "bearing": bearing, "conf": conf, "upper_bound": upper}
 
 
 async def locate(ai: AI, name: str, jpeg: bytes, pose: Pose, K: dict) -> dict | None:

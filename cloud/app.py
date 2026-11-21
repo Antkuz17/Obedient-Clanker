@@ -25,14 +25,17 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import hmac
 import itertools
 import json
 import logging
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import (FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket,
+                     WebSocketDisconnect)
 from fastapi.responses import FileResponse, HTMLResponse
+from starlette.requests import HTTPConnection
 
 from station.ai import AI
 from station.brain import Brain
@@ -44,6 +47,15 @@ log = logging.getLogger("cloud")
 STATIC = Path(__file__).parent / "static"
 CONTROL_IDLE_S = 120.0
 LOG_KEEP = 200
+LOCAL_HOSTS = ("127.0.0.1", "::1", "testclient")
+
+
+def is_local(conn: HTTPConnection) -> bool:
+    """A client on this machine. Behind Caddy every phone arrives from 127.0.0.1, so anything
+    that came through a proxy (X-Forwarded-For / Forwarded) is never local."""
+    if "x-forwarded-for" in conn.headers or "forwarded" in conn.headers:
+        return False
+    return conn.client is not None and conn.client.host in LOCAL_HOSTS
 QNX_LOOP_KEEP = 120      # 1 Hz edge loop stats: two minutes of graph
 QNX_EVENTS_KEEP = 50     # supervisor events
 QNX_STOPS_KEEP = 20      # person / palm stop latencies
@@ -158,13 +170,26 @@ class Hub:
             await self.to_uis({"type": "audio", "mp3": b64, "text": text})
             await self.to_station({"type": "audio", "mp3": b64, "text": text})
 
-    async def command(self, text: str, cid: str) -> dict:
+    def pin_ok(self, pin, conn: HTTPConnection) -> bool:
+        """The pilot PIN gates everything that can move the drone (review3 #4): the viewer
+        name is whatever the browser says, so it can't be the lock. No PIN configured: only
+        this machine (dev, `station.dev`) may fly."""
+        if self.s.control_pin:
+            return hmac.compare_digest(str(pin or ""), self.s.control_pin)
+        return is_local(conn)
+
+    async def command(self, text: str, cid: str, authorized: bool = True) -> dict:
         """A typed or transcribed command from a viewer (or the laptop mic)."""
         text = text.strip()
         if not text:
             return {"ok": False, "reply": "I didn't catch that."}
         await self.to_uis({"type": "heard", "text": text, "who": cid})
         await self.log_line(cid, text)
+        if not authorized:
+            reply = "You need the pilot PIN to fly me. Anyone can hit stop."
+            await self.log_line("cloud", f"{cid}: no pilot PIN, command not sent")
+            self.spawn(self.speak(reply))
+            return {"ok": False, "reply": reply, "need_pin": True}
         if not self.may_command(cid):
             reply = "Someone else has the controls right now. You can still hit stop."
             await self.speak(reply)
@@ -182,9 +207,13 @@ class Hub:
         self.spawn(self.speak(reply))
         return {"ok": sent, "reply": reply, "actions": r.actions, "source": r.source}
 
-    async def op(self, op: str, cid: str) -> None:
-        """STOP / LAND buttons: no brain, any viewer, straight to the station."""
+    async def op(self, op: str, cid: str, authorized: bool = True) -> None:
+        """STOP / LAND buttons: no brain, straight to the station. STOP: any viewer. LAND:
+        pilot PIN, like everything else that moves the drone (review3 #4)."""
         if op not in ("stop", "land"):
+            return
+        if op == "land" and not authorized:
+            await self.log_line("cloud", f"{cid}: LAND needs the pilot PIN (STOP doesn't)")
             return
         await self.log_line(cid, f"[{op.upper()} button]")
         if not await self.to_station({"type": "actions", "actions": [{"kind": op}],
@@ -273,7 +302,10 @@ def create_app(s: Settings | None = None, ai: AI | None = None) -> FastAPI:
                     "vultr": bool(s.vultr_key), "elevenlabs": bool(s.eleven_key and s.eleven_voice)}}
 
     @app.post("/voice")
-    async def voice(audio: UploadFile = File(...), client: str = Form("phone")):
+    async def voice(request: Request, audio: UploadFile = File(...),
+                    client: str = Form("phone"), pin: str = Form("")):
+        if not hub.pin_ok(pin, request):
+            return await hub.command("(voice)", client, authorized=False)  # skip STT: no PIN
         data = await audio.read()
         try:
             text = await ai.transcribe(data, audio.filename or "clip.webm")
@@ -287,8 +319,17 @@ def create_app(s: Settings | None = None, ai: AI | None = None) -> FastAPI:
         return {"text": text, **r}
 
     @app.post("/text")
-    async def text_cmd(body: dict):
-        return await hub.command(str(body.get("text", "")), str(body.get("client", "api")))
+    async def text_cmd(request: Request, body: dict):
+        ok = hub.pin_ok(body.get("pin"), request)
+        return await hub.command(str(body.get("text", "")), str(body.get("client", "api")),
+                                 authorized=ok)
+
+    @app.post("/memory/reset")
+    async def memory_reset(request: Request, body: dict):
+        """Forget every memory frame, e.g. after rehearsing on the sim (review3)."""
+        if not hub.pin_ok(body.get("pin"), request):
+            raise HTTPException(403, "pilot PIN required")
+        return {"deleted": hub.memory.clear()}
 
     @app.post("/memory/search")
     async def memory_search(body: dict):
@@ -315,7 +356,7 @@ def create_app(s: Settings | None = None, ai: AI | None = None) -> FastAPI:
 
     @app.websocket("/ws/station")
     async def ws_station(ws: WebSocket, token: str = ""):
-        local = ws.client is not None and ws.client.host in ("127.0.0.1", "::1", "testclient")
+        local = is_local(ws)  # not via the proxy: the dev token is localhost only
         if token != s.station_token or (s.station_token == "dev-token" and not local):
             await ws.close(code=4401)  # the default token only works on localhost
             return
@@ -346,6 +387,7 @@ def create_app(s: Settings | None = None, ai: AI | None = None) -> FastAPI:
         hub.uis[cid] = ws
         await ws.send_json({"type": "hello", "you": cid, "station": hub.station is not None,
                             "holder": hub.holder, "log": hub.flight_log[-50:],
+                            "pin_required": bool(s.control_pin),
                             "telemetry": hub.telemetry})
         if hub.last_frame:
             await ws.send_json(hub.last_frame)
@@ -353,10 +395,11 @@ def create_app(s: Settings | None = None, ai: AI | None = None) -> FastAPI:
         try:
             while True:
                 m = await ws.receive_json()
+                ok = hub.pin_ok(m.get("pin"), ws)
                 if m.get("type") == "text":
-                    hub.spawn(hub.command(str(m.get("text", "")), cid))
+                    hub.spawn(hub.command(str(m.get("text", "")), cid, authorized=ok))
                 elif m.get("type") == "op":
-                    await hub.op(str(m.get("op")), cid)
+                    await hub.op(str(m.get("op")), cid, authorized=ok)
         except (WebSocketDisconnect, RuntimeError):
             pass
         finally:

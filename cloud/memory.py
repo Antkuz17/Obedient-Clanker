@@ -104,6 +104,15 @@ class Memory:
                 pass  # no reranker on this key: first-stage order stands
         return out[:k]
 
+    def clear(self) -> int:
+        """Forget everything (e.g. sim rehearsal frames before the real demo). Returns count."""
+        n = self.count()
+        self.db.execute("DELETE FROM frames")
+        self.db.commit()
+        for p in (self.dir / "frames").glob("*.jpg"):
+            p.unlink(missing_ok=True)
+        return n
+
     def recent(self, kind: str | None = None, limit: int = 20) -> list[dict]:
         sql, args = "SELECT id, t, n, e, alt, yaw, caption, kind FROM frames", ()
         if kind:
