@@ -15,11 +15,12 @@ class Pose:
     alt: float
     yaw: float
     t: float
+    age: float = 0.0  # X-Pose-Age: s since the video process last heard from the core
 
     @classmethod
-    def parse(cls, header: str) -> "Pose":
+    def parse(cls, header: str, age: str | None = None) -> "Pose":
         n, e, alt, yaw, t = (float(x) for x in header.split(","))
-        return cls(n, e, alt, yaw, t)
+        return cls(n, e, alt, yaw, t, float(age) if age else 0.0)
 
     def as_dict(self) -> dict:
         return {"n": self.n, "e": self.e, "alt": self.alt, "yaw": self.yaw, "t": self.t}
@@ -48,7 +49,7 @@ class EdgeCamera:
     async def frame(self) -> Frame:
         r = await self.http.get(f"{self.base}/forward.jpg")
         r.raise_for_status()
-        return Frame(r.content, Pose.parse(r.headers["X-Pose"]))
+        return Frame(r.content, Pose.parse(r.headers["X-Pose"], r.headers.get("X-Pose-Age")))
 
     async def aclose(self) -> None:
         await self.http.aclose()

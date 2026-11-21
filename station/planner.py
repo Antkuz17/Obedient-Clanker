@@ -56,6 +56,7 @@ class PlannerConfig:
     refine_max: int = 2            # at most this many re-looks on the way in
     confirm_below: float = 0.7     # sightings less confident than this need a second look
     confirm_m: float = 0.6         # ... that lands within this distance of the first
+    max_pose_age: float = 0.5      # s; older frame poses (X-Pose-Age) can't place a target
 
 
 def compass(dn: float, de: float) -> str:
@@ -179,6 +180,13 @@ class Planner:
     async def _face(self, bearing: float) -> None:
         await self._prim("yaw", deg=round(bearing % 360, 1), relative=False)
 
+    def _check_pose(self, fr: Frame) -> None:
+        """The separate video process stamps frames with the core's last pose; if the core
+        went quiet, that pose is stale and any goal computed from it would be wrong."""
+        if fr.pose.age > self.cfg.max_pose_age:
+            raise PlanAborted(f"My position feed is {fr.pose.age:.0f} seconds old, so I can't "
+                              "tell where things are. Holding here.")
+
     async def _frame(self) -> Frame:
         if not self.camera:
             raise PlanAborted("I have no camera feed.")
@@ -214,6 +222,7 @@ class Planner:
         """One look. A shaky sighting (conf < confirm_below) must be seen again, in about the
         same place, in a second frame; the two fixes are averaged."""
         fr = await self._frame()
+        self._check_pose(fr)
         hit = await self.locate(self.ai, target, fr.jpeg, fr.pose, K)
         if hit and hit.get("conf", 1.0) < self.cfg.confirm_below:
             fr2 = await self._frame()

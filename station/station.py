@@ -196,7 +196,7 @@ class Station:
                 continue
             b64 = base64.b64encode(fr.jpeg).decode()
             await self._send_cloud({"type": "frame", "jpeg": b64, "pose": fr.pose.as_dict()})
-            if self._memory_due(fr, now):
+            if fr.pose.age <= 0.5 and self._memory_due(fr, now):  # stale pose: bad memory
                 await self._send_cloud({"type": "memory_frame", "jpeg": b64,
                                         "pose": fr.pose.as_dict()})
 

@@ -518,3 +518,22 @@ async def test_memory_rerank_and_fallback(tmp_path):
     mem = Memory(tmp_path / "b", BrokenRerank())
     await mem.ingest(b"1", {"n": 0, "e": 0, "t": 1}, "silver keys on a table")
     assert (await mem.search("keys"))[0]["caption"] == "silver keys on a table"
+
+
+async def test_stale_pose_blocks_localization(rig):
+    sim, edge = rig
+    assert Pose.parse("1,2,0.9,90,5", "3.5").age == 3.5 and Pose.parse("1,2,0.9,90,5").age == 0
+
+    class StaleCam(SimCam):
+        async def frame(self):
+            fr = await super().frame()
+            fr.pose.age = 4.0
+            return fr
+
+    p, said, _ = make_planner(sim, edge)
+    p.camera = StaleCam(sim)
+    await run_plan(p, [{"kind": "takeoff", "alt": 1.0},
+                       {"kind": "mission", "target": "door", "action": "none", "question": "",
+                        "after": "stay"}])
+    assert "position feed is 4 seconds old" in said[-1]
+    assert not any(l.startswith("goto") for l in p.log)
