@@ -148,8 +148,12 @@ class Brain:
         text = text.strip()
         if not text:
             return BrainResult("I didn't catch that.", source="rules")
-        if self.ai is None:
-            return rule_parse(text, telemetry)
+        if self.ai is None or is_urgent(text):
+            return rule_parse(text, telemetry)  # urgent: skip the LLM round trip (~0.7 s)
+        if r := fast_parse(text, telemetry):  # plain "forward 1 m, turn left": no LLM either
+            self.history += [{"role": "user", "content": text},
+                             {"role": "assistant", "content": r.reply}]
+            return r
         msgs = [{"role": "system", "content": SYSTEM.replace("{state}", state_summary(telemetry))},
                 *self.history[-6:], {"role": "user", "content": text}]
         try:
@@ -204,6 +208,118 @@ def _task(t: str) -> str:
         if re.search(pat, t):
             return k
     return "none"
+
+
+# A short utterance that is only "stop" / "land" (and friends) goes straight to the rules, so a
+# spoken panic stop costs speech-to-text only, not an LLM call too. Longer sentences that merely
+# contain the word ("land on the table after the photo") still go to the LLM.
+_URGENT = re.compile(
+    r"^(?:(?:hey |ok |okay )?jarvis,? )?(?:please )?"
+    r"(?:stop|freeze|halt|abort|hold on|hold it|wait|land|land now|land it|come down|touch down)"
+    r"(?: (?:now|right now|please|immediately))?$")
+
+
+def is_urgent(text: str) -> bool:
+    t = re.sub(r"[^a-z ]+", " ", text.lower())
+    t = " ".join(t.split())
+    t = re.sub(r"^(?:(?:stop|land) )+(?=(?:stop|land)$)", "", t)  # "stop stop stop" -> "stop"
+    return bool(_URGENT.match(t))
+
+
+# --- fast path ---------------------------------------------------------------------------------
+# Plain flying commands skip the LLM (~0.5 s). Strict on purpose: the WHOLE utterance must be a
+# chain of known clauses ("take off to 1 metre", "forward 1.5 m", "turn left 90 degrees",
+# "come back", "land") with explicit distances, inside the limits the LLM is told about.
+# Anything else (a bare "go left", "a bit", an object, a question, too far) returns None and
+# goes to the LLM, which can ask, refuse or plan. The edge safety gate still checks everything.
+_FWORDS = {"half": 0.5, "half a": 0.5, "a": 1, "an": 1, "one": 1, "two": 2, "three": 3,
+           "four": 4, "five": 5, "fifteen": 15, "twenty": 20, "thirty": 30, "forty five": 45,
+           "forty": 40, "fifty": 50, "sixty": 60, "ninety": 90, "one eighty": 180,
+           "a hundred and eighty": 180, "one hundred and eighty": 180}
+_FNUM = (r"(\d+(?:\.\d+)?|" + "|".join(sorted((re.escape(k) for k in _FWORDS), key=len,
+                                              reverse=True)) + ")")
+_FUNIT = r" ?(m|metres?|meters?|cm|centimetres?|centimeters?)"
+_FDIR = r"(forwards?|ahead|backwards?|back|left|right|up|down)"
+_FVERB = r"(?:(?:move|go|fly|head|drift|slide|climb|drop|descend|rise) )?"
+_F_TAKEOFF = re.compile(r"(?:take ?off|lift off|launch)(?: (?:to )?" + _FNUM + _FUNIT + r")?")
+_F_MOVE1 = re.compile(_FVERB + _FDIR + r" (?:by )?" + _FNUM + _FUNIT)        # forward 1 metre
+_F_MOVE2 = re.compile(_FVERB + _FNUM + _FUNIT + " " + _FDIR)                   # 1 metre forward
+_F_TURN = re.compile(r"(?:turn|rotate|spin|yaw) (?:to the )?(left|right)"
+                     r"(?: (?:by )?" + _FNUM + r"(?: ?degrees?)?)?")
+_F_AROUND = re.compile(r"(?:turn|spin) around")
+_F_HOME = re.compile(r"come back|come home|go home|fly home|return home|go back home")
+_F_LAND = re.compile(r"land(?: now)?")
+_F_SPLIT = re.compile(r" (?:and then|then|and|after that) ")
+MAX_FAST_MOVE_M = 3.0
+
+
+def _fnum(s: str | None, default: float) -> float:
+    if not s:
+        return default
+    return float(s) if s[0].isdigit() else float(_FWORDS[s])
+
+
+def _fdist(num: str, unit: str) -> float:
+    return _fnum(num, 0.0) / (100.0 if unit.startswith("c") else 1.0)
+
+
+def fast_parse(text: str, telemetry: dict | None = None) -> BrainResult | None:
+    """The whole utterance as simple flying clauses, or None (then the LLM decides)."""
+    t = text.lower().replace("°", " degrees").replace("-", " ")
+    t = re.sub(r"(?<!\d)\.|\.(?!\d)", " ", t)          # sentence dots, not "1.5"
+    t = re.sub(r"[,;:!?]", " and ", t)
+    t = re.sub(r"[^a-z0-9. ]+", " ", t)
+    t = " ".join(t.split())
+    t = re.sub(r"^(?:(?:hey |ok |okay )?jarvis )?(?:please )?(?:and )?", "", t)
+    t = re.sub(r"(?: and)? please$", "", t).strip()
+    clauses = [c for c in _F_SPLIT.split(t) if c and c != "and"]
+    if not clauses or len(clauses) > 4:
+        return None
+    actions: list[dict] = []
+    for c in clauses:
+        mv = {"kind": "move", "fwd": 0.0, "right": 0.0, "up": 0.0, "yaw_deg": 0.0}
+        if m := _F_TAKEOFF.fullmatch(c):
+            alt = _fdist(m.group(1), m.group(2)) if m.group(1) else 1.0
+            if not 0.3 <= alt <= 1.5:
+                return None
+            actions.append({"kind": "takeoff", "alt": alt})
+            continue
+        if _F_HOME.fullmatch(c):
+            actions.append({"kind": "home"})
+            continue
+        if _F_LAND.fullmatch(c):
+            actions.append({"kind": "land"})
+            continue
+        if _F_AROUND.fullmatch(c):
+            mv["yaw_deg"] = 180.0
+        elif m := _F_TURN.fullmatch(c):
+            deg = _fnum(m.group(2), 90.0)
+            if not 0 < deg <= 360:
+                return None
+            mv["yaw_deg"] = deg if m.group(1) == "right" else -deg
+        else:
+            m = _F_MOVE1.fullmatch(c)
+            if m:
+                word, d = m.group(1), _fdist(m.group(2), m.group(3))
+            elif m := _F_MOVE2.fullmatch(c):
+                word, d = m.group(3), _fdist(m.group(1), m.group(2))
+            else:
+                return None  # not a clause we know: let the LLM have the whole thing
+            if not 0 < d <= MAX_FAST_MOVE_M:
+                return None
+            key, sign = {"forward": ("fwd", 1), "forwards": ("fwd", 1), "ahead": ("fwd", 1),
+                         "back": ("fwd", -1), "backward": ("fwd", -1),
+                         "backwards": ("fwd", -1), "left": ("right", -1),
+                         "right": ("right", 1), "up": ("up", 1), "down": ("up", -1)}[word]
+            mv[key] = sign * d
+        actions.append(mv)
+    if any(a["kind"] == "land" for a in actions[:-1]):
+        return None  # "land and then go forward": odd, the LLM can sort it out
+    if (telemetry and not telemetry.get("armed")
+            and actions[0]["kind"] in ("move", "home")):
+        actions.insert(0, {"kind": "takeoff", "alt": 1.0})
+    reply = DEFAULT_REPLY[actions[0]["kind"]] if len(actions) == 1 else "On it."
+    return BrainResult(reply, actions, "fast")
 
 
 def rule_parse(text: str, telemetry: dict | None = None) -> BrainResult:

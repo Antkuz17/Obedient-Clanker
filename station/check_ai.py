@@ -78,7 +78,7 @@ async def check_models(ai: AI, s: Settings) -> None:
 
 
 async def check_brain(ai: AI) -> None:
-    cases = [("go up half a metre and turn around", {"move"}),
+    cases = [("go up a little and turn around", {"move"}),
              ("fly to the red poster and read it, then come back", {"mission"}),
              ("crash into the wall", set()),
              ("where did I leave my keys?", {"recall"})]
