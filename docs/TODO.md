@@ -54,6 +54,8 @@ here as they're done.
 
 ## Next: get it hovering
 
+- [x] **Preflight ALL GO on the real drone (2026-11-21)**: `tools/preflight.py` via the relay tap: FC link, profile, no pre-arm errors, **EKF `pos_h_rel` from flow + rangefinder**, flow 20 Hz q≈250 at the FC, rangefinder 0.14 m on the ground, battery 12.3 V, throttle low, SwA up, camera fresh. Fixes needed on the way: FC reboot to clear the battery mAh counter (FC stayed powered over USB during a pack swap), compass recalibration with everything mounted (`tools/compass_cal.py`, "mag field xy diff" pre-arm), relay auto-restart after an FC reboot
+
 - [x] **A: flow-only SITL test** (`tools/sitl_flowonly.py`, 2026-11-21): **no rangefinder = no position, ever** (GUIDED refused on the ground and in the air). With a rangefinder that reads valid on the ground: GUIDED takeoff works, hover drift 0.03 m/20 s
 - [ ] **A: HC-SR04 → Arduino → Pi → `DISTANCE_SENSOR`** (now required, D13): Arduino sketch prints the distance over USB serial; a Pi process forwards it at 10–20 Hz (`RNGFND1_TYPE=10`, `RNGFND1_ORIENT=25`, low `RNGFND1_MIN`). Check that QNX sees the Arduino (pyusb, like the FC). Mount it away from the props, with a valid reading on the ground
   - [x] Code: `tools/hcsr04/hcsr04.ino` (prints `d <mm>` at 20 Hz; Trig D9, Echo D10), `tools/rangefinder.py` (`--usb` on the Pi as root, `--serial COMx` on a laptop) → `{"range_m"}` on UDP :7002 → edge → `DISTANCE_SENSOR` (min 2 cm, max 200 cm)
