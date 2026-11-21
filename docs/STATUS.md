@@ -21,6 +21,8 @@ to 1 m short of the door, took the photo, came home.
 | Phone dashboard | `cloud/static/index.html` | served in the smoke run; **not opened on a phone yet** |
 | Station: edge link, WSS uplink (telemetry 5 Hz, frames 4 fps, memory frames on movement), audio out, `--local` REPL / mic | `station/station.py`, `station/audio.py`, `station/__main__.py` | smoke run (cloud mode) |
 | Deploy guide (VM, systemd, Caddy HTTPS) | `cloud/deploy.md`, `.env.example` | not deployed yet |
+| Station link safety: edge reconnect (also when the Pi goes silent: no telemetry for 3 s), cancels the plan on a drop; **cloud lost 30 s while hovering idle → says so and lands** (review2 "nobody owns the cloud died") | `station/station.py` | tests: edge server killed and restarted; cloud outage lands the sim |
+| Dashboard websocket path | `cloud/static/index.html` | JS syntax check + a Python client speaking the page's protocol: 5 Hz telemetry, ~2.5 fps frames, log, reply, LAND. **Not rendered in a browser yet** (Chrome extension wasn't connected) |
 
 ## Done (Person A)
 

@@ -374,3 +374,64 @@ def test_cloud_relays_commands_to_station(tmp_path):
         r = c.post("/voice", files={"audio": ("clip.webm", b"land")},
                    data={"client": "judge"}).json()
         assert r["text"] == "land" and r["ok"] is False  # station gone
+
+
+# --- station: edge reconnect, cloud-lost landing --------------------------------------------
+async def _edge_server(port: int = 0):
+    cfg = SafetyConfig()
+    sim = SimVehicle(cfg, speedup=10.0)
+    srv = EdgeServer(sim, cfg, WatchdogConfig(hover_after_s=0.6, land_after_s=2.0),
+                     host="127.0.0.1", port=port, perception_port=free_port(), flow_port=None)
+    await srv.start()
+    return sim, srv
+
+
+async def _until(cond, timeout=15.0):
+    t0 = asyncio.get_running_loop().time()
+    while not cond():
+        assert asyncio.get_running_loop().time() - t0 < timeout, "timed out"
+        await asyncio.sleep(0.05)
+
+
+async def test_station_reconnects_to_edge(tmp_path, monkeypatch):
+    import station.station as st_mod
+    monkeypatch.setattr(st_mod, "EDGE_RETRY_S", (0.1, 0.3))
+    sim, srv = await _edge_server()
+    port = srv.port
+    st = st_mod.Station(Settings(vultr_key="", edge_port=port, data_dir=tmp_path),
+                        stub_locate=True, speaker=False, ai=FakeAI())
+    said = []
+    st.say = lambda t: said.append(t) or asyncio.sleep(0)
+    st.planner._say = st.say
+    loop_task = asyncio.create_task(st.edge_loop())
+    await _until(lambda: st.edge.connected)
+    first = st.edge
+    await srv.close()                       # the Pi loses power: no FIN, telemetry just stops
+    await _until(lambda: any("lost the link" in s for s in said))
+    sim2, srv2 = await _edge_server(port)   # ... and comes back
+    await _until(lambda: st.edge.connected and st.edge is not first)
+    assert st.planner.edge is st.edge
+    st.planner.submit([{"kind": "takeoff", "alt": 1.0}])
+    await asyncio.wait_for(st.planner.wait(), 30)
+    assert sim2.state().armed
+    loop_task.cancel()
+    await st.edge.close()
+    await srv2.close()
+
+
+async def test_station_lands_when_cloud_lost(rig, tmp_path, monkeypatch):
+    import station.station as st_mod
+    sim, edge = rig
+    st = st_mod.Station(Settings(vultr_key="", data_dir=tmp_path), stub_locate=True,
+                        speaker=False, ai=FakeAI())
+    st.edge = st.planner.edge = edge
+    said = []
+    st.say = lambda t: said.append(t) or asyncio.sleep(0)
+    st.planner._say = st.say
+    await edge.run("takeoff", alt=1.0, timeout=30)
+    st.cloud_lost_land_s = 0.5
+    st._cloud_down_since = __import__("time").monotonic()
+    wd = asyncio.create_task(st.cloud_watchdog())
+    await _until(lambda: not sim.state().armed, 30)
+    assert said == ["I've lost the cloud, so I'm landing."]
+    wd.cancel()

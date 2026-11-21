@@ -132,6 +132,8 @@ class Planner:
 
     async def _prim(self, op: str, **args) -> dict:
         self.log.append(f"{op} {args}" if args else op)
+        if not self.edge.connected:
+            raise PlanAborted("I'm not connected to the drone.")
         timeout = 90.0 if op in ("scan", "takeoff", "land") else 60.0
         done = await self.edge.run(op, timeout=timeout, **args)
         if done["status"] != "ok":

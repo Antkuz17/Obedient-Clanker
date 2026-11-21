@@ -35,6 +35,9 @@ FRAME_UP_FPS = 4
 MEMORY_EVERY_M = 0.5       # ingest a memory frame after moving this far
 MEMORY_EVERY_DEG = 30.0    # ... or turning this much
 MEMORY_EVERY_S = 15.0      # ... or this long
+CLOUD_LOST_LAND_S = 30.0   # cloud gone this long while airborne and idle -> land (review2)
+EDGE_RETRY_S = (1.0, 5.0)  # edge reconnect backoff: first, max
+EDGE_SILENT_S = 3.0        # no telemetry this long = link dead (Pi lost power, Wi-Fi gone)
 
 
 class Station:
@@ -59,6 +62,10 @@ class Station:
         self._mem_wait: dict[int, asyncio.Future] = {}
         self._mem_last: tuple[float, float, float, float] | None = None
         self._local_memory = None
+        self.cloud_lost_land_s = CLOUD_LOST_LAND_S
+        self._cloud_down_since: float | None = time.monotonic()
+        self._cloud_landed = False  # one landing per outage
+        self._edge_ready = asyncio.Event()
 
     # --- cloud link --------------------------------------------------------------------------
     async def _send_cloud(self, msg: dict) -> bool:
@@ -80,6 +87,7 @@ class Station:
                 async with websockets.connect(url, ping_interval=15, ping_timeout=20,
                                               max_size=8 * 2**20) as ws:
                     self.ws, backoff = ws, 1.0
+                    self._cloud_down_since, self._cloud_landed = None, False
                     log.info("cloud connected")
                     async for raw in ws:
                         await self._from_cloud(json.loads(raw))
@@ -87,6 +95,8 @@ class Station:
                 raise
             except Exception as e:
                 log.warning("cloud link down (%s); retrying in %.0f s", e, backoff)
+            if self.ws is not None or self._cloud_down_since is None:
+                self._cloud_down_since = time.monotonic()
             self.ws = None
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 15.0)
@@ -101,6 +111,69 @@ class Station:
         elif t == "memory_result" and (f := self._mem_wait.pop(m.get("req"), None)):
             if not f.done():
                 f.set_result(m.get("hits") or [])
+
+    def _airborne(self) -> bool:
+        t = self.edge.telemetry or {}
+        return bool(self.edge.connected and t.get("armed") and t.get("alt", 0.0) > 0.2)
+
+    async def cloud_watchdog(self) -> None:
+        """Review2: if the cloud dies, nothing can tell a hovering drone to come down. After
+        CLOUD_LOST_LAND_S with no cloud, airborne and no plan running: say so and land."""
+        while True:
+            await asyncio.sleep(0.5)
+            since = self._cloud_down_since
+            if (since is None or self._cloud_landed or self.planner.busy
+                    or time.monotonic() - since < self.cloud_lost_land_s or not self._airborne()):
+                continue
+            self._cloud_landed = True
+            log.warning("cloud lost for %.0f s while hovering: landing", time.monotonic() - since)
+            await self.say("I've lost the cloud, so I'm landing.")
+            self.planner.submit([{"kind": "land"}])
+
+    # --- edge link ---------------------------------------------------------------------------
+    async def edge_loop(self) -> None:
+        """Keep the edge link up. On a drop: cancel the plan (the edge's watchdog hovers, then
+        lands, on its own) and reconnect with backoff, with a fresh client."""
+        backoff = EDGE_RETRY_S[0]
+        was_up = False
+        last_tel, last_tel_t = None, time.monotonic()
+        while True:
+            if self.edge.connected:
+                await asyncio.sleep(0.2)
+                # A powered-off Pi never closes the socket: telemetry (10 Hz) going quiet is
+                # the only sign. The client replaces the dict on every telemetry message.
+                if self.edge.telemetry is not last_tel:
+                    last_tel, last_tel_t = self.edge.telemetry, time.monotonic()
+                elif was_up and time.monotonic() - last_tel_t > EDGE_SILENT_S:
+                    log.warning("no telemetry for %.0f s", EDGE_SILENT_S)
+                    await self.edge.close()
+                continue
+            if was_up:
+                was_up = False
+                self._edge_ready.clear()
+                self.planner.cancel()
+                log.warning("edge link lost")
+                await self.say("I've lost the link to the drone. It will hover, then land on "
+                               "its own.")
+            c = EdgeClient(self.s.edge_host, self.s.edge_port, on_event=self._on_edge_event)
+            try:
+                await c.connect()
+            except OSError as e:
+                log.info("edge %s:%d not reachable (%s); retry in %.0f s", self.s.edge_host,
+                         self.s.edge_port, e, backoff)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, EDGE_RETRY_S[1])
+                continue
+            old, self.edge = self.edge, c
+            self.planner.edge = c
+            try:
+                await old.close()
+            except Exception:
+                pass
+            backoff, was_up = EDGE_RETRY_S[0], True
+            last_tel_t = time.monotonic()
+            self._edge_ready.set()
+            log.info("edge connected at %s:%d", self.s.edge_host, self.s.edge_port)
 
     def _on_edge_event(self, ev: dict) -> None:
         asyncio.ensure_future(self._send_cloud(ev))
@@ -202,16 +275,16 @@ class Station:
 
     # --- run ---------------------------------------------------------------------------------
     async def run(self, mic: bool = False) -> None:
-        await self.edge.connect()
-        log.info("edge connected at %s", self.s.edge_host)
-        tasks = []
+        tasks = [asyncio.create_task(self.edge_loop())]
         try:
             if self.local or not self.s.cloud_url:
+                await self._edge_ready.wait()
                 await self.local_repl(mic)
                 await self.planner.wait()
             else:
-                tasks = [asyncio.create_task(self.cloud_loop()),
-                         asyncio.create_task(self.uplink_loop())]
+                tasks += [asyncio.create_task(self.cloud_loop()),
+                          asyncio.create_task(self.uplink_loop()),
+                          asyncio.create_task(self.cloud_watchdog())]
                 await asyncio.gather(*tasks)
         finally:
             for t in tasks:
