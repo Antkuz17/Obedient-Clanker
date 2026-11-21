@@ -1,6 +1,7 @@
 import asyncio
 import json
 import socket
+import time
 
 import pytest
 
@@ -300,6 +301,45 @@ async def test_position_loss_in_flight_lands(rig):
         await asyncio.sleep(0.05)
     assert not sim.s.armed
     assert any(e["kind"] == "position" for e in edge.events)
+
+
+async def test_client_heartbeat_survives_a_blocked_event_loop():
+    """Review A10: a slow LLM/STT call that blocks the station's event loop must not starve
+    the heartbeat (1 s gap = edge hovers, 5 s = lands)."""
+    import socket as so
+    import threading
+    srv = so.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    beats = []
+
+    def accept():
+        c, _ = srv.accept()
+        for line in c.makefile("rb"):
+            if b"heartbeat" in line:
+                beats.append(time.monotonic())
+    threading.Thread(target=accept, daemon=True).start()
+    edge = await EdgeClient("127.0.0.1", srv.getsockname()[1]).connect()
+    await asyncio.sleep(0.3)
+    t0 = time.monotonic()
+    time.sleep(1.5)                                   # block the event loop
+    during = [b for b in beats if t0 < b < t0 + 1.5]
+    await edge.close()
+    srv.close()
+    assert len(during) >= 6                           # ~5 Hz kept going
+    assert max(b - a for a, b in zip(during, during[1:])) < 0.5
+
+
+async def test_station_allowlist_refuses_other_ips():
+    cfg = SafetyConfig()
+    srv = EdgeServer(SimVehicle(cfg), cfg, host="127.0.0.1", port=0, perception_port=None,
+                     flow_port=None, allowed_peers={"10.9.9.9"})
+    await srv.start()
+    edge = await EdgeClient("127.0.0.1", srv.port).connect()
+    await asyncio.sleep(0.3)
+    assert not edge.connected and srv._writer is None
+    await edge.close()
+    await srv.close()
 
 
 async def test_bad_message_gets_error_ack(rig):

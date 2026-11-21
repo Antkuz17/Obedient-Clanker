@@ -76,6 +76,7 @@ class MavVehicle(Vehicle):
         self._last_flow_t = 0.0
         self._t0 = time.monotonic()
         self.reconnects = 0
+        self._last_setup = 0.0
 
     # --- lifecycle ---------------------------------------------------------------------------
     def _open(self) -> None:
@@ -86,7 +87,7 @@ class MavVehicle(Vehicle):
     async def start(self) -> None:
         self._open()
         threading.Thread(target=self._reader, daemon=True, name="mav-rx").start()
-        threading.Thread(target=self._setup, daemon=True, name="mav-setup").start()
+        # setup runs when the first FC heartbeat arrives (see _handle)
 
     async def close(self) -> None:
         self._stop.set()
@@ -96,15 +97,9 @@ class MavVehicle(Vehicle):
             fn(*args)
 
     def _setup(self) -> None:
-        """Run on every (re)connect: stream rates and the EKF origin."""
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline and not self._stop.is_set():
-            if time.monotonic() - self._last_fc_hb < FC_LINK_TIMEOUT_S:
-                break
-            time.sleep(0.2)
-        else:
-            log.error("no heartbeat from flight controller on %s", self.device)
-            return
+        """Run when the FC heartbeat (re)appears: stream rates and the EKF origin."""
+        time.sleep(0.05)  # let _handle finish recording the heartbeat
+        self._last_setup = time.monotonic()
         log.info("FC link up: sys %d comp %d", self.m.target_system, self.m.target_component)
         for msg_id, hz in STREAMS.items():
             self._cmd(M.MAV_CMD_SET_MESSAGE_INTERVAL, msg_id, int(1e6 / hz))
@@ -137,6 +132,14 @@ class MavVehicle(Vehicle):
         with self._lock:
             self.s.connected = now - self._last_fc_hb < FC_LINK_TIMEOUT_S
             armed, mode = self.s.armed, self.s.mode
+        # FC alive but telemetry silent: it rebooted faster than the link timeout (brownout,
+        # USB reset) and forgot our stream rates and origin. Ask again, at most every 5 s. (A5)
+        if (self.s.connected and now - self._ekf_t > 3.0 and now - self._last_setup > 5.0
+                and now - self._last_fc_hb < 1.5):
+            self._last_setup = now
+            self.reconnects += self._ekf_t > 0
+            log.warning("FC telemetry silent; re-sending stream rates and origin")
+            threading.Thread(target=self._setup, daemon=True, name="mav-setup").start()
         if self._land_req:  # A2: keep asking for LAND until the FC is in it (or disarmed)
             if not armed:
                 self._land_req = False
@@ -171,8 +174,7 @@ class MavVehicle(Vehicle):
                 time.sleep(1.0)
                 self._open()
                 self.reconnects += 1
-                threading.Thread(target=self._setup, daemon=True, name="mav-setup").start()
-                return
+                return  # setup re-runs on the next FC heartbeat
             except Exception as e:
                 log.error("reconnect failed: %r", e)
 
@@ -184,6 +186,11 @@ class MavVehicle(Vehicle):
             if t == "HEARTBEAT":
                 if msg.type == M.MAV_TYPE_GCS or msg.get_srcSystem() != self.m.target_system:
                     return
+                if now - self._last_fc_hb > FC_LINK_TIMEOUT_S:
+                    # first heartbeat, or the FC came back after a gap (USB drop, FC reboot,
+                    # relay restart): streams and the EKF origin must be set again (A5)
+                    self.reconnects += self._last_fc_hb > 0
+                    threading.Thread(target=self._setup, daemon=True, name="mav-setup").start()
                 self._last_fc_hb = now
                 s.connected = True
                 s.armed = bool(msg.base_mode & M.MAV_MODE_FLAG_SAFETY_ARMED)

@@ -41,13 +41,15 @@ class EdgeServer:
     def __init__(self, vehicle: Vehicle, safety: SafetyConfig | None = None,
                  watchdog: WatchdogConfig | None = None, host: str = "0.0.0.0",
                  port: int = P.EDGE_PORT, perception_port: int | None = PERCEPTION_PORT,
-                 flow_port: int | None = FLOW_PORT, log_path: Path | None = None):
+                 flow_port: int | None = FLOW_PORT, log_path: Path | None = None,
+                 allowed_peers: set[str] | None = None):
         self.v = vehicle
         self.safety_cfg = safety or SafetyConfig()
         self.wd = watchdog or WatchdogConfig()
         self.host, self.port = host, port
         self.perception_port, self.flow_port = perception_port, flow_port
         self.flog = FlightLog(log_path)
+        self.allowed_peers = allowed_peers  # review A9: None = anyone (dev); set = only these
         self.exec = Executor(vehicle, SafetyGate(self.safety_cfg), self._emit, log=self.flog)
         self._writer: asyncio.StreamWriter | None = None
         self._last_hb: float | None = None
@@ -93,6 +95,11 @@ class EdgeServer:
 
     async def _on_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         peer = writer.get_extra_info("peername")
+        if self.allowed_peers is not None and peer[0] not in self.allowed_peers:
+            log.warning("refusing station %s (not in --station-ip)", peer)
+            self.flog({"t": time.time(), "kind": "refused_peer", "peer": str(peer)})
+            writer.close()
+            return
         if self._writer and not self._writer.is_closing():
             log.warning("new station %s replaces the old one", peer)
             self._writer.close()

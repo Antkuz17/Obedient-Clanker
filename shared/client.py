@@ -1,16 +1,20 @@
 """Async client for edge protocol v1. Used by the planner, the dashboard bridge, the CLI and tests.
 
-    async with EdgeClient("qnxpi.local") as edge:
+    async with EdgeClient("192.168.x.y") as edge:
         await edge.run("takeoff", alt=1.0)          # waits for done, returns the done message
         await edge.run("move_body", fwd=1.0)
         print(edge.telemetry["n"])
 
-Heartbeats are sent automatically while connected (that's what keeps the watchdog happy).
+The heartbeat and the socket reader run on their **own threads** (review A10), so a slow STT or
+LLM call that blocks the caller's event loop can't make the drone hover or land. Received
+messages are handed to the event loop with call_soon_threadsafe.
 """
 from __future__ import annotations
 
 import asyncio
 import itertools
+import socket
+import threading
 import time
 from typing import Callable
 
@@ -31,20 +35,33 @@ class EdgeClient:
         self._ids = itertools.count(1)
         self._acks: dict[str, asyncio.Future] = {}
         self._dones: dict[str, asyncio.Future] = {}
-        self._tasks: list[asyncio.Task] = []
         self.heartbeat = True  # set False to simulate a dead station
-        self._w: asyncio.StreamWriter | None = None
+        self.connected = False
+        self._sock: socket.socket | None = None
+        self._wlock = threading.Lock()
+        self._stop = threading.Event()
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     async def connect(self) -> "EdgeClient":
-        r, self._w = await asyncio.open_connection(self.host, self.port)
-        self._tasks = [asyncio.create_task(self._rx(r)), asyncio.create_task(self._hb())]
+        self._loop = asyncio.get_running_loop()
+        self._sock = await self._loop.run_in_executor(
+            None, lambda: socket.create_connection((self.host, self.port), timeout=5))
+        self._sock.settimeout(None)
+        self._sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        self.connected = True
+        threading.Thread(target=self._rx, daemon=True, name="edge-rx").start()
+        threading.Thread(target=self._hb, daemon=True, name="edge-hb").start()
         return self
 
     async def close(self) -> None:
-        for t in self._tasks:
-            t.cancel()
-        if self._w:
-            self._w.close()
+        self._stop.set()
+        self.connected = False
+        if self._sock:
+            try:
+                self._sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            self._sock.close()
 
     async def __aenter__(self):
         return await self.connect()
@@ -53,28 +70,45 @@ class EdgeClient:
         await self.close()
 
     def _send(self, msg: dict) -> None:
-        self._w.write(P.encode(msg))
+        with self._wlock:
+            self._sock.sendall(P.encode(msg))
 
-    async def _hb(self) -> None:
-        while True:
+    def _hb(self) -> None:
+        period = 1.0 / P.HEARTBEAT_HZ
+        while not self._stop.is_set():
             if self.heartbeat:
-                self._send(P.heartbeat(time.time()))
-            await asyncio.sleep(1.0 / P.HEARTBEAT_HZ)
+                try:
+                    self._send(P.heartbeat(time.time()))
+                except OSError:
+                    break
+            self._stop.wait(period)
 
-    async def _rx(self, r: asyncio.StreamReader) -> None:
-        while line := await r.readline():
-            m = P.decode(line)
-            t = m["type"]
-            if t == P.TELEMETRY:
-                self.telemetry = m
-            elif t == P.ACK and (f := self._acks.pop(m["id"], None)) and not f.done():
-                f.set_result(m)
-            elif t == P.DONE and (f := self._dones.get(m["id"])) and not f.done():
-                f.set_result(m)
-            elif t == P.EVENT:
-                self.events.append(m)
-                if self.on_event:
-                    self.on_event(m)
+    def _rx(self) -> None:
+        f = self._sock.makefile("rb")
+        try:
+            for line in f:
+                try:
+                    m = P.decode(line)
+                except P.ProtocolError:
+                    continue
+                self._loop.call_soon_threadsafe(self._dispatch, m)
+        except (OSError, ValueError):
+            pass
+        finally:
+            self.connected = False
+
+    def _dispatch(self, m: dict) -> None:
+        t = m["type"]
+        if t == P.TELEMETRY:
+            self.telemetry = m
+        elif t == P.ACK and (f := self._acks.pop(m["id"], None)) and not f.done():
+            f.set_result(m)
+        elif t == P.DONE and (f := self._dones.get(m["id"])) and not f.done():
+            f.set_result(m)
+        elif t == P.EVENT:
+            self.events.append(m)
+            if self.on_event:
+                self.on_event(m)
 
     async def send(self, op: str, **args) -> tuple[str, dict]:
         """Send a command and wait for its ack. Returns (id, ack). Doesn't wait for done."""
@@ -82,7 +116,7 @@ class EdgeClient:
         loop = asyncio.get_running_loop()
         self._acks[cid] = loop.create_future()
         self._dones[cid] = loop.create_future()
-        self._send(P.cmd(cid, op, **args))
+        await loop.run_in_executor(None, self._send, P.cmd(cid, op, **args))
         ack = await asyncio.wait_for(self._acks[cid], 5.0)
         if not ack["ok"]:
             self._dones.pop(cid, None)

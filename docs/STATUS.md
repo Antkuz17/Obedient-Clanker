@@ -22,13 +22,33 @@ Last updated: 2026-11-21. Update this at the end of every session.
 | Entry point + `SCHED_FIFO` flag | `edge/__main__.py` | manual smoke test with `--sim` |
 | Protocol REPL | `tools/cmd.py` | not run interactively yet |
 
-The test suite has 28 passing tests (`.venv/bin/python -m pytest -q`), plus `tools/sitl_flight.py`, which
+**Review fixes (docs/review.md section A):** A1, A2, A3, A5, A6, A7, A8, A9 (relay + `--station-ip`),
+A10, A11, A12, A13 are done; every one has a unit test or a SITL check. **Not done: A4**
+(set the FC params on the real board: `FS_GCS_ENABLE=5`, `FS_GCS_TIMEOUT=2`,
+`FS_EKF_ACTION=1`; SITL proves FS_GCS works).
+
+SITL checks (`tools/sitl_flight.py`, all PASS, also through `tools/usb_relay.py`): takeoff,
+moves, yaw, gate rejection, return to the takeoff point, watchdog hover → land, and **a hung
+edge event loop makes ArduPilot's own GCS failsafe land the drone**. FC reboot under the relay:
+the edge re-sends stream rates + origin and position comes back.
+
+The test suite has 36 passing tests (`.venv/bin/python -m pytest -q`), plus `tools/sitl_flight.py`, which
 must print ALL PASS.
 
 Fixed after SITL: the stream transport handed pymavlink whole chunks, so messages queued up
 and telemetry lagged further and further behind (the drone armed but never took off). It now
 hands over only the bytes pymavlink asks for. Relative moves now build on the last *commanded* target, not the measured
 position (altitude used to sag about 0.1 m per command).
+
+## Still open from the review (Person A)
+
+- **A4** FC params on the board (above). Review C: flow-only SITL (`GPS1_TYPE=0`,
+  `SIM_FLOW_ENABLE=1`, `FLOW_TYPE=10`); a `DISTANCE_SENSOR` input path for height; the video
+  server as its own process (needs pose from the core, e.g. UDP on localhost).
+- Review D: the watchdog/heartbeat loop in **C** at `SCHED_FIFO` with a jitter histogram; the
+  supervisor.
+- Kept shared memory rather than the suggested stdout pipe: the forward camera has two
+  readers (video + TFLite), and a pipe serves one.
 
 ## Next for Person A, in order
 
@@ -42,10 +62,11 @@ position (altitude used to sag about 0.1 m per command).
 5. **Vultr cloud + dashboard** (`cloud/`).
 6. **QNX port** (Pi facts in qnx.md, "Verified on our Pi"): copy `edge/` and `shared/` to the Pi
    and run with `--rt-prio`.
-   - **FC link: USB.** Transport done (`--mav usb`). Next: on the Pi, run
-     `sudo env PYTHONPATH=$HOME/.local/lib/python3.14/site-packages python3 -m edge --mav usb
-     --no-video` with the props **off**, connect `tools.cmd` from the laptop and check that
-     telemetry and arm/disarm work.
+   - **FC link: USB via the relay.** On the Pi, props **off**:
+     `sudo env PYTHONPATH=$HOME/.local/lib/python3.14/site-packages python3 -m tools.usb_relay`
+     then (as qnxuser) `python3 -m edge --mav udpin:127.0.0.1:14555 --station-ip <laptop>
+     --no-video`; connect `python -m tools.cmd <pi ip>` from the laptop, then check telemetry,
+     arm/disarm, the Wi-Fi pull (hover → land) and `slay` of the core (FC lands).
    - **Camera grabber: written, needs building on the Pi.** `apk add qnx-sf-base-dev`, then
      `cc -O2 -o camgrab edge/camgrab/camgrab.c -lcamapi`, `./camgrab -l` to list units, and
      `./camgrab -u 5 -n camgrab_fwd`. Check that `python3 -c "from edge.camera import

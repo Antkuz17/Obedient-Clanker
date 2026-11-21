@@ -41,7 +41,8 @@ async def main(a) -> None:
         vehicle = MavVehicle(a.mav, baud=a.baud, speed_xy=cfg.speed_xy)
 
     srv = EdgeServer(vehicle, cfg, port=a.port, perception_port=a.perception_port,
-                     flow_port=a.flow_port, log_path=Path(a.log) if a.log else None)
+                     flow_port=a.flow_port, log_path=Path(a.log) if a.log else None,
+                     allowed_peers=set(a.station_ip) if a.station_ip else None)
     await srv.start()
 
     if not a.no_video:
@@ -69,6 +70,9 @@ if __name__ == "__main__":
     ap.add_argument("--baud", type=int, default=115200)
     ap.add_argument("--port", type=int, default=P.EDGE_PORT)
     ap.add_argument("--video-port", type=int, default=P.VIDEO_PORT)
+    ap.add_argument("--station-ip", action="append",
+                    help="only accept station connections from this IP (repeatable). "
+                         "Always set this on the real drone (review A9)")
     ap.add_argument("--perception-port", type=int, default=7001, help="UDP from vision proc")
     ap.add_argument("--flow-port", type=int, default=7002, help="UDP from flow proc")
     ap.add_argument("--camera", default=None,
