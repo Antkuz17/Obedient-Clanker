@@ -207,18 +207,22 @@ on that network could log in as root. `--station-ip` is also optional
 
 | # | Finding | Reproduced? | Agree? | Notes |
 |---|---|---|---|---|
-| 1 | LAND retry overrides the pilot | ☐ | ☐ | |
-| 2 | Speed limits not enforced | ☐ | ☐ | |
-| 3 | Stop before lift-off ignored | ☐ | ☐ | |
-| 4 | Dead vision/flow doesn't stop a running move | ☐ | ☐ | |
-| 5 | Stale target after pilot hand-back | ☐ | ☐ | |
-| 6 | Can't back away from a person | ☐ | ☐ | |
-| 7 | Hung planner looks alive | ☐ | ☐ | |
-| 8 | Grabber restart freezes readers | ☐ | ☐ | |
-| 9 | Flow-only takeoff may be refused | n/a | ☐ | |
-| 10 | Heartbeat margin | n/a | ☐ | |
-| 11 | Armed on the ground after a failed takeoff | n/a | ☐ | |
-| 12 | Battery auto-land has no debounce | n/a | ☐ | |
-| 13 | Default passwords, optional allowlist | n/a | ☐ | |
-| — | Positioning: flow (PRD) or ArUco (README)? | n/a | ☐ | |
-| — | Demo target: bench/tethered QNX + sim voice | n/a | ☐ | |
+| 1 | LAND retry overrides the pilot | Read (`mav.py` land retry ignores mode) | ✅ | Fixable: stop retrying once the pilot picks a non-GUIDED/LAND mode |
+| 2 | Speed limits not enforced | Read (only one `DO_CHANGE_SPEED`) | ✅ | Fixable: FC params `WPNAV_SPEED=50`, `WPNAV_SPEED_UP=30`, `WPNAV_SPEED_DN=30`, then measure |
+| 3 | Stop before lift-off ignored | Read (`stop` doesn't call `cancel_takeoff`; `land` does) | ✅ | Fixable: one line, same as `land` |
+| 4 | Dead vision/flow doesn't stop a running move | ✅ `sim_exp` E6 on Windows | ✅ | Fixable: cancel the running move (hold) when vision or flow goes stale |
+| 5 | Stale target after pilot hand-back | ✅ E7 | ✅ | Fixable: reset the commanded target to the measured position on GUIDED re-entry |
+| 6 | Can't back away from a person | ✅ E8 | ✅ | Fixable: abort only moves with a forward component |
+| 7 | Hung planner looks alive | ✅ E9 | ✅ | Fixable: the heartbeat thread beats only if the main loop has "petted" it in the last ~0.5 s |
+| 8 | Grabber restart freezes readers | Read (`camgrab.c:171` unlinks + recreates) | ✅ | Fixable: don't unlink if the region exists; readers reopen when frame age > 0.5 s |
+| 9 | Flow-only takeoff may be refused | n/a | Plausible | Check in the flow-only SITL run; accept the predicted-position flag before arming if so |
+| 10 | Heartbeat margin | Read (1 Hz vs `FS_GCS_TIMEOUT=2`, now set on the real FC) | ✅ | Fixable: send at 5 Hz |
+| 11 | Armed on the ground after a failed takeoff | n/a | Plausible | Fixable: disarm on takeoff timeout if still on the ground |
+| 12 | Battery auto-land has no debounce | n/a | ✅ | Fixable: require about 3 s below the threshold |
+| 13 | Default passwords, optional allowlist | n/a | ✅ | Fixable: change the Pi passwords before the venue; make `--station-ip` required with `--mav` |
+| 14 | **New:** client ack race (`shared/client.py`): a fast ack raised `KeyError` | ✅ 5 tests failed on Windows | ✅ | **Fixed** (local future reference); suite 34 passed + 2 SITL skipped |
+| — | Positioning: flow (PRD) or ArUco (README)? | n/a | ✅ Flow | D1 stands; README is stale. ArUco has no code; treat it as an idea, not a fallback |
+| — | Demo target: bench/tethered QNX + sim voice | n/a | Partly | Aim for real flight; keep the bench/tethered QNX demo ready as the fallback (D15). Not cutting scope now |
+
+
+**Person A cross-check (2026-11-21):** every finding is a local, fixable bug, with nothing that changes the architecture. The deep risk is unchanged: flow-only positioning has never been tested (run the flow-only SITL, then the real-drone sign check).
