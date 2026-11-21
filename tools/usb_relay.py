@@ -23,6 +23,7 @@ import time
 from edge.mavlink_usb import UsbCdc
 
 log = logging.getLogger("usb_relay")
+SILENT_REOPEN_S = 3.0  # FC silent this long -> reopen the USB device
 
 
 class TcpStream:
@@ -109,14 +110,24 @@ class Relay:
             self.src = None
 
     def fc_to_core(self) -> None:
+        last_rx = time.monotonic()
         while not self.stop.is_set():
             src = self._ensure_source()
             try:
                 data = src.read(0.05)
             except Exception as e:
                 self._drop_source(e)
+                last_rx = time.monotonic()
+                continue
+            if not data and time.monotonic() - last_rx > SILENT_REOPEN_S:
+                # After an FC reboot / USB re-enumeration, libusb on QNX keeps timing out on the
+                # stale handle instead of raising, so the relay never reopened (seen on the Pi).
+                # The FC streams many messages a second: silence means a dead handle.
+                self._drop_source(TimeoutError(f"no FC bytes for {SILENT_REOPEN_S:.0f} s"))
+                last_rx = time.monotonic()
                 continue
             if data:
+                last_rx = time.monotonic()
                 self.udp.sendto(data, self.core_addr)
                 self.bytes_down += len(data)
                 if self.tap_peer is not None:
