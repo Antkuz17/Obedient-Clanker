@@ -31,6 +31,8 @@ async def main(a) -> None:
     cfg = SafetyConfig()
     if a.sitl:
         cfg.flow_quality_min = 0  # SITL has no optical flow; this run only
+    if a.mav and not a.sitl and not a.no_person_check:
+        cfg.require_person_detector = True  # real drone: no detector -> no forward moves
     if a.sim:
         from .sim import SimVehicle
         vehicle = SimVehicle(cfg, speedup=a.speedup)
@@ -57,6 +59,8 @@ if __name__ == "__main__":
     src.add_argument("--mav", help="MAVLink device: usb (QNX Pi), /dev/ser1, tcp:127.0.0.1:5760 (SITL)")
     ap.add_argument("--sitl", action="store_true",
                     help="with --mav: ArduPilot SITL, skip the optical-flow quality check")
+    ap.add_argument("--no-person-check", action="store_true",
+                    help="real drone only: allow forward moves with no person detector running")
     ap.add_argument("--baud", type=int, default=115200)
     ap.add_argument("--port", type=int, default=P.EDGE_PORT)
     ap.add_argument("--video-port", type=int, default=P.VIDEO_PORT)

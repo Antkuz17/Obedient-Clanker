@@ -14,7 +14,8 @@ from .vehicle import VehicleState, body_to_ned, ned_to_body, wrap360
 @dataclass
 class Perception:
     """Latest on-board AI outputs (fed by the vision process). None = unknown / stale."""
-    person_m: float | None = None
+    person_m: float | None = None   # nearest person ahead; None = nobody seen
+    detector_alive: bool = False     # vision process reported within the stale window
 
 
 @dataclass
@@ -100,6 +101,9 @@ class SafetyGate:
             return _reject(f"target ({n:.1f}, {e:.1f}) is outside the "
                            f"+-{c.fence_half} m geofence")
         fwd, _ = ned_to_body(n - s.n, e - s.e, s.yaw)
-        if fwd > 0.2 and p.person_m is not None and p.person_m < c.person_close_m:
-            return _reject(f"person {p.person_m:.1f} m ahead; not moving forward")
+        if fwd > 0.2:
+            if p.person_m is not None and p.person_m < c.person_close_m:
+                return _reject(f"person {p.person_m:.1f} m ahead; not moving forward")
+            if c.require_person_detector and not p.detector_alive:
+                return _reject("person detector is not running; not moving forward")
         return Verdict(True, target=(n, e, alt, byaw))

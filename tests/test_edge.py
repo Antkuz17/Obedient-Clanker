@@ -73,6 +73,15 @@ def test_gate_relative_moves_build_on_commanded_target_not_measured():
     assert v.target == pytest.approx((0.0, 0.0, 1.0, 90.0))
 
 
+def test_gate_requires_live_detector_when_configured():
+    g = SafetyGate(SafetyConfig(require_person_detector=True))
+    assert "detector" in g.check("move_body", {"fwd": 0.5}, FLYING, True, Perception()).reason
+    assert g.check("move_body", {"fwd": -0.5}, FLYING, True, Perception()).ok
+    assert g.check("move_body", {"fwd": 0.5}, FLYING, True,
+                   Perception(detector_alive=True)).ok
+    assert SafetyGate().check("move_body", {"fwd": 0.5}, FLYING, True).ok  # default: off
+
+
 def test_gate_takeoff_rules():
     g = SafetyGate()
     ground = VehicleState(connected=True, battery_v=12.4, flow_quality=200)

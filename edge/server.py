@@ -174,15 +174,17 @@ class EdgeServer:
         # battery
         if flying and 0 < s.battery_v < self.safety_cfg.batt_land_v:
             ex.trigger_failsafe("land", "battery", f"battery {s.battery_v:.2f} V: landing")
-        # stale perception
-        if ex.perception.person_m is not None and now - self._perception_t > PERCEPTION_STALE_S:
+        # stale perception: forget the person and mark the detector dead
+        if now - self._perception_t > PERCEPTION_STALE_S:
             ex.perception.person_m = None
+            ex.perception.detector_alive = False
 
     # --- inputs from the AI / flow processes -------------------------------------------------
     def on_perception(self, msg: dict) -> None:
         """{"person_m": float|null, "palm": bool}"""
         self._perception_t = time.monotonic()
         ex = self.exec
+        ex.perception.detector_alive = True
         pm = msg.get("person_m")
         ex.perception.person_m = float(pm) if isinstance(pm, (int, float)) else None
         if (ex.perception.person_m is not None

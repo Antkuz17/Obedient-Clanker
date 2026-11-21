@@ -19,6 +19,9 @@ class SafetyConfig:
     batt_land_v: float = 10.2     # 3S: auto-land below this
     flow_quality_min: int = 50    # refuse moves when flow is this bad (0-255)
     person_close_m: float = 1.0   # refuse forward moves if a person is closer
+    # Fail-safe (docs/flow.md): with no live person detector, refuse forward moves. Off by
+    # default so sim/SITL work without a vision process; `python -m edge --mav usb` turns it on.
+    require_person_detector: bool = False
 
 
 @dataclass
