@@ -39,6 +39,10 @@ def main() -> None:
     if a.fc:
         from edge.fcdirect import FLOW_COMPONENT, FcDirect
         fc = FcDirect(a.fc, FLOW_COMPONENT)
+    # one thread: 10 ms a frame needs no pool, and OpenCV's pool could take every core from
+    # the USB / Wi-Fi drivers (they run below our real-time children; RING_OVERRUN on the Pi)
+    import cv2
+    cv2.setNumThreads(1)
     f_px = focal_px(PROC_W, a.hfov)
     tracker = FlowTracker()
     reader = ShmFrameReader(a.shm)

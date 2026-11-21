@@ -1,5 +1,13 @@
 [
   {
+    "name": "sensor_keeper",
+    "cmd": [
+      "python3",
+      "-m",
+      "tools.sensor_keeper"
+    ]
+  },
+  {
     "name": "usb_relay",
     "prio": 50,
     "cmd": [
@@ -58,7 +66,7 @@
   },
   {
     "name": "camgrab_fwd",
-    "prio": 40,
+    "prio": 18,
     "user": "qnxuser",
     "cmd": [
       "./edge/camgrab/camgrab",
@@ -71,7 +79,7 @@
   },
   {
     "name": "camgrab_down",
-    "prio": 43,
+    "prio": 19,
     "user": "qnxuser",
     "cmd": [
       "./edge/camgrab/camgrab",
@@ -88,7 +96,7 @@
   },
   {
     "name": "flow",
-    "prio": 44,
+    "prio": 20,
     "user": "qnxuser",
     "cmd": [
       "python3",
@@ -104,7 +112,7 @@
   },
   {
     "name": "vision",
-    "prio": 41,
+    "prio": 11,
     "user": "qnxuser",
     "cmd": [
       "python3",
