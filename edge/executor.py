@@ -31,6 +31,16 @@ class Executor:
         self._abort_reason = ""
         self._phase = ""          # TAKING_OFF / LANDING while those run
         self.failsafe: str | None = None  # None | "hover" | "land"
+        self.target: tuple[float, float, float, float] | None = None  # last commanded
+
+    def _set(self, n: float, e: float, alt: float, yaw: float) -> None:
+        self.target = (n, e, alt, wrap360(yaw))
+        self.v.set_target(n, e, alt, yaw)
+
+    def _hold(self) -> None:
+        s = self.v.state()
+        self.target = (s.n, s.e, s.alt, s.yaw)
+        self.v.hold()
 
     # --- state -------------------------------------------------------------------------------
     @property
@@ -67,7 +77,11 @@ class Executor:
             verdict_ok, reason = False, "failsafe landing in progress"
             verdict = None
         else:
-            verdict = self.gate.check(op, args, s, self.airborne, self.perception)
+            airborne = self.airborne
+            if not airborne:
+                self.target = None
+            verdict = self.gate.check(op, args, s, airborne, self.perception,
+                                      base=self.target)
             verdict_ok, reason = verdict.ok, verdict.reason
         self.log({"t": time.time(), "kind": "cmd", "id": cid, "op": op, "args": args,
                   "ok": verdict_ok, "reason": reason,
@@ -87,7 +101,7 @@ class Executor:
         """Internal stop (palm, person, watchdog): cancel and hold."""
         self._cancel(reason)
         if self.airborne:
-            self.v.hold()
+            self._hold()
 
     def trigger_failsafe(self, action: str, kind: str, detail: str) -> None:
         if self.failsafe == "land" or (self.failsafe == action):
@@ -102,7 +116,7 @@ class Executor:
                 self.v.land()
                 self._task = asyncio.create_task(self._watch_landing())
         elif self.airborne:
-            self.v.hold()
+            self._hold()
 
     def clear_hover_failsafe(self) -> None:
         if self.failsafe == "hover":
@@ -133,7 +147,7 @@ class Executor:
         except Exception as e:  # never let a bug leave the drone without a hold
             status, reason = P.FAILED, f"internal error: {e!r}"
             if self.airborne:
-                self.v.hold()
+                self._hold()
         finally:
             if self._active and self._active[0] == cid:
                 self._active = None
@@ -146,7 +160,7 @@ class Executor:
         sc = self.gate.cfg
         if op == "stop" or op == "hover":
             if self.airborne:
-                self.v.hold()
+                self._hold()
             return P.OK, ""
         if op == "land":
             if not self.v.state().armed:
@@ -164,10 +178,11 @@ class Executor:
                                   timeout=alt / sc.speed_z + c.cmd_timeout_pad_s)
             self._phase = ""
             if not ok:
-                self.v.hold()
-                return P.FAILED, "takeoff timed out"
+                self._hold()
+                why = getattr(self.v, "last_error", "")
+                return P.FAILED, "takeoff timed out" + (f" ({why})" if why else "")
             s = self.v.state()
-            self.v.set_target(s.n, s.e, alt, s.yaw)
+            self._set(s.n, s.e, alt, s.yaw)
             return P.OK, ""
         if op == "scan":
             rate = verdict.extra["rate_dps"]
@@ -179,8 +194,9 @@ class Executor:
                 if swept >= 360.0:
                     break
                 self.v.set_target(n, e, alt, wrap360(start + swept + rate * 0.5))
+                self.target = (n, e, alt, start)  # a cancelled scan returns to its start yaw
                 await asyncio.sleep(self.TICK)
-            self.v.set_target(n, e, alt, start)
+            self._set(n, e, alt, start)
             return P.OK, ""
         # positional / yaw moves
         n, e, alt, yaw = verdict.target
@@ -188,13 +204,13 @@ class Executor:
         dist = math.dist((n, e, alt), (s.n, s.e, s.alt))
         timeout = (dist / min(sc.speed_xy, sc.speed_z) + abs(yaw_err(yaw, s.yaw)) / sc.yaw_rate
                    + c.cmd_timeout_pad_s)
-        self.v.set_target(n, e, alt, yaw)
+        self._set(n, e, alt, yaw)
         ok = await self._wait(
             lambda s: math.dist((n, e, alt), (s.n, s.e, s.alt)) <= c.pos_tolerance
             and abs(yaw_err(yaw, s.yaw)) <= c.yaw_tolerance,
             timeout=timeout)
         if not ok:
-            self.v.hold()
+            self._hold()
             return P.FAILED, "did not reach target in time"
         return P.OK, ""
 

@@ -34,9 +34,13 @@ class SafetyGate:
         self.cfg = cfg or SafetyConfig()
 
     def check(self, op: str, args: dict, s: VehicleState, airborne: bool,
-              perception: Perception | None = None) -> Verdict:
+              perception: Perception | None = None,
+              base: tuple[float, float, float, float] | None = None) -> Verdict:
+        """base = last commanded (n, e, alt, yaw). Relative moves build on it, not on the
+        measured position, so small tracking errors don't compound move after move."""
         c = self.cfg
         p = perception or Perception()
+        bn, be, balt, byaw = base if base is not None else (s.n, s.e, s.alt, s.yaw)
 
         if op in ("stop", "hover"):
             return Verdict(True, target=(s.n, s.e, s.alt, s.yaw))
@@ -66,22 +70,22 @@ class SafetyGate:
             return _reject(f"battery {s.battery_v:.2f} V below {c.batt_reject_v} V; land now")
 
         if op == "yaw":
-            yaw = args["deg"] + (s.yaw if args.get("relative") else 0.0)
-            return Verdict(True, target=(s.n, s.e, s.alt, wrap360(yaw)))
+            yaw = args["deg"] + (byaw if args.get("relative") else 0.0)
+            return Verdict(True, target=(bn, be, balt, wrap360(yaw)))
 
         if op == "scan":
             rate = args.get("rate_dps", 20.0)
             if not 0 < rate <= c.scan_rate_max:
                 return _reject(f"scan rate {rate} deg/s outside 0-{c.scan_rate_max}")
-            return Verdict(True, target=(s.n, s.e, s.alt, s.yaw), extra={"rate_dps": rate})
+            return Verdict(True, target=(bn, be, balt, byaw), extra={"rate_dps": rate})
 
         if op == "move_body":
-            dn, de = body_to_ned(args.get("fwd", 0.0), args.get("right", 0.0), s.yaw)
-            n, e, alt = s.n + dn, s.e + de, s.alt + args.get("up", 0.0)
+            dn, de = body_to_ned(args.get("fwd", 0.0), args.get("right", 0.0), byaw)
+            n, e, alt = bn + dn, be + de, balt + args.get("up", 0.0)
         elif op == "goto":
-            n, e, alt = args["n"], args["e"], args.get("alt", s.alt)
+            n, e, alt = args["n"], args["e"], args.get("alt", balt)
         elif op == "return_home":
-            n, e, alt = 0.0, 0.0, s.alt
+            n, e, alt = 0.0, 0.0, balt
         else:
             return _reject(f"unknown op {op}")
 
@@ -98,4 +102,4 @@ class SafetyGate:
         fwd, _ = ned_to_body(n - s.n, e - s.e, s.yaw)
         if fwd > 0.2 and p.person_m is not None and p.person_m < c.person_close_m:
             return _reject(f"person {p.person_m:.1f} m ahead; not moving forward")
-        return Verdict(True, target=(n, e, alt, s.yaw))
+        return Verdict(True, target=(n, e, alt, byaw))

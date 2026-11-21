@@ -64,6 +64,15 @@ def test_gate_fence_battery_flow_person():
     assert g.check("land", {}, low, True).ok and g.check("stop", {}, blind, True).ok
 
 
+def test_gate_relative_moves_build_on_commanded_target_not_measured():
+    sagging = VehicleState(**{**FLYING.as_dict(), "alt": 0.9, "n": 0.1, "yaw": 2.0})
+    v = SafetyGate().check("move_body", {"fwd": 1.0}, sagging, True, base=(0.0, 0.0, 1.0, 0.0))
+    assert v.target == pytest.approx((1.0, 0.0, 1.0, 0.0))
+    v = SafetyGate().check("yaw", {"deg": 90.0, "relative": True}, sagging, True,
+                           base=(0.0, 0.0, 1.0, 0.0))
+    assert v.target == pytest.approx((0.0, 0.0, 1.0, 90.0))
+
+
 def test_gate_takeoff_rules():
     g = SafetyGate()
     ground = VehicleState(connected=True, battery_v=12.4, flow_quality=200)
