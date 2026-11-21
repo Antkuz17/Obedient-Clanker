@@ -33,6 +33,8 @@ def run(reader, detector: PersonDetector, send, hz: float, hfov: float,
     period = 1.0 / hz if hz > 0 else 0.0
     last_seq, next_t = -1, 0.0
     n, t_stat, sum_ms, seen = 0, time.monotonic(), 0.0, 0
+    # health line in the log every 10 s, so a working detector is visible (tools/system_check)
+    hn, ht, hms = 0, time.monotonic(), 0.0
     while not stop():
         frame = reader.wait_new(after_seq=last_seq, timeout=0.5)
         if frame is None:
@@ -52,6 +54,11 @@ def run(reader, detector: PersonDetector, send, hz: float, hfov: float,
         n += 1
         sum_ms += infer_ms
         seen += dist is not None
+        hn += 1
+        hms += infer_ms
+        if time.monotonic() - ht >= 10.0:
+            log.info("running: %.1f Hz, infer %.0f ms", hn / (time.monotonic() - ht), hms / hn)
+            hn, ht, hms = 0, time.monotonic(), 0.0
         if printer and time.monotonic() - t_stat >= 1.0:
             printer(f"{n:2d} Hz  infer={sum_ms / n:5.1f} ms  person in {seen}/{n} frames"
                     + (f"  nearest {dist:.2f} m" if dist is not None else ""))

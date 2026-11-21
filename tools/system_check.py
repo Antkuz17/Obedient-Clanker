@@ -40,6 +40,16 @@ def env_file() -> dict:
     return out
 
 
+def log_age_s(line: str, now: str) -> float | None:
+    """Seconds between a Python log line's timestamp and `now` (both the Pi's local clock)."""
+    import datetime as dt
+    try:
+        f = "%Y-%m-%d %H:%M:%S"
+        return (dt.datetime.strptime(now, f) - dt.datetime.strptime(line[:19], f)).total_seconds()
+    except ValueError:
+        return None
+
+
 def ssh_checks() -> bool:
     try:
         import paramiko
@@ -56,7 +66,9 @@ def ssh_checks() -> bool:
         _, o, e = c.exec_command(f"cd {REMOTE} && {cmd}", timeout=t)
         return o.read().decode(errors="replace") + e.read().decode(errors="replace")
 
-    procs = run("pidin -F '%a' ar 2>/dev/null")
+    # as root: qnxuser can't see the arguments of root's processes (usb_relay, rangefinder)
+    pw = os.environ.get("QNX_PASS", "qnxuser")
+    procs = run(f"echo {pw} | sudo -S pidin -F '%a' ar 2>/dev/null")
     names = {"usb_relay": "tools.usb_relay", "rangefinder": "tools.rangefinder",
              "hbwd": "hbwd", "edge": "-m edge ", "camgrab_fwd": "camgrab_fwd",
              "camgrab_down": "camgrab_down", "flow": "edge.flow", "vision": "edge.vision",
@@ -77,11 +89,15 @@ def ssh_checks() -> bool:
             f = float(parts[1])
             check(f"camera {parts[0][8:]}", f >= 8, f"{f:.0f} fps" if f >= 0 else "no frames")
 
-    vis = run("tail -40 logs/vision.log 2>/dev/null")
-    infer = [l for l in vis.splitlines() if "infer" in l.lower() or "ms" in l]
-    dead = "no new frame" in (vis.splitlines()[-1] if vis.strip() else "no new frame")
-    check("on-board person detector", not dead and "person detector on" in vis or bool(infer),
-          (infer[-1][-80:] if infer else "running") if not dead else "camera stalled / not running")
+    # edge.vision logs "running: X Hz, infer Y ms" every 10 s while it works, and
+    # "no new frame" when the camera stalls; the newest of the two decides
+    vis = [l for l in run("tail -60 logs/vision.log 2>/dev/null").splitlines()
+           if "running:" in l or "no new frame" in l or "can't start" in l]
+    last = vis[-1] if vis else ""
+    age = log_age_s(last, run("date '+%Y-%m-%d %H:%M:%S'").strip())
+    info = last.split("vision ", 1)[-1][:70] if last else "no log yet (wait 10 s after start)"
+    check("on-board person detector", "running:" in last and age is not None and age < 25,
+          f"{info} ({age:.0f} s ago)" if age is not None else info)
 
     pf = run(f"env {PYPATH} python3 -m tools.preflight", t=120)
     go = ">>> GO <<<" in pf
