@@ -143,6 +143,21 @@ prompt no longer says "indoors, 6 x 6 m box, 1.5 m"; the voice fast path has no 
 height cap. Limit tests now opt into the old values; new tests check there are none by default.
 Not changed: the dashboard's fence mini-map (`index.html`, being redesigned) still draws ±3 m.
 
+**Update (15:15): ceiling 5 m, hover 2 m, and speed set so the checks can actually stop it.**
+- `alt_max` / `max_takeoff_alt` = 5 m; the planner, brain and fast path take off to 2 m.
+- Braking measured in SITL (`tools/sitl_brake.py`): with ArduPilot's defaults (`WP_ACC` 2.5,
+  `WP_JERK` 1.0) a stop took ~1.3 s to begin and 4-9 m; with `WP_ACC=5`, `WP_JERK=10` (now
+  written on every connect): 0.70 / 1.12 / 1.57 / 2.68 m from 1 / 1.5 / 2 / 3 m/s.
+- Horizontal speed 1.5 m/s = `max_checked_speed()`: something first seen at the forward
+  HC-SR04's 2 m (or a person at the detector's ~4 m, read 30 % closer) can be stopped for with
+  0.6 m / 1 m clearance. The edge clamps a faster `speed_xy`.
+- Checks are speed-aware: stop when the room ahead < clearance + braking distance at the
+  current speed (or the distance left, if the FC is stopping there anyway).
+- Horizontal moves over 0.5 m turn to face the way they fly (the sensors only look forward),
+  wait for readings taken facing the path, then fly; relative moves turn back after.
+- Not done: braking on the real drone and the detector latency on the Pi are assumptions until
+  measured (TODO). Tests: 190 (sim); SITL only for braking.
+
 Then, same day: **every limit we set is gone.**
 - **2 m height cap** (it came from flow + a 2 m ultrasonic with the GPS off): `edge --gps` (no
   fake EKF origin, no optical-flow requirement; on in `supervisor_pi.json`) +

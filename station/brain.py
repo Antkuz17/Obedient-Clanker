@@ -44,11 +44,11 @@ Turn the user's request into tool calls, in order. Rules:
 "where I'm pointing".
 - "What's written here", "solve this", "what do you see" with no named target is look.
 - "Where did I leave X" / "have you seen X" is recall; fly_there only if they ask you to go.
-- The drone flies outdoors. There is no height ceiling, flying area or distance limit: do \
-what is asked. Its safety system on board still checks every move. If a request is \
+- The drone flies outdoors. It normally hovers at 2 m; its ceiling is 5 m. There is no \
+flying area or distance limit. Its safety system on board still checks every move. If a request is \
 dangerous to people or the drone (crash into something, flip, chase people), make NO tool \
 call and refuse with attitude.
-- If the drone is landed and they ask for a move or mission, call takeoff first (1.0 m).
+- If the drone is landed and they ask for a move or mission, call takeoff first (2.0 m).
 - Chit-chat: no tool call, just answer.
 Current drone state: {state}"""
 
@@ -61,7 +61,7 @@ def _tool(name: str, desc: str, props: dict, required: list[str] | None = None) 
 
 _num = {"type": "number"}
 TOOLS = [
-    _tool("takeoff", "Arm and climb to a height.", {"alt": {**_num, "description": "metres, at least 0.5"}}),
+    _tool("takeoff", "Arm and climb to a height.", {"alt": {**_num, "description": "metres, 0.5-5 (normally 2)"}}),
     _tool("land", "Land where it is and disarm.", {}),
     _tool("stop", "Stop whatever is running and hover.", {}),
     _tool("home", "Fly back to the takeoff point.", {}),
@@ -108,7 +108,7 @@ def normalize(name: str, args: dict) -> dict | None:
             return default
 
     if name == "takeoff":
-        return {"kind": "takeoff", "alt": f("alt", 1.0) or 1.0}
+        return {"kind": "takeoff", "alt": f("alt", 2.0) or 2.0}
     if name in ("land", "stop", "home"):
         return {"kind": name}
     if name == "move":
@@ -279,8 +279,8 @@ def fast_parse(text: str, telemetry: dict | None = None) -> BrainResult | None:
     for c in clauses:
         mv = {"kind": "move", "fwd": 0.0, "right": 0.0, "up": 0.0, "yaw_deg": 0.0}
         if m := _F_TAKEOFF.fullmatch(c):
-            alt = _fdist(m.group(1), m.group(2)) if m.group(1) else 1.0
-            if alt < 0.3:
+            alt = _fdist(m.group(1), m.group(2)) if m.group(1) else 2.0
+            if not 0.3 <= alt <= 5.0:
                 return None
             actions.append({"kind": "takeoff", "alt": alt})
             continue
@@ -317,7 +317,7 @@ def fast_parse(text: str, telemetry: dict | None = None) -> BrainResult | None:
         return None  # "land and then go forward": odd, the LLM can sort it out
     if (telemetry and not telemetry.get("armed")
             and actions[0]["kind"] in ("move", "home")):
-        actions.insert(0, {"kind": "takeoff", "alt": 1.0})
+        actions.insert(0, {"kind": "takeoff", "alt": 2.0})
     reply = DEFAULT_REPLY[actions[0]["kind"]] if len(actions) == 1 else "On it."
     return BrainResult(reply, actions, "fast")
 
@@ -341,7 +341,7 @@ def rule_parse(text: str, telemetry: dict | None = None) -> BrainResult:
     actions: list[dict] = []
     if re.search(r"take ?off|lift off|get up|launch", t):
         m = re.search(_NUM + r" ?(?:m|metres?|meters?)", t)
-        actions.append({"kind": "takeoff", "alt": _n(m and m.group(1), 1.0)})
+        actions.append({"kind": "takeoff", "alt": _n(m and m.group(1), 2.0)})
     if re.search(r"(where|what|wherever) i'?m pointing|pointing at", t):
         actions.append({"kind": "mission", "target": "where I'm pointing", "action": _task(t),
                         "question": text, "after": "stay"})
@@ -392,6 +392,6 @@ def rule_parse(text: str, telemetry: dict | None = None) -> BrainResult:
     if not actions:
         return BrainResult("I have no idea what that means, and I'm a drone.", source="rules")
     if (telemetry and not telemetry.get("armed") and actions[0]["kind"] in ("move", "mission")):
-        actions.insert(0, {"kind": "takeoff", "alt": 1.0})
+        actions.insert(0, {"kind": "takeoff", "alt": 2.0})
     return BrainResult(DEFAULT_REPLY[actions[-1]["kind"]] if actions[0]["kind"] != "takeoff"
                        or len(actions) == 1 else "On it.", actions, "rules")

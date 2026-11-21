@@ -165,7 +165,7 @@ Limits live in `edge/config.py`:
 
 | Rule | Limit |
 |---|---|
-| Altitude window | Floor 0.3 m; **no ceiling** (outdoors, 2026-11-21; `alt_max` to restore) |
+| Altitude window | 0.3–5 m, normal hover 2 m (outdoors, 2026-11-21) |
 | Geofence | **Off** (outdoors). `fence_half` restores ±N m around the first takeoff of this edge run |
 | Single move | ≤ 3 m |
 | Speed | 0.5 m/s horizontal, 0.3 m/s vertical, 45°/s yaw, scan ≤ 30°/s |

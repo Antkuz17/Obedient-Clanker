@@ -8,7 +8,7 @@ import math
 from dataclasses import dataclass, field
 
 from .config import SafetyConfig
-from .vehicle import VehicleState, body_to_ned, ned_to_body, wrap360
+from .vehicle import VehicleState, body_to_ned, ned_to_body, wrap360, yaw_err
 
 
 @dataclass
@@ -18,6 +18,8 @@ class Perception:
     detector_alive: bool = False     # vision process reported within the stale window
     obstacle_m: float | None = None  # forward ultrasonic echo; None = nothing within its range
     obstacle_alive: bool = False     # forward sensor reported within the stale window
+    person_t: float = 0.0            # time.monotonic() of the last reading of each
+    obstacle_t: float = 0.0
 
 
 @dataclass
@@ -30,6 +32,30 @@ class Verdict:
 
 def _reject(reason: str) -> Verdict:
     return Verdict(False, reason)
+
+
+def person_room(p: Perception, c: SafetyConfig, since: float = 0.0) -> float | None:
+    """Metres to the nearest person, read cautiously (estimates can be person_range_error
+    too far). None = nobody seen, or only seen before `since` (the drone has turned since, so
+    that reading is about another direction)."""
+    if p.person_m is None or p.person_t < since:
+        return None
+    return p.person_m / (1 + c.person_range_error)
+
+
+def obstacle_ahead(p: Perception, since: float = 0.0) -> float | None:
+    return None if p.obstacle_m is None or p.obstacle_t < since else p.obstacle_m
+
+
+def path_blocked(p: Perception, ahead: float, c: SafetyConfig,
+                 since: float = 0.0) -> str | None:
+    """Would flying `ahead` metres forward end inside a clearance? Reason, or None. Readings
+    older than `since` are ignored."""
+    if (room := person_room(p, c, since)) is not None and room - ahead < c.person_close_m:
+        return f"person {p.person_m:.1f} m ahead"
+    if (ob := obstacle_ahead(p, since)) is not None and ob - ahead < c.obstacle_close_m:
+        return f"something {p.obstacle_m:.1f} m ahead"
+    return None
 
 
 class SafetyGate:
@@ -122,15 +148,25 @@ class SafetyGate:
         if c.fence_half is not None and (abs(n - hn) > c.fence_half or abs(e - he) > c.fence_half):
             return _reject(f"target ({n - hn:.1f}, {e - he:.1f}) from home is outside the "
                            f"+-{c.fence_half} m geofence")
+        # The person detector and the obstacle sensor only look forward. A horizontal move
+        # longer than face_travel_min_m turns to face the way it flies first (the executor
+        # does that), so the sensors watch the path; shorter moves keep their heading.
         fwd, _ = ned_to_body(n - s.n, e - s.e, s.yaw)
-        if fwd > 0.2:
-            # the move must *end* outside the stop distance, not just start outside it
-            if p.person_m is not None and p.person_m - fwd < c.person_close_m:
-                return _reject(f"person {p.person_m:.1f} m ahead; not moving forward")
+        dxy = math.hypot(n - s.n, e - s.e)
+        extra: dict = {}
+        if dxy > c.face_travel_min_m:
+            bearing = wrap360(math.degrees(math.atan2(e - s.e, n - s.n)))
+            extra["face_travel"] = bearing
+            # the sensors only describe the path now if we already face it
+            seen, ahead = abs(yaw_err(bearing, s.yaw)) <= 30.0, dxy
+        else:
+            seen, ahead = fwd > 0.2, fwd
+        if seen:
+            if (why := path_blocked(p, ahead, c)) is not None:
+                return _reject(f"{why}; not moving there")
+        if seen or extra:
             if c.require_person_detector and not p.detector_alive:
                 return _reject("person detector is not running; not moving forward")
-            if p.obstacle_m is not None and p.obstacle_m - fwd < c.obstacle_close_m:
-                return _reject(f"something {p.obstacle_m:.1f} m ahead; not moving forward")
             if c.require_obstacle_sensor and not p.obstacle_alive:
                 return _reject("forward obstacle sensor is not reporting; not moving forward")
-        return Verdict(True, target=(n, e, alt, byaw))
+        return Verdict(True, target=(n, e, alt, byaw), extra=extra)

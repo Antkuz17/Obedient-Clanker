@@ -156,7 +156,7 @@ jpeg_url, score}]`. A's planner and dashboard call it; B owns ingest and ranking
 
 | Rule | Default |
 |---|---|
-| Altitude window | **Outdoors (2026-11-21): no ceiling.** Floor 0.3 m (moves can't go lower; takeoff / land can). `alt_max` in `edge/config.py` brings a ceiling back |
+| Altitude window | **Outdoors: ceiling 5 m, normal hover 2 m**, floor 0.3 m (moves can't go lower; takeoff / land can). `alt_max` in `edge/config.py` |
 | Geofence | **Off (outdoors).** `fence_half` in `edge/config.py` brings back a box ±N m around the first takeoff point. No per-move distance cap either (`max_step`) |
 | Max single move | 3 m |
 | Max horizontal / vertical speed | 0.5 / 0.3 m/s |

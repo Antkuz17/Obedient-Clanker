@@ -8,8 +8,8 @@ from typing import Callable
 
 from shared import protocol as P
 
-from .config import ExecConfig, flight_time
-from .safety import Perception, SafetyGate
+from .config import ExecConfig, flight_time, stopping_distance
+from .safety import Perception, SafetyGate, obstacle_ahead, path_blocked, person_room
 from .vehicle import Vehicle, ned_to_body, wrap360, yaw_err
 
 Emit = Callable[[dict], None]
@@ -40,6 +40,8 @@ class Executor:
         self._active_moves = False # running command changes position (flow checks)
         self.pilot_mode: str | None = None  # set while the pilot has another mode in flight
         self._flow_bad_since: float | None = None
+        # readings older than this describe another direction (the drone turned since)
+        self._fresh_since = 0.0
 
     def _set(self, n: float, e: float, alt: float, yaw: float) -> None:
         self.target = (n, e, alt, wrap360(yaw))
@@ -115,9 +117,9 @@ class Executor:
             self.home = (s.n, s.e)
         self._active_moves = op in ("move_body", "goto", "return_home")
         self._active_fwd = False
-        if self._active_moves and verdict.target:
+        if self._active_moves and verdict.target and "face_travel" not in verdict.extra:
             fwd, _ = ned_to_body(verdict.target[0] - s.n, verdict.target[1] - s.e, s.yaw)
-            self._active_fwd = fwd > 0.2
+            self._active_fwd = fwd > 0.2  # faced moves: set by _do once it faces the path
         self._active = (cid, op)
         self._task = asyncio.create_task(self._run(cid, op, args, verdict))
         return True
@@ -132,12 +134,23 @@ class Executor:
             return None
         p = self.perception
         if self._active_fwd:
-            if p.person_m is not None and p.person_m < cfg.person_close_m:
-                return f"person {p.person_m:.1f} m ahead"
+            # Speed-aware: stop when the room ahead is less than the clearance plus how far the
+            # drone travels before standing still (sensor latency + FC reaction + braking at
+            # the current forward speed). If the target is nearer than that, the FC is already
+            # going to stop there, so only the distance left counts.
+            fv = max(0.0, ned_to_body(s.vn, s.ve, s.yaw)[0])
+            left = (math.hypot(self.target[0] - s.n, self.target[1] - s.e)
+                    if self.target else float("inf"))
+            if (room := person_room(p, cfg, self._fresh_since)) is not None:
+                need = min(stopping_distance(fv, cfg.person_latency_s, cfg), left)
+                if room < cfg.person_close_m + need:
+                    return f"person {p.person_m:.1f} m ahead"
             if cfg.require_person_detector and not p.detector_alive:
                 return "person detector stopped"
-            if p.obstacle_m is not None and p.obstacle_m < cfg.obstacle_close_m:
-                return f"something {p.obstacle_m:.1f} m ahead"
+            if (ob := obstacle_ahead(p, self._fresh_since)) is not None:
+                need = min(stopping_distance(fv, cfg.obstacle_latency_s, cfg), left)
+                if ob < cfg.obstacle_close_m + need:
+                    return f"something {p.obstacle_m:.1f} m ahead"
             if cfg.require_obstacle_sensor and not p.obstacle_alive:
                 return "forward obstacle sensor stopped"
         # one blurry frame shouldn't abort a move (and the whole plan): flow must stay bad for
@@ -301,19 +314,62 @@ class Executor:
             return P.OK, ""
         # positional / yaw moves
         n, e, alt, yaw = verdict.target
+        pad = c.cmd_timeout_pad_s
+        turn_t = flight_time(0.0, 0.0, 180.0, sc, c) + pad
+        bearing = verdict.extra.get("face_travel")
+        travel_yaw = yaw
+        self._fresh_since = 0.0
+        if bearing is not None:
+            # The forward sensors only see ahead: turn on the spot to face the way we'll fly,
+            # look, then fly with them watching the path.
+            s = self.v.state()
+            if abs(yaw_err(bearing, s.yaw)) > c.yaw_tolerance:
+                self._active_fwd = False
+                self._set(s.n, s.e, s.alt, bearing)
+                if not await self._wait(
+                        lambda s: abs(yaw_err(bearing, s.yaw)) <= c.yaw_tolerance, turn_t):
+                    self._hold()
+                    return P.FAILED, "could not turn to face the way"
+                # what the sensors said during or before the turn was about another
+                # direction: wait for readings taken facing the path (or the sensor's
+                # latency, if it isn't sending), then decide on those only
+                self._fresh_since = turned = time.monotonic()
+                gc, p = self.gate.cfg, self.perception
+                settle = max(gc.person_latency_s, gc.obstacle_latency_s) + 0.2
+                while time.monotonic() - turned < settle and not (
+                        (p.person_t > turned or not p.detector_alive)
+                        and (p.obstacle_t > turned or not p.obstacle_alive)):
+                    await asyncio.sleep(self.TICK)
+            s = self.v.state()
+            if (why := path_blocked(self.perception, math.hypot(n - s.n, e - s.e),
+                                    self.gate.cfg, self._fresh_since)) is not None:
+                self._hold()
+                return P.FAILED, f"{why}: not flying into it"
+            if self.gate.cfg.require_person_detector and not self.perception.detector_alive:
+                self._hold()
+                return P.FAILED, "person detector is not running"
+            self._active_fwd = True
+            travel_yaw = bearing
         s = self.v.state()
         dist = math.dist((n, e, alt), (s.n, s.e, s.alt))
         timeout = flight_time(math.hypot(n - s.n, e - s.e), alt - s.alt,
-                              yaw_err(yaw, s.yaw), sc, c) + c.cmd_timeout_pad_s
+                              yaw_err(travel_yaw, s.yaw), sc, c) + pad
         tol = self.move_tolerance(dist)
-        self._set(n, e, alt, yaw)
+        self._set(n, e, alt, travel_yaw)
         ok = await self._wait(
             lambda s: math.dist((n, e, alt), (s.n, s.e, s.alt)) <= tol
-            and abs(yaw_err(yaw, s.yaw)) <= c.yaw_tolerance,
+            and abs(yaw_err(travel_yaw, s.yaw)) <= c.yaw_tolerance,
             timeout=timeout)
         if not ok:
             self._hold()
             return P.FAILED, "did not reach target in time"
+        if op == "move_body" and abs(yaw_err(yaw, travel_yaw)) > c.yaw_tolerance:
+            # a relative move keeps its heading: turn back once there
+            self._active_fwd = False
+            self._set(n, e, alt, yaw)
+            if not await self._wait(lambda s: abs(yaw_err(yaw, s.yaw)) <= c.yaw_tolerance, turn_t):
+                self._hold()
+                return P.FAILED, "did not turn back in time"
         return P.OK, ""
 
     def move_tolerance(self, dist: float) -> float:

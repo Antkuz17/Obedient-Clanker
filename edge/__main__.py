@@ -14,7 +14,7 @@ from pathlib import Path
 
 from shared import protocol as P
 
-from .config import SafetyConfig
+from .config import SafetyConfig, max_checked_speed
 from .server import EdgeServer
 
 
@@ -34,6 +34,11 @@ async def main(a) -> None:
         cfg.flow_quality_min = 0
     if a.mav and not a.sitl and not a.no_person_check:
         cfg.require_person_detector = True  # real drone: no detector -> no forward moves
+    if cfg.speed_xy > (fastest := max_checked_speed(cfg)):
+        # the person / obstacle checks couldn't stop it in time any faster (edge/config.py)
+        logging.warning("speed_xy %.2f m/s is faster than the checks can stop; using %.2f",
+                        cfg.speed_xy, fastest)
+        cfg.speed_xy = fastest
     if a.require_obstacle_sensor:
         cfg.require_obstacle_sensor = True  # forward HC-SR04 mounted: silent sensor = no fwd
     if a.sim:
@@ -42,7 +47,8 @@ async def main(a) -> None:
     else:
         from .mav import MavVehicle
         vehicle = MavVehicle(a.mav, baud=a.baud, speed_xy=cfg.speed_xy, speed_z=cfg.speed_z,
-                             speed_dn=cfg.speed_dn, gps=a.gps)
+                             speed_dn=cfg.speed_dn, gps=a.gps, accel_xy=cfg.accel_xy,
+                             jerk_xy=cfg.jerk_xy)
 
     srv = EdgeServer(vehicle, cfg, port=a.port, perception_port=a.perception_port,
                      flow_port=a.flow_port, log_path=Path(a.log) if a.log else None,

@@ -59,8 +59,9 @@ HEARTBEAT_PERIOD_S = 0.5   # 2 Hz: 4 beats inside FS_GCS_TIMEOUT=2 (review2 #10)
 
 
 class MavVehicle(Vehicle):
-    def __init__(self, device: str, baud: int = 115200, speed_xy: float = 20.0,
-                 speed_z: float = 10.0, speed_dn: float = 1.5, gps: bool = False):
+    def __init__(self, device: str, baud: int = 115200, speed_xy: float = 1.5,
+                 speed_z: float = 10.0, speed_dn: float = 1.5, gps: bool = False,
+                 accel_xy: float = 5.0, jerk_xy: float = 10.0):
         self.device, self.baud, self.speed_xy, self.speed_z = device, baud, speed_xy, speed_z
         # gps: outdoors, the FC navigates on its GPS (tools/fc_profile.py --outdoor). Its EKF
         # origin comes from the first GPS fix, so we must not set a made-up one.
@@ -70,9 +71,11 @@ class MavVehicle(Vehicle):
         # ArduPilot 4.7 renamed these and switched to m/s (WPNAV_SPEED cm/s -> WP_SPD m/s);
         # SITL 4.7 defaults are WP_SPD=10 m/s, WP_SPD_UP=2.5. Older firmware: the cm/s names.
         self.limit_param_sets = [
-            {"WP_SPD": speed_xy, "WP_SPD_UP": speed_z, "WP_SPD_DN": speed_dn},
+            {"WP_SPD": speed_xy, "WP_SPD_UP": speed_z, "WP_SPD_DN": speed_dn,
+             "WP_ACC": accel_xy, "WP_JERK": jerk_xy},
             {"WPNAV_SPEED": speed_xy * 100, "WPNAV_SPEED_UP": speed_z * 100,
-             "WPNAV_SPEED_DN": speed_dn * 100},
+             "WPNAV_SPEED_DN": speed_dn * 100, "WPNAV_ACCEL": accel_xy * 100,
+             "WPNAV_JERK": jerk_xy},
         ]
         self.limit_params: dict[str, float] = {}  # the set the FC confirmed
         self.params: dict[str, float] = {}

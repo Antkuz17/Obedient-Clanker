@@ -350,6 +350,7 @@ class EdgeServer:
         self._perception_t = time.monotonic()
         ex = self.exec
         ex.perception.detector_alive = True
+        ex.perception.person_t = self._perception_t
         pm = msg.get("person_m")
         ex.perception.person_m = float(pm) if isinstance(pm, (int, float)) else None
         # react now rather than on the next tick: every ms counts for the stop latency demo
@@ -370,6 +371,7 @@ class EdgeServer:
         self._obstacle_t = time.monotonic()
         ex = self.exec
         ex.perception.obstacle_alive = True
+        ex.perception.obstacle_t = self._obstacle_t
         ex.perception.obstacle_m = None if fwd_m < 0 else fwd_m
         if (why := ex.revalidate(self.v.state(), self.safety_cfg)) is not None:
             ex.stop(why)

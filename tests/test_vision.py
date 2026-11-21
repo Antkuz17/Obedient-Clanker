@@ -153,9 +153,10 @@ def test_gate_refuses_moves_that_end_too_close():
     assert g.check("move_body", {"fwd": 0.5}, FLYING, True, wall).ok          # ends 1.0 m off
     assert "ahead" in g.check("move_body", {"fwd": 1.0}, FLYING, True, wall).reason
     assert g.check("move_body", {"fwd": -1.0}, FLYING, True, wall).ok         # backing away
+    # people: the estimate may be 30 % too far, so 2.0 m reads as 1.54 m of room
     person = Perception(person_m=2.0, detector_alive=True)
-    assert g.check("move_body", {"fwd": 0.8}, FLYING, True, person).ok
-    assert "person" in g.check("move_body", {"fwd": 1.5}, FLYING, True, person).reason
+    assert g.check("move_body", {"fwd": 0.4}, FLYING, True, person).ok          # 1.14 m left
+    assert "person" in g.check("move_body", {"fwd": 0.8}, FLYING, True, person).reason
 
 
 def test_gate_can_require_the_forward_sensor():

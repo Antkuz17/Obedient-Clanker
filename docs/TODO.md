@@ -49,13 +49,13 @@ they are how the drone navigates, and they cap it at about 2 m up until changed:
       origin, no optical-flow requirement
 - [ ] **Link range:** the laptop ↔ Pi link is Wi-Fi. No station heartbeat for 1 s → hover, 5 s → land
       where it is. Range test it outdoors; consider a better antenna / router on the field
-- [x] **Speed** (code done): `WP_SPD=20`, `WP_SPD_UP=10`, `WP_SPD_DN=1.5` written on every
-      connect. Top speed now depends on the airframe and `ANGLE_MAX`
+- [x] **Speed** (code done): 1.5 m/s horizontal: the fastest at which the person / obstacle
+      checks can still stop it (`edge.config.max_checked_speed`, from braking measured in
+      SITL); climb 10, descent 1.5 m/s; braking `WP_ACC=5`, `WP_JERK=10`. Edge clamps faster
 - [ ] **Battery:** 3S 3000 mAh on an F450 with 10" props is roughly 8–12 min; measure it
-- [ ] **Forward safety at speed:** the forward HC-SR04 sees 2 m and the stop distance is 0.7 m.
-      At 20 m/s the drone covers that in a tenth of a second and needs ~10+ m to stop, so the
-      person / obstacle stops only protect at low speed. The person detector's range estimate
-      is weak beyond ~5 m
+- [ ] **Measure braking on the real drone** (the checks rely on it): `tools/sitl_brake.py` works
+      against the FC too; compare with `stop_react_s` / `brake_decel` in `edge/config.py`. Also
+      measure the person detector's latency on the Pi (`person_latency_s`, assumed 0.3 s)
 - [x] **Dashboard**: fence map replaced by a zooming track
 - [ ] **Rules:** Transport Canada for a drone over 250 g (an F450 build is well over): registration, a pilot certificate,
       122 m (400 ft) max, distance from bystanders, and controlled airspace near

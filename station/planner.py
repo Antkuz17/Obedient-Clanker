@@ -47,7 +47,7 @@ class PlanAborted(Exception):
 
 @dataclass
 class PlannerConfig:
-    takeoff_alt: float = 1.0
+    takeoff_alt: float = 2.0      # m: where it normally hovers (the edge's ceiling is 5 m)
     approach_m: float = 1.0        # stop this far short of a target
     scan_step: float = 40.0        # deg per look while searching (~45 deg HFOV, some overlap)
     fence_margin: float = 0.4      # stay this far inside the edge's geofence

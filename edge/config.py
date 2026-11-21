@@ -7,35 +7,76 @@ from dataclasses import dataclass
 @dataclass
 class SafetyConfig:
     alt_min: float = 0.3          # m; moves can't go below this (only takeoff/land): ground floor
-    # Flying outdoors (2026-11-21): no ceiling, no geofence, no per-move cap. None = no limit;
-    # set a number to bring one back (the gate and the planner both honour it).
-    alt_max: float | None = None          # m above the takeoff ground
+    # Outdoors (2026-11-21). None = no limit; set a number to bring one back.
+    alt_max: float | None = 5.0           # m above the takeoff ground: the team's ceiling
     fence_half: float | None = None       # m; box +-fence_half N/E around the first takeoff
     max_step: float | None = None         # m; largest single move
-    max_takeoff_alt: float | None = None  # m
-    # Speeds the edge writes to the FC on every connect (WP_SPD / WP_SPD_UP / WP_SPD_DN). No
-    # slowing on purpose: horizontal and climb are ArduPilot's parameter maxima, so the real top
-    # speed is whatever the airframe and the FC's lean-angle limit (ANGLE_MAX) give. Descent stays
-    # at ArduPilot's default: a quad sinking much faster into its own downwash can lose lift
-    # (vortex ring state). That's aerodynamics, not a limit we picked.
-    speed_xy: float = 20.0        # m/s
+    max_takeoff_alt: float | None = 5.0   # m
+    # Speeds the edge writes to the FC on every connect (WP_SPD / WP_SPD_UP / WP_SPD_DN).
+    # Horizontal: the fastest speed at which the person / obstacle checks can still stop the
+    # drone in time (max_checked_speed() below, from the braking measured in SITL). The edge
+    # clamps anything faster. Climb: no sensor looks up or down, so ArduPilot's maximum; the
+    # 5 m ceiling is a position target the FC decelerates into. Descent: ArduPilot's default; a
+    # quad sinking much faster into its own downwash can lose lift (vortex ring state).
+    speed_xy: float = 1.5         # m/s
     speed_z: float = 10.0         # m/s, climb
     speed_dn: float = 1.5         # m/s, descent
     yaw_rate: float = 90.0        # deg/s; only used to size timeouts (the FC turns at its own rate)
+    # How hard the FC brakes (and speeds up), written with the speeds (WP_ACC / WP_JERK). With
+    # ArduPilot's defaults (2.5 m/s2, jerk 1.0 m/s3) SITL took ~1.3 s to even start slowing
+    # after a stop and 4-9 m to stand still. With these: 0.70 / 1.12 / 1.57 / 2.68 m from
+    # 1 / 1.5 / 2 / 3 m/s, braking starting 0.4-0.5 s after the stop (tools/sitl_brake.py,
+    # 2026-11-21). 5 m/s2 is a ~27 deg lean, inside ArduPilot's default 30 deg lean limit.
+    accel_xy: float = 5.0         # m/s2
+    jerk_xy: float = 10.0         # m/s3
+    # Stopping model, an upper bound on those SITL runs: d <= v * (latency + stop_react_s)
+    # + v^2 / (2 * brake_decel). Re-measure on the real drone and update.
+    stop_react_s: float = 0.45    # stop sent -> FC braking
+    brake_decel: float = 2.0      # m/s2, average once braking
+    # The sensors that have to stop it. Every forward check uses these, and max_checked_speed()
+    # makes sure speed_xy lets each one stop the drone inside what it can see.
+    face_travel_min_m: float = 0.5   # longer horizontal moves turn to face the way they fly first
+    obstacle_range_m: float = 2.0    # forward HC-SR04: reliable echoes up to here
+    obstacle_latency_s: float = 0.07 # 20 Hz pings + Arduino serial + UDP
+    person_range_m: float = 4.0      # person detector: distance estimate usable up to here
+    person_latency_s: float = 0.3    # camera frame + inference (10 Hz) + UDP: measure on the Pi
+    person_range_error: float = 0.3  # a person may be up to 30 % closer than the estimate says
     scan_rate_max: float | None = None  # deg/s; None = no cap on the scan op's turn rate
     batt_reject_v: float = 10.6   # 3S: refuse new moves below this
     batt_land_v: float = 10.2     # 3S: auto-land below this
     flow_quality_min: int = 50    # refuse moves when flow is this bad (0-255)
-    person_close_m: float = 1.0   # refuse forward moves that would end closer to a person
+    person_close_m: float = 1.0   # clearance: never end or stop closer than this to a person
     # forward HC-SR04 (tools/rangefinder.py "fwd_m"): walls, furniture, a torso too close for
-    # the camera detector. Refuse forward moves that would end closer than this to an echo.
-    obstacle_close_m: float = 0.7
+    # the camera detector. Clearance to keep from an echo.
+    obstacle_close_m: float = 0.6
     # with no live forward sensor, refuse forward moves (python -m edge --require-obstacle-sensor
     # once it's mounted; off by default so the drone flies before the hardware is on)
     require_obstacle_sensor: bool = False
     # Fail-safe (docs/flow.md): with no live person detector, refuse forward moves. Off by
     # default so sim/SITL work without a vision process; `python -m edge --mav usb` turns it on.
     require_person_detector: bool = False
+
+
+def stopping_distance(v: float, latency_s: float, c: SafetyConfig) -> float:
+    """Metres travelled from a sensor seeing something at speed v (m/s) to standing still."""
+    v = max(0.0, v)
+    return v * (latency_s + c.stop_react_s) + v * v / (2 * c.brake_decel)
+
+
+def max_checked_speed(c: SafetyConfig) -> float:
+    """Fastest horizontal speed at which both forward checks still work: something first seen at
+    the edge of a sensor's range can be stopped for with the clearance kept."""
+    budgets = [(c.obstacle_range_m - c.obstacle_close_m, c.obstacle_latency_s),
+               (c.person_range_m / (1 + c.person_range_error) - c.person_close_m,
+                c.person_latency_s)]
+    lo, hi = 0.0, 50.0
+    for _ in range(60):  # bisection: stopping_distance grows with v
+        mid = (lo + hi) / 2
+        if all(stopping_distance(mid, lat, c) <= room for room, lat in budgets):
+            lo = mid
+        else:
+            hi = mid
+    return lo
 
 
 @dataclass

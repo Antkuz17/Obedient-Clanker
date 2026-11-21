@@ -39,12 +39,15 @@ LIMITS = dict(alt_max=1.5, fence_half=3.0, max_step=3.0, max_takeoff_alt=1.5,
               scan_rate_max=30.0)
 
 
-def test_no_ceiling_fence_or_step_limit_by_default():
+def test_outdoor_limits_by_default():
+    """5 m ceiling; no flying area or per-move distance cap."""
     g = SafetyGate()
-    assert g.check("move_body", {"up": 30.0}, FLYING, True).ok                 # 31 m up
+    assert g.check("move_body", {"up": 4.0}, FLYING, True).ok                  # to 5 m
+    assert "above 5.0" in g.check("move_body", {"up": 4.5}, FLYING, True).reason
     assert g.check("goto", {"n": 200.0, "e": -150.0}, FLYING, True).ok         # 250 m away
     ground = VehicleState(connected=True, battery_v=12.4, flow_quality=200)
-    assert g.check("takeoff", {"alt": 10.0}, ground, False).ok
+    assert g.check("takeoff", {"alt": 5.0}, ground, False).ok
+    assert not g.check("takeoff", {"alt": 6.0}, ground, False).ok
     s = VehicleState(**{**FLYING.as_dict(), "n": 50.0})
     assert g.check("return_home", {}, s, True, home=(0.0, 0.0)).ok
     # the ground floor stays: a move can't fly it into the ground
@@ -749,13 +752,14 @@ def test_height_is_measured_from_the_ground_not_the_drifted_baro():
 
 
 def test_outdoor_speeds_and_gps_mode():
-    """No slowing on purpose: the FC gets ArduPilot's maximum speeds (descent stays at the
-    vortex-ring-safe default). GPS mode never sends the made-up EKF origin."""
+    """The FC gets the checked horizontal speed, ArduPilot's maximum climb, the vortex-ring-safe
+    descent and firm braking. GPS mode never sends the made-up EKF origin."""
     from edge.mav import MavVehicle
     cfg = SafetyConfig()
     v = MavVehicle("udpin:127.0.0.1:0", speed_xy=cfg.speed_xy, speed_z=cfg.speed_z,
-                   speed_dn=cfg.speed_dn, gps=True)
-    assert v.limit_param_sets[0] == {"WP_SPD": 20.0, "WP_SPD_UP": 10.0, "WP_SPD_DN": 1.5}
+                   speed_dn=cfg.speed_dn, gps=True, accel_xy=cfg.accel_xy, jerk_xy=cfg.jerk_xy)
+    assert v.limit_param_sets[0] == {"WP_SPD": 1.5, "WP_SPD_UP": 10.0, "WP_SPD_DN": 1.5,
+                                     "WP_ACC": 5.0, "WP_JERK": 10.0}
     assert v.origin_ok                                   # the FC's GPS sets the origin
     assert not MavVehicle("udpin:127.0.0.1:0").origin_ok  # indoors we still send one
     assert SafetyGate().check("scan", {"rate_dps": 120.0}, FLYING, True).ok  # no scan cap
@@ -769,3 +773,78 @@ def test_timeouts_cover_long_flights_but_never_limit_speed():
     assert flight_time(0.0, -30.0, 0.0, cfg) >= 20           # descent at 1.5 m/s
     slow = SafetyConfig(speed_xy=0.5)                        # a slow FC setting still fits
     assert flight_time(10.0, 0.0, 0.0, slow) >= 20
+
+
+# --- checks that can actually stop it --------------------------------------------------------
+def test_speed_lets_every_forward_check_stop_in_time():
+    """Something first seen at the edge of a sensor's range must be stoppable for, clearance
+    kept, at the speed the edge writes to the FC."""
+    from edge.config import max_checked_speed, stopping_distance
+    c = SafetyConfig()
+    assert c.speed_xy <= max_checked_speed(c)
+    v = c.speed_xy
+    assert c.obstacle_close_m + stopping_distance(v, c.obstacle_latency_s, c) <= c.obstacle_range_m
+    assert (c.person_close_m + stopping_distance(v, c.person_latency_s, c)
+            <= c.person_range_m / (1 + c.person_range_error))
+    # the model is an upper bound on what SITL measured (tools/sitl_brake.py, 2026-11-21)
+    for speed, measured in [(1.0, 0.70), (1.5, 1.12), (2.0, 1.57), (3.0, 2.68)]:
+        assert stopping_distance(speed, 0.0, c) >= measured
+
+
+async def test_obstacle_stop_depends_on_speed(rig):
+    """At speed it stops while there's still room to brake; slowly it can get closer."""
+    srv, sim, edge = rig
+    await edge.run("takeoff", alt=1.0)
+    cid, ack = await edge.send("move_body", fwd=2.5)
+    assert ack["ok"]
+    await asyncio.sleep(0.15)
+    srv.on_obstacle(1.6)                   # sim at 0.5 m/s: needs 0.6 + 0.32 m: carry on
+    await asyncio.sleep(0.1)
+    assert not edge.is_done(cid)
+    srv.on_obstacle(0.85)                  # inside 0.6 m + braking distance: stop
+    d = await edge.wait_done(cid, 5)
+    assert d["status"] == P.ABORTED and "ahead" in d["reason"]
+
+
+async def test_sideways_move_faces_its_path_then_turns_back(rig):
+    """The sensors only look forward: a 2 m move to the right turns right, flies, turns back."""
+    srv, sim, edge = rig
+    await edge.run("takeoff", alt=1.0)
+    yaw0, e0 = sim.s.yaw, sim.s.e
+    seen = []
+    cid, ack = await edge.send("move_body", right=2.0)
+    assert ack["ok"]
+    while not edge.is_done(cid):
+        seen.append(sim.s.yaw)
+        await asyncio.sleep(0.02)
+    assert (await edge.wait_done(cid))["status"] == P.OK
+    assert any(abs(yaw_err(y, yaw0 + 90)) < 6 for y in seen)          # flew facing right
+    assert abs(yaw_err(sim.s.yaw, yaw0)) < 6                           # and turned back
+    assert sim.s.e - e0 == pytest.approx(2.0, abs=0.3)
+
+
+async def test_person_seen_before_turning_does_not_block_the_new_path(rig):
+    """Backing away from a person: the "person 0.5 m ahead" reading was about the direction the
+    drone turned away from, so it must not stop the move once facing the other way."""
+    srv, sim, edge = rig
+    await edge.run("takeoff", alt=1.0)
+    srv.on_perception({"person_m": 0.5, "palm": False})
+    cid, ack = await edge.send("move_body", fwd=-1.5)
+    assert ack["ok"]
+    assert (await edge.wait_done(cid))["status"] == P.OK
+
+
+async def test_person_in_the_new_path_after_turning_stops_it(rig):
+    srv, sim, edge = rig
+    await edge.run("takeoff", alt=1.0)
+    cid, ack = await edge.send("move_body", fwd=-2.0)    # turns around first
+    assert ack["ok"]
+
+    async def report():                                  # the detector keeps seeing someone
+        while not edge.is_done(cid):
+            srv.on_perception({"person_m": 1.5, "palm": False})
+            await asyncio.sleep(0.05)
+    t = asyncio.create_task(report())
+    d = await edge.wait_done(cid, 10)
+    t.cancel()
+    assert d["status"] in (P.FAILED, P.ABORTED) and "person" in d["reason"]
