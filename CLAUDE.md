@@ -9,15 +9,23 @@ flight details: `docs/hardware.md`, `docs/flight-setup.md`, `docs/qnx.md`.
 
 ## Who does what
 
-- **Person A** (the repo user working with Claude): `edge/` core, `tools/`, QNX real-time, and
-  **all off-drone software**: `station/` (brain, planner, localization, vision tasks, voice) and
-  `cloud/` (Vultr app, dashboard, visual memory). Took over B's localization, VLM and memory
-  work on 2026-11-21.
-- **Person B** (teammate): on-drone perception tied to the hardware: `edge/flow/` (optical
-  flow), `edge/vision/` (TFLite person + palm on QNX), cameras, sensors, wiring.
+Roles, not "Person A/B": both people run Claude in this repo, so letters were read both ways.
+Agreed split (Anton, 2026-11-21; partner to confirm):
 
-By default, build Person A's items. Don't write B's modules beyond the stubs and interfaces in
-PRD section 5. Keys (Vultr, ElevenLabs) are in `.env`, never in git; see `.env.example`.
+- **Drone lead (Anton, GitHub `Antkuz17`)**: everything on the drone and on QNX.
+  `edge/` (core, safety gate, executor, watchdog, MAVLink/USB relay), **`edge/flow/` optical
+  flow**, **`edge/vision/` on-board TFLite person detection**, `edge/camgrab`, rangefinder,
+  QNX real-time (priorities, supervisor, jitter, C watchdog loop), FC parameters, transmitter,
+  hardware build and every flight test.
+- **Cloud lead (teammate)**: everything off the drone that decides *what* to do.
+  `station/` (brain/LLM, command schema, planner that sends protocol v1 commands, localization,
+  voice in/out) and `cloud/` (Vultr app, models, dashboard, VLM tasks, visual memory).
+
+The boundary is protocol v1 (`shared/protocol.py`, PRD section 5): the cloud lead's planner
+sends primitives; the drone lead's edge executes them safely. Changing it needs both.
+
+Build only your own role's modules (ask which role the person you're working with has); don't
+write the other role's modules beyond the stubs and interfaces in PRD section 5. Keys (Vultr, ElevenLabs) are in `.env`, never in git; see `.env.example`.
 
 ## Commands
 
