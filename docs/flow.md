@@ -182,7 +182,7 @@ what makes that a guarantee rather than a hope.
 
 | Source | Can do | Guarded by |
 |---|---|---|
-| Pilot PIN holder on the dashboard | Everything (voice, typed, LAND) | `CONTROL_PIN`; only one viewer holds the controls at a time |
+| Any dashboard viewer | Everything (voice, typed, LAND, STOP) | No PIN; only one viewer holds the controls at a time |
 | Any dashboard viewer | **STOP** only | open to all on purpose |
 | Laptop (`--local`, `tools.cmd`) | Everything | on the laptop; the Pi accepts only the station IP |
 | FlySky transmitter | Take over or land, always | radio, no software in the way |

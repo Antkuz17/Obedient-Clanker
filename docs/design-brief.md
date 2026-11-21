@@ -25,7 +25,7 @@ low"). Our pitch: **"The AI suggests, QNX decides."** Built at Hack Western 13 f
 2. **The conversation:** what you said → the plan → what Jarvis replied → **did QNX approve
    or block it, and why.** The blocked case is the money shot of the demo; design it to feel
    dramatic but clean.
-3. **STOP.** Always visible, always works (no PIN), huge, unmistakable. LAND next to it.
+3. **STOP.** Always visible, always works, huge, unmistakable. LAND next to it.
 4. **Hold to talk.** The main action. Show listening (live mic level), thinking, and the
    transcript of what it heard.
 5. **Where the drone is:** state in words ("Hovering", "On the ground", "Landing") and height
@@ -52,7 +52,7 @@ fake charts, "signal efficiency", tiles for every number.
 - Battery: 3-cell LiPo. Critical below 10.6 V, low below 11.0 V (%, roughly, 10.5–12.6 V).
 - Drone states: `DISCONNECTED, IDLE, TAKING_OFF, BUSY, HOVER, LANDING, FAILSAFE`.
 - One person flies at a time ("You have control" / "Anna is flying"); everyone else can
-  watch and press STOP. Moving commands need a short pilot PIN; STOP never does.
+  watch and press STOP. There is no pilot PIN.
 - Replies are spoken (mp3) on the device too; there's a "voice replies here" toggle.
 - Plan steps Jarvis can produce: `takeoff {alt}`, `land`, `stop`, `home`,
   `move {fwd, right, up, yaw_deg}` (metres/degrees, body frame), `mission {target, action,
@@ -84,8 +84,8 @@ fake charts, "signal efficiency", tiles for every number.
     `"safety_reject: move: above ceiling 1.5 m"`, failsafes), `"cloud"`, `"qnx"`
   - `heard {who, text}` (speech-to-text result), `audio {mp3 base64}`, `photo {url, caption}`
   - `qnx {...}` / `qnx_state {loop[], stops[], jitter[], procs[]}` for the QNX tab
-- The page sends: `{type:"op", op:"stop"}`, `{type:"op", op:"land", pin}`,
-  `{type:"text", text, pin}`. Voice: `POST /voice` multipart (`audio`, `client`, `pin`).
+- The page sends: `{type:"op", op:"stop"}`, `{type:"op", op:"land"}`,
+  `{type:"text", text}`. Voice: `POST /voice` multipart (`audio`, `client`).
   Memory: `POST /memory/search {q}` → `[{caption, n, e, alt, yaw, t, jpeg_url}]`.
 - The current file already wires all of this; a redesign can keep its JS and replace the
   markup and CSS.

@@ -15,7 +15,6 @@ Status on the cloud lead's laptop, checked 2026-11-21 (keys rechecked 14:10: Vul
 | [x] | `ELEVENLABS_API_KEY` | laptop + VM | Jarvis voice. elevenlabs.io → Profile → API keys. Without it: `chatterbox`, then text only | set |
 | [x] | `ELEVENLABS_VOICE_ID` | laptop + VM | The cloned/chosen Jarvis voice. ElevenLabs → Voices → copy ID | set |
 | [x] | `STATION_TOKEN` | laptop + VM (same value) | Laptop ↔ cloud link auth. Generated 2026-11-21; `cloud/deploy.sh` copies it | set |
-| [x] | `CONTROL_PIN` | VM only | Dashboard pilot PIN (viewers without it can only watch + STOP) | optional: `deploy.sh` makes one up and prints it |
 | [ ] | `CLOUD_URL` | laptop only | `wss://<your-domain>` of the Vultr VM. Needs the VM + domain below | **blank** |
 | [ ] | `EDGE_HOST` | laptop only | The Pi's IP on the drone network | **blank** |
 | [ ] | 🔴 Vultr VM + credits + **domain** | n/a | Hosts cloud app + dashboard; phones need HTTPS for the mic. Steps: [cloud/deploy.md](../cloud/deploy.md) | not done |
@@ -125,7 +124,6 @@ to end on the sim with no keys). Still to do with real keys / hardware:
       live video, telemetry, STOP/LAND for anyone, one viewer has the controls, flight log,
       photos, memory search
 - [x] **A: laptop ↔ cloud WSS** (`station/station.py`: dials out, ping 15 s, backoff to 15 s)
-- [x] **A: `CONTROL_PIN`**: `deploy.sh` now makes one up if unset and prints it. Give it only to whoever stands by the drone; judges get STOP
 - [ ] 🔴 **A: deploy to the Vultr VM**: one command once the VM + domain exist: `scp .env root@<vm>:/root/hope.env && ssh root@<vm> 'bash -s' < cloud/deploy.sh <domain>` ([cloud/deploy.md](../cloud/deploy.md))
 - [ ] **A: measure the size prior and HFOV on the real C270** (`edge/video.py:HFOV_DEG`,
       `station/localize.py:SIZE_PRIOR`) and test `locate()` on real frames

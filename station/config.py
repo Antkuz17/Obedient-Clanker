@@ -62,9 +62,6 @@ class Settings:
     video_port: int = field(default_factory=lambda: int(_env("VIDEO_PORT", "8080")))
     cloud_url: str = field(default_factory=lambda: _env("CLOUD_URL", ""))  # wss://host
     station_token: str = field(default_factory=lambda: _env("STATION_TOKEN", "dev-token"))
-    # Cloud only: the pilot PIN. Without it a dashboard viewer can watch and press STOP but
-    # can't make the drone take off, move or land (review3 #4). Unset: only localhost may fly.
-    control_pin: str = field(default_factory=lambda: _env("CONTROL_PIN"))
     data_dir: Path = field(default_factory=lambda: Path(_env("DATA_DIR", str(ROOT / "data"))))
 
     def need(self, attr: str, var: str) -> str:

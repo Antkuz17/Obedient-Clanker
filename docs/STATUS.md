@@ -2,6 +2,11 @@
 
 Last updated: 2026-11-21. Update this at the end of every session.
 
+**2026-11-21: pilot PIN removed.** `CONTROL_PIN`, the PIN check and lockout (`cloud/app.py`), the
+dashboard PIN dialog, and the `deploy.sh` PIN generation are gone. Any dashboard viewer (local or
+through the proxy) can now type, talk, LAND and STOP. The review-fix rows below that mention the
+PIN are history. The dev station token is still localhost-only.
+
 ## Done: station + cloud (Person A, 2026-11-21; includes B's old localization / VLM / memory)
 
 All written as if the keys exist; **no key has been used yet** (see TODO "CRITICAL"). Verified with

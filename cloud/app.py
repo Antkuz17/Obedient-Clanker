@@ -26,7 +26,6 @@ import asyncio
 import base64
 import collections
 import contextlib
-import hmac
 import itertools
 import json
 import logging
@@ -64,8 +63,6 @@ def client_host(conn: HTTPConnection) -> str:
     return conn.client.host if conn.client else "?"
 
 
-PIN_FREE_TRIES = 5       # wrong PINs from one address before it is locked out
-PIN_LOCK_S = 30.0        # first lockout; doubles with every further wrong PIN (max 32 min)
 VIEWER_QUEUE_MAX = 500   # queued messages (not frames/telemetry) before a viewer is dropped
 SEARCH_PER_MIN = 10      # memory searches per address per minute (each is a paid API call)
 QNX_LOOP_KEEP = 120      # 1 Hz edge loop stats: two minutes of graph
@@ -177,7 +174,6 @@ class Hub:
         self._req = itertools.count(1)
         self._viewer_n = itertools.count(1)
         self._bg: set[asyncio.Task] = set()
-        self._pin_fails: dict[str, tuple[int, float]] = {}  # host -> (wrong PINs, locked until)
         self._search_t: dict[str, collections.deque[float]] = {}  # host -> recent search times
 
     def search_allowed(self, conn: HTTPConnection) -> bool:
@@ -257,47 +253,11 @@ class Hub:
             await self.to_uis({"type": "audio", "mp3": b64, "text": text})
             await self.to_station({"type": "audio", "mp3": b64, "text": text})
 
-    def pin_ok(self, pin, conn: HTTPConnection) -> bool:
-        """The pilot PIN gates everything that can move the drone (review3 #4): the viewer
-        name is whatever the browser says, so it can't be the lock. No PIN configured: only
-        this machine (dev, `station.dev`) may fly.
-
-        Brute force: after PIN_FREE_TRIES wrong PINs an address is locked out for PIN_LOCK_S,
-        doubling with each further wrong PIN. An empty PIN (a viewer pressing STOP) never
-        counts as a try."""
-        if not self.s.control_pin:
-            return is_local(conn)
-        pin = str(pin or "")
-        if not pin:
-            return False
-        host, now = client_host(conn), time.monotonic()
-        fails, until = self._pin_fails.get(host, (0, 0.0))
-        if until > now:
-            return False  # locked out: not even a right PIN gets in until it expires
-        if hmac.compare_digest(pin.encode(), self.s.control_pin.encode()):
-            self._pin_fails.pop(host, None)
-            return True
-        fails += 1
-        if fails >= PIN_FREE_TRIES:
-            until = now + PIN_LOCK_S * 2 ** min(6, fails - PIN_FREE_TRIES)
-            log.warning("pilot PIN: %d wrong tries from %s; locked for %.0f s", fails, host,
-                        until - now)
-        if len(self._pin_fails) > 10_000:  # don't grow without bound under a spray of IPs
-            self._pin_fails = {h: v for h, v in self._pin_fails.items() if v[1] > now}
-        self._pin_fails[host] = (fails, until)
-        return False
-
-    NEED_PIN = "You need the pilot PIN to fly me. Anyone can hit stop."
-
-    async def command(self, text: str, cid: str, authorized: bool = True) -> dict:
+    async def command(self, text: str, cid: str) -> dict:
         """A typed or transcribed command from a viewer (or the laptop mic)."""
         text = text.strip()
         if not text:
             return {"ok": False, "reply": "I didn't catch that."}
-        if not authorized:
-            # answered to the caller only: no broadcast, no TTS, so strangers can't spam the
-            # feed and the speakers or spend ElevenLabs credits
-            return {"ok": False, "reply": self.NEED_PIN, "need_pin": True}
         await self.to_uis({"type": "heard", "text": text, "who": cid})
         await self.log_line(cid, text)
         if not self.may_command(cid):
@@ -317,14 +277,9 @@ class Hub:
         self.spawn(self.speak(reply))
         return {"ok": sent, "reply": reply, "actions": r.actions, "source": r.source}
 
-    async def op(self, op: str, cid: str, authorized: bool = True) -> None:
-        """STOP / LAND buttons: no brain, straight to the station. STOP: any viewer. LAND:
-        pilot PIN, like everything else that moves the drone (review3 #4)."""
+    async def op(self, op: str, cid: str) -> None:
+        """STOP / LAND buttons: no brain, straight to the station. Any viewer."""
         if op not in ("stop", "land"):
-            return
-        if op == "land" and not authorized:
-            self.to_ui(cid, {"type": "log", "t": time.time(), "who": "cloud",
-                             "text": "LAND needs the pilot PIN (STOP doesn't)"})
             return
         await self.log_line(cid, f"[{op.upper()} button]")
         if not await self.to_station({"type": "actions", "actions": [{"kind": op}],
@@ -416,10 +371,8 @@ def create_app(s: Settings | None = None, ai: AI | None = None) -> FastAPI:
                     "vultr": bool(s.vultr_key), "elevenlabs": bool(s.eleven_key and s.eleven_voice)}}
 
     @app.post("/voice")
-    async def voice(request: Request, audio: UploadFile = File(...),
-                    client: str = Form("phone"), pin: str = Form("")):
-        if not hub.pin_ok(pin, request):
-            return await hub.command("(voice)", client, authorized=False)  # skip STT: no PIN
+    async def voice(audio: UploadFile = File(...),
+                    client: str = Form("phone")):
         data = await audio.read()
         t0 = time.perf_counter()
         try:
@@ -438,7 +391,7 @@ def create_app(s: Settings | None = None, ai: AI | None = None) -> FastAPI:
         return {"text": text, **r, "latency_ms": {"stt": stt_ms, "plan": plan_ms}}
 
     @app.websocket("/ws/voice")
-    async def voice_stream(ws: WebSocket, client: str = "phone", pin: str = ""):
+    async def voice_stream(ws: WebSocket, client: str = "phone"):
         """Push-to-talk, streamed: binary frames of 24 kHz mono s16le PCM while the button is
         held, then the text "end". Transcribed live (StreamingSTT), so the command runs ~0.4 s
         after release. Replies with the same JSON as POST /voice, or {"error"} (the dashboard
@@ -446,14 +399,6 @@ def create_app(s: Settings | None = None, ai: AI | None = None) -> FastAPI:
         await ws.accept()
         stt = None
         try:
-            if not hub.pin_ok(pin, ws):  # no PIN: don't transcribe, just say so on release
-                while (m := await ws.receive())["type"] != "websocket.disconnect":
-                    if m.get("text") == "end":
-                        break
-                else:
-                    return
-                await ws.send_json(await hub.command("(voice)", client, authorized=False))
-                return
             try:
                 stt = await StreamingSTT.open(s)
             except Exception as e:
@@ -492,16 +437,12 @@ def create_app(s: Settings | None = None, ai: AI | None = None) -> FastAPI:
                 await ws.close()
 
     @app.post("/text")
-    async def text_cmd(request: Request, body: dict):
-        ok = hub.pin_ok(body.get("pin"), request)
-        return await hub.command(str(body.get("text", "")), str(body.get("client", "api")),
-                                 authorized=ok)
+    async def text_cmd(body: dict):
+        return await hub.command(str(body.get("text", "")), str(body.get("client", "api")))
 
     @app.post("/memory/reset")
-    async def memory_reset(request: Request, body: dict):
+    async def memory_reset():
         """Forget every memory frame, e.g. after rehearsing on the sim (review3)."""
-        if not hub.pin_ok(body.get("pin"), request):
-            raise HTTPException(403, "pilot PIN required")
         return {"deleted": hub.memory.clear()}
 
     @app.post("/memory/search")
@@ -562,7 +503,6 @@ def create_app(s: Settings | None = None, ai: AI | None = None) -> FastAPI:
         # the greeting goes out before the viewer's sender task exists: never two writers
         await ws.send_json({"type": "hello", "you": cid, "station": hub.station is not None,
                             "holder": hub.holder, "log": hub.flight_log[-50:],
-                            "pin_required": bool(s.control_pin),
                             "telemetry": hub.telemetry})
         if hub.last_frame:
             await ws.send_json(hub.last_frame)
@@ -573,15 +513,9 @@ def create_app(s: Settings | None = None, ai: AI | None = None) -> FastAPI:
                 m = await ws.receive_json()
                 kind = m.get("type")
                 if kind == "text":
-                    if hub.pin_ok(m.get("pin"), ws):
-                        hub.spawn(hub.command(str(m.get("text", "")), cid))
-                    else:
-                        hub.to_ui(cid, {"type": "log", "t": time.time(), "who": "cloud",
-                                        "text": "no pilot PIN, command not sent"})
+                    hub.spawn(hub.command(str(m.get("text", "")), cid))
                 elif kind == "op":
-                    op = str(m.get("op"))
-                    ok = op == "stop" or hub.pin_ok(m.get("pin"), ws)  # STOP: no PIN check
-                    await hub.op(op, cid, authorized=ok)
+                    await hub.op(str(m.get("op")), cid)
         except (WebSocketDisconnect, RuntimeError, ValueError):
             pass
         finally:

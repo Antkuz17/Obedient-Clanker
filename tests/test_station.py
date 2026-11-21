@@ -158,7 +158,7 @@ async def test_sentences_still_go_to_the_llm(text):
 
 
 @pytest.mark.parametrize("text, want", [
-    ("take off", [("takeoff", 1.0)]),
+    ("take off", [("takeoff", 2.0)]),     # normal hover height
     ("Take off to 1.2 metres.", [("takeoff", 1.2)]),
     ("Move forward one meter and turn left 90 degrees.", [("fwd", 1.0), ("yaw_deg", -90.0)]),
     ("Jarvis, go back 50 centimetres please.", [("fwd", -0.5)]),
@@ -806,37 +806,13 @@ def _next_actions(st) -> list[dict]:
     raise AssertionError("no actions sent to the station")
 
 
-def test_dashboard_needs_the_pilot_pin_to_fly(tmp_path):
-    """review3 #4: the 'one viewer has the controls' lock trusted a name the browser sends."""
+def test_any_viewer_can_fly(tmp_path):
+    """No pilot PIN: any dashboard viewer, local or through the proxy, can fly, LAND and STOP.
+    The dev station token still only works from this machine."""
     from fastapi.testclient import TestClient
     from cloud.app import create_app
 
-    s = Settings(vultr_key="", station_token="tok", data_dir=tmp_path, control_pin="4321")
-    app = create_app(s, ai=FakeAI())
-    with TestClient(app) as c, c.websocket_connect("/ws/station?token=tok") as st:
-        r = c.post("/text", json={"text": "take off", "client": "judge"}).json()
-        assert not r["ok"] and r.get("need_pin")
-        r = c.post("/text", json={"text": "take off", "client": "judge", "pin": "0000"}).json()
-        assert not r["ok"] and r.get("need_pin")
-        r = c.post("/text", json={"text": "take off", "client": "judge", "pin": "4321"}).json()
-        assert r["ok"] and r["actions"][0]["kind"] == "takeoff"
-        assert _next_actions(st)[0]["kind"] == "takeoff"   # the refusals sent only audio
-        with c.websocket_connect("/ws/ui?client=stranger") as ui:
-            assert ui.receive_json()["pin_required"] is True
-            ui.send_json({"type": "op", "op": "land"})              # LAND needs the PIN
-            ui.send_json({"type": "op", "op": "stop"})              # STOP never does
-            assert _next_actions(st) == [{"kind": "stop"}]
-        assert c.post("/memory/reset", json={}).status_code == 403
-        assert c.post("/memory/reset", json={"pin": "4321"}).json() == {"deleted": 0}
-
-
-def test_no_pin_means_only_this_machine_can_fly(tmp_path):
-    """Without CONTROL_PIN only a local client may fly; behind Caddy every phone arrives from
-    127.0.0.1, so anything forwarded by a proxy is never local (also for the dev token)."""
-    from fastapi.testclient import TestClient
-    from cloud.app import create_app
-
-    s = Settings(vultr_key="", station_token="dev-token", data_dir=tmp_path, control_pin="")
+    s = Settings(vultr_key="", station_token="dev-token", data_dir=tmp_path)
     app = create_app(s, ai=FakeAI())
     fwd = {"X-Forwarded-For": "203.0.113.9"}
     with TestClient(app) as c:
@@ -844,11 +820,16 @@ def test_no_pin_means_only_this_machine_can_fly(tmp_path):
             with c.websocket_connect("/ws/station?token=dev-token", headers=fwd) as ws:
                 ws.receive_json()
         with c.websocket_connect("/ws/station?token=dev-token") as st:
-            r = c.post("/text", json={"text": "take off"}, headers=fwd).json()
-            assert not r["ok"] and r.get("need_pin")
-            r = c.post("/text", json={"text": "take off"}).json()
-            assert r["ok"]
+            r = c.post("/text", json={"text": "take off", "client": "judge"}, headers=fwd).json()
+            assert r["ok"] and r["actions"][0]["kind"] == "takeoff"
             assert _next_actions(st)[0]["kind"] == "takeoff"
+            with c.websocket_connect("/ws/ui?client=stranger") as ui:
+                assert "pin_required" not in ui.receive_json()
+                ui.send_json({"type": "op", "op": "land"})
+                assert _next_actions(st) == [{"kind": "land"}]
+                ui.send_json({"type": "op", "op": "stop"})
+                assert _next_actions(st) == [{"kind": "stop"}]
+        assert c.post("/memory/reset", json={}).json() == {"deleted": 0}
 
 
 def test_streamed_voice_runs_the_command_and_reports_errors(tmp_path, monkeypatch):
@@ -877,11 +858,11 @@ def test_streamed_voice_runs_the_command_and_reports_errors(tmp_path, monkeypatc
             pass
 
     monkeypatch.setattr(cloud_app, "StreamingSTT", FakeStream)
-    s = Settings(vultr_key="", station_token="tok", data_dir=tmp_path, control_pin="1234",
+    s = Settings(vultr_key="", station_token="tok", data_dir=tmp_path,
                  stt_stream_model="voxtral-mini-4b-realtime")
     with TestClient(cloud_app.create_app(s, ai=FakeAI())) as c:
         with c.websocket_connect("/ws/station?token=tok") as st:
-            with c.websocket_connect("/ws/voice?client=judge&pin=1234") as v:
+            with c.websocket_connect("/ws/voice?client=judge") as v:
                 v.send_bytes(b"forward 1 ")
                 v.send_bytes(b"metre")
                 v.send_text("end")
@@ -889,66 +870,9 @@ def test_streamed_voice_runs_the_command_and_reports_errors(tmp_path, monkeypatc
             assert r["text"] == "forward 1 metre" and r["ok"]
             assert _next_actions(st)[0] == {"kind": "move", "fwd": 1.0, "right": 0.0,
                                             "up": 0.0, "yaw_deg": 0.0}
-            with c.websocket_connect("/ws/voice?client=judge&pin=nope") as v:  # no PIN: no STT
-                v.send_bytes(b"land")
-                v.send_text("end")
-                assert v.receive_json().get("need_pin")
         s.stt_stream_model = ""
-        with c.websocket_connect("/ws/voice?client=judge&pin=1234") as v:
+        with c.websocket_connect("/ws/voice?client=judge") as v:
             assert "error" in v.receive_json()
-
-
-def test_wrong_pins_lock_the_address_out(tmp_path, monkeypatch):
-    """A 4-digit PIN with no attempt limit fell to 9,000 POSTs. After PIN_FREE_TRIES wrong
-    PINs an address is locked out (even the right PIN fails) until the lock expires."""
-    from fastapi.testclient import TestClient
-    import cloud.app as cloud_app
-
-    s = Settings(vultr_key="", station_token="tok", data_dir=tmp_path, control_pin="48151623")
-    with TestClient(cloud_app.create_app(s, ai=FakeAI())) as c:
-        hub = c.app.state.hub
-        for i in range(cloud_app.PIN_FREE_TRIES):
-            r = c.post("/text", json={"text": "take off", "pin": f"0000000{i}"}).json()
-            assert r.get("need_pin")
-        r = c.post("/text", json={"text": "take off", "pin": "48151623"}).json()
-        assert r.get("need_pin")                              # locked out
-        hub._pin_fails["testclient"] = (cloud_app.PIN_FREE_TRIES, 0.0)  # lock expired
-        with c.websocket_connect("/ws/station?token=tok") as st:
-            r = c.post("/text", json={"text": "take off", "pin": "48151623"}).json()
-            assert r["ok"] and "testclient" not in hub._pin_fails
-            assert _next_actions(st)[0]["kind"] == "takeoff"
-        # an empty PIN (anyone pressing STOP) never counts as a try
-        for _ in range(20):
-            c.post("/text", json={"text": "take off"})
-        assert "testclient" not in hub._pin_fails
-        # non-ASCII used to crash hmac.compare_digest with a 500
-        assert c.post("/text", json={"text": "x", "pin": "é"}).status_code == 200
-
-
-def test_refusals_without_the_pin_stay_quiet(tmp_path):
-    """No PIN: answered to the caller only. No TTS (ElevenLabs credits), no broadcast."""
-    from fastapi.testclient import TestClient
-    from cloud.app import create_app
-
-    ai = FakeAI()
-    spoken: list[str] = []
-
-    async def speak(text):
-        spoken.append(text)
-        return b""
-    ai.speak = speak
-    s = Settings(vultr_key="", station_token="tok", data_dir=tmp_path, control_pin="48151623")
-    with TestClient(create_app(s, ai=ai)) as c:
-        with c.websocket_connect("/ws/ui?client=judge") as ui:
-            ui.receive_json()  # hello
-            ui.receive_json()  # qnx_state
-            r = c.post("/text", json={"text": "fly into the wall", "client": "troll"}).json()
-            assert r.get("need_pin")
-            ui.send_json({"type": "text", "text": "take off"})  # this viewer, no PIN
-            m = ui.receive_json()
-            assert m["type"] == "log" and "no pilot pin" in m["text"].lower()
-        assert spoken == []
-        assert not any("fly into the wall" in r["text"] for r in c.get("/log").json())
 
 
 def test_two_tabs_get_their_own_viewer(tmp_path):
