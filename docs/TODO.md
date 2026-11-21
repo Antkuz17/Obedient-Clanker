@@ -96,7 +96,14 @@ to end on the sim with no keys). Still to do with real keys / hardware:
 - [x] **A: video server as its own process** (pose from the core over localhost UDP; `python -m edge.video`, core `--video-proc 127.0.0.1:7003`; in the Pi supervisor config at prio 10)
 - [ ] **B: TFLite person detection** → UDP :7001 (`person_m`); show inference ms
 - [ ] **B: palm stop** (QNX workshop hand model)
-- [ ] **A + B: person → motor-stop latency** shown on screen
+- [x] **A: dashboard QNX card** (code done, sim-verified): live 50 Hz loop jitter graph
+      (`edge --stats-udp <laptop>:7010`), jitter benchmark table (`tools.jitter --compare --udp
+      <laptop>:7010`), supervisor process list with respawn / serving ms
+      (`tools.supervisor ... --events-udp <laptop>:7010`), stop-latency tile. Pi → UDP :7010 →
+      station → cloud → every viewer. `supervisor_pi.json` already passes `--stats-udp LAPTOP_IP:7010`
+- [ ] **A + B: person → motor-stop latency** shown on screen: the dashboard shows it once the
+      detector's UDP message carries `"t": time.time()` of the frame (and optionally `"infer_ms"`);
+      without `t` it only shows the edge's own reaction time
 - [ ] **A + B: `slog2` logging** shown live
 
 ## Last 2 hours

@@ -584,3 +584,82 @@ async def test_check_ai_runs_against_a_fake_vultr(capsys):
     assert ("models", "PASS") in by and ("voice e2e", "PASS") in by
     assert "read -> 'It says EXIT 42.'" in out
     assert code in (0, 1)  # vision box accuracy depends on the fake box; shape is what's tested
+
+
+# --- QNX demo panel: Pi stats -> station UDP -> cloud -> dashboard ---------------------------
+def test_cloud_keeps_qnx_state_for_late_viewers(tmp_path):
+    from fastapi.testclient import TestClient
+    from cloud.app import create_app
+
+    app = create_app(Settings(vultr_key="", station_token="tok", data_dir=tmp_path), ai=FakeAI())
+    with TestClient(app) as c, c.websocket_connect("/ws/station?token=tok") as st:
+        for m in [
+            {"src": "supervisor", "kind": "start", "name": "camgrab", "pid": 10},
+            {"src": "supervisor", "kind": "exit", "name": "camgrab", "signal": 9},
+            {"src": "supervisor", "kind": "restart", "name": "camgrab", "pid": 11, "restarts": 1,
+             "spawn_ms": 3.5, "ready_ms": 208.0},
+            {"src": "edge", "kind": "loop", "p50_ms": 0.1, "p99_ms": 0.4, "max_ms": 0.9},
+            {"src": "edge", "kind": "stop_latency", "what": "person", "ms": 41.0, "edge_ms": 0.3},
+            {"src": "jitter", "kind": "jitter_case", "hog": True, "prio": 50, "p99_ms": 0.2},
+        ]:
+            st.send_json({"type": "qnx", **m})
+        st.send_json({"type": "telemetry", "state": "IDLE"})  # in order: qnx all handled first
+        with c.websocket_connect("/ws/ui") as ui:
+            while (m := ui.receive_json())["type"] != "qnx_state":
+                pass
+        q = c.get("/qnx").json()
+    assert m == q
+    assert q["procs"] == [{"name": "camgrab", "restarts": 1, "state": "up", "pid": 11,
+                           "spawn_ms": 3.5, "ready_ms": 208.0, "t": None}]
+    assert q["loop"][0]["p99_ms"] == 0.4 and q["stops"][0]["ms"] == 41.0
+    assert q["jitter"][0]["hog"] is True
+    log = c.get("/log").json()
+    assert any("camgrab restarted: respawn 3.5 ms, serving again 208.0 ms" in r["text"] for r in log)
+    assert any("person stop: 41.0 ms" in r["text"] for r in log)
+
+
+async def test_station_forwards_qnx_datagrams(tmp_path):
+    import socket
+    from station import station as st_mod
+    port = free_port()
+    st = st_mod.Station(Settings(vultr_key="", data_dir=tmp_path), stub_locate=True,
+                        speaker=False, ai=FakeAI(), qnx_port=port)
+    sent: list[dict] = []
+
+    async def fake_send(m):
+        sent.append(m)
+        return True
+    st._send_cloud = fake_send
+    await st.qnx_listen()
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.sendto(json.dumps({"t": 1.0, "kind": "restart", "name": "flow"}).encode(), ("127.0.0.1", port))
+        s.sendto(b"not json", ("127.0.0.1", port))
+        s.sendto(json.dumps({"type": "actions", "src": "edge", "kind": "loop"}).encode(),
+                 ("127.0.0.1", port))
+    await _until(lambda: len(sent) >= 2, timeout=3)
+    assert sent[0]["type"] == "qnx" and sent[0]["src"] == "supervisor" and sent[0]["name"] == "flow"
+    assert sent[1]["type"] == "qnx" and sent[1]["was_type"] == "actions"
+
+
+async def test_edge_stats_loop_and_stop_latency():
+    import socket, time as _t
+    rx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    rx.bind(("127.0.0.1", 0))
+    rx.settimeout(3)
+    cfg = SafetyConfig()
+    sim = SimVehicle(cfg, speedup=10.0)
+    srv = EdgeServer(sim, cfg, host="127.0.0.1", port=0, perception_port=None, flow_port=None,
+                     stats_addr=rx.getsockname())
+    await srv.start()
+    try:
+        await asyncio.sleep(1.2)
+        loop = json.loads(rx.recv(4096))
+        assert loop["src"] == "edge" and loop["kind"] == "loop" and loop["n"] > 20
+        assert 0 <= loop["p50_ms"] <= loop["p99_ms"] <= loop["max_ms"]
+        srv._stop_latency("person", {"t": _t.time() - 0.05, "infer_ms": 12}, _t.time())
+        while (m := json.loads(rx.recv(4096)))["kind"] != "stop_latency":
+            pass
+        assert m["what"] == "person" and m["ms"] >= 50 and m["infer_ms"] == 12 and "edge_ms" in m
+    finally:
+        await srv.close()
+        rx.close()

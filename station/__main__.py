@@ -25,6 +25,8 @@ if __name__ == "__main__":
     ap.add_argument("--mic", action="store_true", help="local mode: Enter = push-to-talk")
     ap.add_argument("--stub-locate", action="store_true",
                     help="find objects from the sim room's ground truth (python -m edge --sim)")
+    ap.add_argument("--qnx-port", type=int, default=7010,
+                    help="UDP port for QNX demo stats from the Pi (0 = off)")
     ap.add_argument("--no-audio", action="store_true", help="don't play replies")
     ap.add_argument("-v", action="store_true")
     a = ap.parse_args()
@@ -43,7 +45,8 @@ if __name__ == "__main__":
         s.cloud_url = a.cloud
     if not s.vultr_key:
         logging.warning("VULTR_INFERENCE_KEY not set: rule-based brain, no vision or memory")
-    st = Station(s, local=a.local, stub_locate=a.stub_locate, speaker=not a.no_audio)
+    st = Station(s, local=a.local, stub_locate=a.stub_locate, speaker=not a.no_audio,
+                 qnx_port=a.qnx_port or None)
     try:
         asyncio.run(st.run(mic=a.mic))
     except KeyboardInterrupt:

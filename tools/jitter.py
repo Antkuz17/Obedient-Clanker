@@ -7,6 +7,7 @@ SCHED_FIFO. Stdlib only, so it runs on the Pi's Python 3.14.
   python3 -m tools.jitter --seconds 10                  # one run, normal priority, idle
   python3 -m tools.jitter --hog --prio 50               # CPU hog on all cores, loop at FIFO 50
   sudo python3 -m tools.jitter --compare --out jitter.json   # the 4 demo cases, JSON for the graph
+  sudo python3 -m tools.jitter --compare --udp <laptop>:7010   # ... and onto the dashboard
 
 Each wake-up's lateness = actual wake time - scheduled deadline (ms). The demo claim is the
 difference between "hog, no prio" (tail blows up) and "hog, FIFO" (stays flat).
@@ -114,6 +115,33 @@ def run_case(seconds: float, hz: float, hog: bool, prio: int) -> dict:
             "late_ms": [round(v, 3) for v in late]}
 
 
+HIST_EDGES = (0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 50)
+
+
+def bucket_counts(late: list[float], edges=HIST_EDGES) -> list[int]:
+    counts = [0] * (len(edges) + 1)
+    for v in late:
+        counts[next((k for k, e in enumerate(edges) if v < e), len(edges))] += 1
+    return counts
+
+
+def udp_summary(r: dict) -> dict:
+    """One case, small enough for a datagram: the summary + histogram counts, no samples."""
+    return {"src": "jitter", "t": time.time(), "kind": "jitter_case",
+            **{k: v for k, v in r.items() if k != "late_ms"},
+            "edges_ms": list(HIST_EDGES), "counts": bucket_counts(r["late_ms"])}
+
+
+def send_udp(addr: str, msg: dict) -> None:
+    import socket
+    host, _, port = addr.rpartition(":")
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        try:
+            sock.sendto(json.dumps(msg).encode(), (host or "127.0.0.1", int(port)))
+        except OSError as e:
+            print(f"udp send failed: {e}", file=sys.stderr)
+
+
 def report(r: dict) -> str:
     name = f"{'hog' if r['hog'] else 'idle'}, " + (
         f"FIFO {r['prio']}" if r["prio_applied"] else
@@ -131,6 +159,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--compare", action="store_true",
                     help="idle/hog x normal/FIFO (uses --prio, default 50)")
     ap.add_argument("--out", help="write results (with every sample) as JSON")
+    ap.add_argument("--udp", help="send each case's summary to host:port (station :7010 -> dashboard)")
     a = ap.parse_args(argv)
     if a.compare:
         prio = a.prio or 50
@@ -142,6 +171,8 @@ def main(argv: list[str] | None = None) -> None:
         r = run_case(a.seconds, a.hz, hog, prio)
         print(report(r), flush=True)
         results.append(r)
+        if a.udp:
+            send_udp(a.udp, udp_summary(r))
     if a.out:
         with open(a.out, "w") as f:
             json.dump(results, f)

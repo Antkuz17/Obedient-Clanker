@@ -45,7 +45,8 @@ class EdgeServer:
                  flow_port: int | None = FLOW_PORT, log_path: Path | None = None,
                  allowed_peers: set[str] | None = None,
                  hbwd_addr: tuple[str, int] | None = None,
-                 video_addr: tuple[str, int] | None = None):
+                 video_addr: tuple[str, int] | None = None,
+                 stats_addr: tuple[str, int] | None = None):
         self.v = vehicle
         self.safety_cfg = safety or SafetyConfig()
         self.wd = watchdog or WatchdogConfig()
@@ -71,6 +72,11 @@ class EdgeServer:
         # separate video process (python -m edge.video): stream the pose to it every tick
         self.video_addr = video_addr
         self._video_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) if video_addr else None
+        # opt-in QNX demo stats (dashboard): 1 Hz loop jitter + person/palm stop latency as JSON
+        # datagrams to the station (python -m station listens on :7010). Never on the flight path.
+        self.stats_addr = stats_addr
+        self._stats_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) if stats_addr else None
+        self._stats_from = 0  # index into loop_stats of the next unreported sample
 
     # --- lifecycle ---------------------------------------------------------------------------
     async def start(self) -> None:
@@ -86,6 +92,8 @@ class EdgeServer:
                 lambda: _Udp(self._on_flow), local_addr=("127.0.0.1", self.flow_port))
         self._tasks = [asyncio.create_task(self._telemetry_loop()),
                        asyncio.create_task(self._safety_loop())]
+        if self._stats_sock:
+            self._tasks.append(asyncio.create_task(self._stats_loop()))
         log.info("edge listening on %s:%d", self.host, self.port)
 
     async def close(self) -> None:
@@ -173,6 +181,7 @@ class EdgeServer:
             self.loop_stats.append(now - last)
             if len(self.loop_stats) > 5000:
                 del self.loop_stats[:1000]
+                self._stats_from = max(0, self._stats_from - 1000)
             last = now
             self.safety_tick(now)
 
@@ -243,9 +252,49 @@ class EdgeServer:
             ex.perception.person_m = None
             ex.perception.detector_alive = False
 
+    # --- QNX demo stats (opt-in) ------------------------------------------------------------
+    def _send_stats(self, msg: dict) -> None:
+        if not self._stats_sock:
+            return
+        try:
+            self._stats_sock.sendto(json.dumps({"src": "edge", "t": time.time(), **msg}).encode(),
+                                    self.stats_addr)
+        except OSError:
+            pass
+
+    def loop_summary(self, hz: float = 50.0) -> dict | None:
+        """Lateness (ms) of the safety loop's wake-ups since the last call."""
+        new = self.loop_stats[self._stats_from:]
+        self._stats_from = len(self.loop_stats)
+        if not new:
+            return None
+        late = sorted(max(0.0, (dt - 1.0 / hz) * 1000.0) for dt in new)
+        pct = lambda p: round(late[min(len(late) - 1, int(p / 100 * len(late)))], 2)
+        return {"kind": "loop", "hz": hz, "n": len(late), "p50_ms": pct(50), "p99_ms": pct(99),
+                "max_ms": round(late[-1], 2)}
+
+    async def _stats_loop(self) -> None:
+        while True:
+            await asyncio.sleep(1.0)
+            if (m := self.loop_summary()) is not None:
+                self._send_stats(m)
+
+    def _stop_latency(self, what: str, msg: dict, t_rx: float) -> None:
+        """Detector frame time ("t", wall clock on the Pi) -> stop sent. Without "t" we can only
+        report the edge's own reaction (UDP in -> stop), which is the floor, not the story."""
+        now = time.time()
+        rec = {"kind": "stop_latency", "what": what, "edge_ms": round((now - t_rx) * 1000, 2)}
+        if isinstance(msg.get("t"), (int, float)):
+            rec["ms"] = round((now - float(msg["t"])) * 1000, 1)
+        if isinstance(msg.get("infer_ms"), (int, float)):
+            rec["infer_ms"] = round(float(msg["infer_ms"]), 1)
+        self._send_stats(rec)
+
     # --- inputs from the AI / flow processes -------------------------------------------------
     def on_perception(self, msg: dict) -> None:
-        """{"person_m": float|null, "palm": bool}"""
+        """{"person_m": float|null, "palm": bool, optional "t" (frame time, time.time()),
+        optional "infer_ms"}"""
+        t_rx = time.time()
         self._perception_t = time.monotonic()
         ex = self.exec
         ex.perception.detector_alive = True
@@ -255,10 +304,12 @@ class EdgeServer:
         if (why := ex.revalidate(self.v.state(), self.safety_cfg)) is not None:
             ex.stop(why)
             self._emit(P.event("person_close", f"{why}: stopped and holding"))
+            self._stop_latency("person", msg, t_rx)
         palm = bool(msg.get("palm"))
         if palm and not self._palm_latched and ex.airborne:
             ex.stop("palm stop")
             self._emit(P.event("palm_stop", "palm seen: stopped and holding"))
+            self._stop_latency("palm", msg, t_rx)
         self._palm_latched = palm
 
     def _on_perception(self, data: bytes) -> None:

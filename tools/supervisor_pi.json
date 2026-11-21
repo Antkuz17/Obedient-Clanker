@@ -43,6 +43,8 @@
       "udpin:127.0.0.1:14555",
       "--station-ip",
       "LAPTOP_IP",
+      "--stats-udp",
+      "LAPTOP_IP:7010",
       "--hbwd",
       "127.0.0.1:14560",
       "--video-proc",

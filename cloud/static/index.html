@@ -54,6 +54,26 @@
   #photos figcaption { font-size: 11px; color: var(--muted); }
   #hits li { margin-bottom: 6px; } #hits img { width: 72px; vertical-align: middle; border-radius: 4px; margin-right: 8px; }
   #hits { list-style: none; padding: 0; margin: 8px 0 0; font-size: 13px; }
+  .qnx { grid-column: 1 / -1; }
+  .qgrid { display: grid; gap: 12px; grid-template-columns: 1fr; }
+  @media (min-width: 860px) { .qgrid { grid-template-columns: 1.4fr 1fr; } }
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 10px; }
+  .tiles div { background: var(--bg); border-radius: 8px; padding: 6px 8px; min-width: 0; }
+  .tiles b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .tiles span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  #loopc { width: 100%; height: 120px; display: block; background: var(--bg); border-radius: 8px; }
+  .legend { font-size: 11px; color: var(--muted); margin-top: 4px; display: flex; gap: 12px; flex-wrap: wrap; }
+  .legend i { display: inline-block; width: 10px; height: 3px; vertical-align: middle; margin-right: 4px; }
+  table.q { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  table.q th { text-align: left; font-weight: 500; color: var(--muted); padding: 3px 4px; }
+  table.q td { padding: 4px; border-top: 1px solid #1c2129; }
+  table.q td.n { text-align: right; white-space: nowrap; }
+  .bar { height: 6px; border-radius: 3px; background: var(--accent); min-width: 2px; }
+  .bar.bad { background: var(--bad); } .bar.ok { background: var(--ok); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--muted); }
+  .dot.up { background: var(--ok); } .dot.down { background: var(--warn); } .dot.failed { background: var(--bad); }
+  .empty-q { color: var(--muted); font-size: 12.5px; }
+  #log .qnx { color: #b48cff; }
   label.small { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
 </style>
 </head>
@@ -94,6 +114,31 @@
     <ul id="log"></ul>
   </section>
 
+  <section class="card qnx">
+    <h2>QNX: real-time safety</h2>
+    <div class="tiles">
+      <div><span>Loop p99</span><b id="q-p99">–</b></div>
+      <div><span>Loop max</span><b id="q-max">–</b></div>
+      <div><span>Stop latency</span><b id="q-stop">–</b></div>
+      <div><span>Restarts</span><b id="q-rest">0</b></div>
+    </div>
+    <div class="qgrid">
+      <div>
+        <canvas id="loopc"></canvas>
+        <div class="legend"><span><i style="background:var(--accent)"></i>p99 lateness</span>
+          <span><i style="background:var(--warn)"></i>max</span>
+          <span><i style="background:var(--bad)"></i>2 ms budget</span>
+          <span>50 Hz safety loop, last 2 min</span></div>
+        <h2 style="margin-top:14px">Jitter benchmark (CPU hog)</h2>
+        <table class="q" id="q-jit"><tbody><tr><td class="empty-q">Run <code>tools.jitter --compare --udp &lt;laptop&gt;:7010</code> on the Pi.</td></tr></tbody></table>
+      </div>
+      <div>
+        <h2>Processes (supervisor)</h2>
+        <table class="q" id="q-procs"><tbody><tr><td class="empty-q">Waiting for the supervisor.</td></tr></tbody></table>
+      </div>
+    </div>
+  </section>
+
   <section class="card">
     <h2>Photos</h2>
     <div id="photos"></div>
@@ -131,7 +176,7 @@ function control(holder) {
 function fmtTime(t) { return new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
 function logLine(r) {
   const li = document.createElement("li");
-  const cls = r.who === "jarvis" ? "jarvis" : r.who === "edge" ? "edge" : "who";
+  const cls = r.who === "jarvis" ? "jarvis" : r.who === "edge" ? "edge" : r.who === "qnx" ? "qnx" : "who";
   li.innerHTML = `<time>${fmtTime(r.t)}</time><span class="${cls}"></span> `;
   li.querySelector("span").textContent = r.who;
   li.append(document.createTextNode(r.text));
@@ -164,6 +209,78 @@ function photo(url, caption) {
   f.querySelector("figcaption").textContent = caption || "";
   $("photos").prepend(f);
 }
+// --- QNX card -------------------------------------------------------------------------------
+const Q = { loop: [], jitter: {}, procs: {}, stops: [] };
+const ms = (v) => v == null ? "–" : (v < 10 ? v.toFixed(2) : v.toFixed(0)) + " ms";
+function qnxAdd(m) {
+  if (m.src === "edge" && m.kind === "loop") { Q.loop.push(m); if (Q.loop.length > 120) Q.loop.shift(); drawLoop(); tilesLoop(); }
+  else if (m.src === "edge" && m.kind === "stop_latency") { Q.stops.push(m); tileStop(); }
+  else if (m.src === "jitter" && m.kind === "jitter_case") { Q.jitter[`${!!m.hog}|${m.prio || 0}`] = m; drawJitter(); }
+  else if (m.src === "supervisor" && m.name) {
+    const p = Q.procs[m.name] || (Q.procs[m.name] = { name: m.name, restarts: 0 });
+    if (m.kind === "start" || m.kind === "restart") { p.state = "up"; p.pid = m.pid; }
+    if (m.kind === "restart") Object.assign(p, { restarts: m.restarts ?? p.restarts + 1, spawn_ms: m.spawn_ms, ready_ms: m.ready_ms });
+    if (m.kind === "exit" || m.kind === "stopped") p.state = "down";
+    if (m.kind === "spawn_failed") p.state = "failed";
+    drawProcs();
+  }
+}
+function qnxState(m) {
+  Q.loop = m.loop || []; Q.stops = m.stops || []; Q.jitter = {}; Q.procs = {};
+  (m.jitter || []).forEach((j) => Q.jitter[`${!!j.hog}|${j.prio || 0}`] = j);
+  (m.procs || []).forEach((p) => Q.procs[p.name] = p);
+  drawLoop(); tilesLoop(); tileStop(); drawJitter(); drawProcs();
+}
+function tilesLoop() {
+  const l = Q.loop[Q.loop.length - 1]; if (!l) return;
+  $("q-p99").textContent = ms(l.p99_ms); $("q-p99").style.color = l.p99_ms > 2 ? "var(--bad)" : "var(--ok)";
+  $("q-max").textContent = ms(l.max_ms); $("q-max").style.color = l.max_ms > 2 ? "var(--warn)" : "";
+}
+function tileStop() {
+  const s = Q.stops[Q.stops.length - 1]; if (!s) return;
+  $("q-stop").textContent = ms(s.ms ?? s.edge_ms);
+  $("q-stop").title = `${s.what}: ${s.ms != null ? "camera frame → stop sent" : "detector msg → stop sent (no frame time)"}`
+    + (s.infer_ms != null ? `, inference ${s.infer_ms} ms` : "");
+}
+function drawLoop() {
+  const c = $("loopc"), dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+  if (!w) return;
+  c.width = w * dpr; c.height = h * dpr; const g = c.getContext("2d"); g.scale(dpr, dpr);
+  const css = getComputedStyle(document.documentElement), col = (n) => css.getPropertyValue(n).trim();
+  const top = Math.max(4, ...Q.loop.map((l) => l.max_ms)) * 1.15, pad = 4;
+  const y = (v) => h - pad - (Math.min(v, top) / top) * (h - 2 * pad), x = (i) => pad + (i / 119) * (w - 2 * pad);
+  g.strokeStyle = col("--line"); g.lineWidth = 1; g.font = "10px system-ui"; g.fillStyle = col("--muted");
+  g.fillText(top.toFixed(0) + " ms", pad + 2, 11);
+  g.setLineDash([4, 4]); g.strokeStyle = col("--bad"); g.beginPath(); g.moveTo(pad, y(2)); g.lineTo(w - pad, y(2)); g.stroke(); g.setLineDash([]);
+  if (!Q.loop.length) { g.fillText("waiting for edge --stats-udp", w / 2 - 70, h / 2); return; }
+  const off = 120 - Q.loop.length;
+  for (const [key, color] of [["max_ms", col("--warn")], ["p99_ms", col("--accent")]]) {
+    g.strokeStyle = color; g.lineWidth = 2; g.beginPath();
+    Q.loop.forEach((l, i) => i ? g.lineTo(x(off + i), y(l[key])) : g.moveTo(x(off + i), y(l[key]))); g.stroke();
+  }
+}
+function drawJitter() {
+  const cases = Object.values(Q.jitter); if (!cases.length) return;
+  cases.sort((a, b) => (a.hog - b.hog) || ((a.prio_applied ? 1 : 0) - (b.prio_applied ? 1 : 0)));
+  const top = Math.max(...cases.map((c) => c.max_ms), 2);
+  const rows = cases.map((c) => {
+    const name = `${c.hog ? "CPU hog" : "idle"}, ${c.prio_applied ? "FIFO " + c.prio : (c.prio ? "FIFO not applied" : "normal prio")}`;
+    const cls = c.p99_ms > 2 ? "bad" : "ok";
+    return `<tr><td>${name}</td><td class="n">${ms(c.p99_ms)}</td><td class="n">${ms(c.max_ms)}</td>
+      <td style="width:35%"><div class="bar ${cls}" style="width:${(Math.log1p(c.max_ms) / Math.log1p(top) * 100).toFixed(1)}%"></div></td></tr>`;
+  });
+  $("q-jit").innerHTML = `<thead><tr><th>Case</th><th class="n">p99</th><th class="n">max</th><th>max (log)</th></tr></thead><tbody>${rows.join("")}</tbody>`;
+}
+function drawProcs() {
+  const ps = Object.values(Q.procs); if (!ps.length) return;
+  $("q-rest").textContent = ps.reduce((n, p) => n + (p.restarts || 0), 0);
+  const esc = (t) => String(t).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+  $("q-procs").innerHTML = `<thead><tr><th>Process</th><th class="n">Restarts</th><th class="n">Respawn</th><th class="n">Serving</th></tr></thead><tbody>` +
+    ps.map((p) => `<tr><td><span class="dot ${esc(p.state || "")}"></span>${esc(p.name)}</td><td class="n">${p.restarts || 0}</td>
+      <td class="n">${ms(p.spawn_ms)}</td><td class="n">${ms(p.ready_ms)}</td></tr>`).join("") + "</tbody>";
+}
+window.addEventListener("resize", drawLoop);
+
 function handle(m) {
   switch (m.type) {
     case "hello": me = m.you; station(m.station); control(m.holder); (m.log || []).forEach(logLine); telemetry(m.telemetry); break;
@@ -176,6 +293,8 @@ function handle(m) {
     case "heard": if (m.who === me) $("reply").textContent = "“" + m.text + "”"; break;
     case "audio": playAudio(m.mp3); break;
     case "photo": photo(m.url, m.caption); break;
+    case "qnx": qnxAdd(m); break;
+    case "qnx_state": qnxState(m); break;
   }
 }
 

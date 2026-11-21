@@ -38,11 +38,12 @@ MEMORY_EVERY_S = 15.0      # ... or this long
 CLOUD_LOST_LAND_S = 30.0   # cloud gone this long while airborne and idle -> land (review2)
 EDGE_RETRY_S = (1.0, 5.0)  # edge reconnect backoff: first, max
 EDGE_SILENT_S = 3.0        # no telemetry this long = link dead (Pi lost power, Wi-Fi gone)
+QNX_PORT = 7010            # UDP: QNX demo stats from the Pi (supervisor, jitter, edge --stats-udp)
 
 
 class Station:
     def __init__(self, s: Settings, *, local: bool = False, stub_locate: bool = False,
-                 speaker: bool = True, ai: AI | None = None):
+                 speaker: bool = True, ai: AI | None = None, qnx_port: int | None = QNX_PORT):
         self.s = s
         self.local = local
         self.ai = ai or AI(s)
@@ -66,6 +67,7 @@ class Station:
         self._cloud_down_since: float | None = time.monotonic()
         self._cloud_landed = False  # one landing per outage
         self._edge_ready = asyncio.Event()
+        self.qnx_port = qnx_port
 
     # --- cloud link --------------------------------------------------------------------------
     async def _send_cloud(self, msg: dict) -> bool:
@@ -178,6 +180,38 @@ class Station:
     def _on_edge_event(self, ev: dict) -> None:
         asyncio.ensure_future(self._send_cloud(ev))
 
+    # --- QNX demo stats: Pi -> UDP -> here -> cloud dashboard ------------------------------
+    async def qnx_listen(self) -> None:
+        """Supervisor events (`--events-udp`), jitter cases (`tools.jitter --udp`) and edge loop
+        / stop-latency stats (`edge --stats-udp`) arrive as JSON datagrams; forward as `qnx`."""
+        if self.qnx_port is None:
+            return
+        station = self
+
+        class _Rx(asyncio.DatagramProtocol):
+            def datagram_received(self, data, addr):
+                try:
+                    m = json.loads(data)
+                except ValueError:
+                    return
+                if isinstance(m, dict):
+                    station.on_qnx(m, addr[0])
+
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.create_datagram_endpoint(_Rx, local_addr=("0.0.0.0", self.qnx_port))
+        except OSError as e:
+            log.warning("QNX stats port %d unavailable (%s); dashboard QNX panel off",
+                        self.qnx_port, e)
+            return
+        log.info("QNX stats on udp :%d", self.qnx_port)
+
+    def on_qnx(self, m: dict, host: str = "") -> None:
+        m = {**m, "src": m.get("src") or "supervisor", "host": host}
+        if "type" in m:  # don't let a datagram pose as another message type
+            m["was_type"] = m.pop("type")
+        asyncio.ensure_future(self._send_cloud({"type": "qnx", **m}))
+
     async def uplink_loop(self) -> None:
         """Telemetry at 5 Hz; a frame every 1/FRAME_UP_FPS s; memory frames on movement."""
         frame_every = 1.0 / FRAME_UP_FPS
@@ -284,6 +318,7 @@ class Station:
             else:
                 tasks += [asyncio.create_task(self.cloud_loop()),
                           asyncio.create_task(self.uplink_loop()),
+                          asyncio.create_task(self.qnx_listen()),
                           asyncio.create_task(self.cloud_watchdog())]
                 await asyncio.gather(*tasks)
         finally:

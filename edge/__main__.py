@@ -46,7 +46,9 @@ async def main(a) -> None:
                      hbwd_addr=(a.hbwd.rsplit(":", 1)[0], int(a.hbwd.rsplit(":", 1)[1]))
                      if a.hbwd else None,
                      video_addr=(a.video_proc.rsplit(":", 1)[0], int(a.video_proc.rsplit(":", 1)[1]))
-                     if a.video_proc else None)
+                     if a.video_proc else None,
+                     stats_addr=(a.stats_udp.rsplit(":", 1)[0], int(a.stats_udp.rsplit(":", 1)[1]))
+                     if a.stats_udp else None)
     await srv.start()
 
     if not a.no_video and not a.video_proc:
@@ -90,6 +92,8 @@ if __name__ == "__main__":
     ap.add_argument("--rt-prio", type=int, default=0, help="SCHED_FIFO priority (0 = off)")
     ap.add_argument("--video-proc", help="video runs as its own process (python -m edge.video); "
                     "send it the pose at this UDP address, e.g. 127.0.0.1:7003")
+    ap.add_argument("--stats-udp", help="send QNX demo stats (loop jitter, stop latency) as JSON "
+                    "to host:port, e.g. <laptop>:7010 for the dashboard (off by default)")
     ap.add_argument("--hbwd", help="pet the C heartbeat watchdog at this UDP address, "
                     "e.g. 127.0.0.1:14560 (edge/hbwd)")
     a = ap.parse_args()

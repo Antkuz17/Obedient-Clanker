@@ -56,7 +56,8 @@ def main() -> None:
         procs.append((name, subprocess.Popen([py, *args], cwd=ROOT, env=env, stdout=f,
                                              stderr=subprocess.STDOUT)))
 
-    start("edge", "-m", "edge", "--sim", "--port", str(EDGE), "--video-proc", f"127.0.0.1:{POSE}")
+    start("edge", "-m", "edge", "--sim", "--port", str(EDGE), "--video-proc", f"127.0.0.1:{POSE}",
+          "--stats-udp", "127.0.0.1:7010")  # QNX card: live loop jitter
     start("video", "-m", "edge.video", "--pose-port", str(POSE), "--camera", "sim",
           "--port", str(VIDEO))
     start("cloud", "-m", "uvicorn", "cloud.app:app", "--port", str(CLOUD))

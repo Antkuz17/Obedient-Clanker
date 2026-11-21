@@ -14,7 +14,9 @@ straight to the station from any viewer. Only one viewer "has the controls" for 
 else (PRD A5): the first to send a command, until they've been idle for CONTROL_IDLE_S.
 
 Station -> cloud messages: telemetry, frame {jpeg b64, pose}, event, log, say {text},
-photo {jpeg, pose, caption}, memory_frame {jpeg, pose}, memory_search {q, req}.
+photo {jpeg, pose, caption}, memory_frame {jpeg, pose}, memory_search {q, req},
+qnx {src: supervisor | jitter | edge, kind, ...} (QNX demo stats the station gets from the Pi
+over UDP; kept in `Hub.qnx` so a viewer who joins late still sees them).
 Cloud -> station: actions {actions, reply, text, req}, audio {mp3 b64, text},
 memory_result {req, hits}.
 """
@@ -42,6 +44,44 @@ log = logging.getLogger("cloud")
 STATIC = Path(__file__).parent / "static"
 CONTROL_IDLE_S = 120.0
 LOG_KEEP = 200
+QNX_LOOP_KEEP = 120      # 1 Hz edge loop stats: two minutes of graph
+QNX_EVENTS_KEEP = 50     # supervisor events
+QNX_STOPS_KEEP = 20      # person / palm stop latencies
+
+
+class QnxState:
+    """Latest QNX demo numbers: what the dashboard's QNX card shows."""
+
+    def __init__(self) -> None:
+        self.loop: list[dict] = []
+        self.jitter: dict[str, dict] = {}   # "hog|prio" -> latest case
+        self.events: list[dict] = []        # supervisor start / exit / restart / ...
+        self.procs: dict[str, dict] = {}    # name -> {state, pid, restarts, last spawn/ready ms}
+        self.stops: list[dict] = []
+
+    def add(self, m: dict) -> None:
+        src, kind = m.get("src"), m.get("kind")
+        if src == "edge" and kind == "loop":
+            self.loop = (self.loop + [m])[-QNX_LOOP_KEEP:]
+        elif src == "edge" and kind == "stop_latency":
+            self.stops = (self.stops + [m])[-QNX_STOPS_KEEP:]
+        elif src == "jitter" and kind == "jitter_case":
+            self.jitter[f"{bool(m.get('hog'))}|{m.get('prio', 0)}"] = m
+        elif src == "supervisor" and (name := m.get("name")):
+            self.events = (self.events + [m])[-QNX_EVENTS_KEEP:]
+            p = self.procs.setdefault(name, {"name": name, "restarts": 0})
+            if kind in ("start", "restart"):
+                p.update(state="up", pid=m.get("pid"))
+            if kind == "restart":
+                p.update(restarts=m.get("restarts", p["restarts"] + 1),
+                         spawn_ms=m.get("spawn_ms"), ready_ms=m.get("ready_ms"), t=m.get("t"))
+            elif kind in ("exit", "stopped", "spawn_failed"):
+                p["state"] = "down" if kind != "spawn_failed" else "failed"
+
+    def snapshot(self) -> dict:
+        return {"type": "qnx_state", "loop": self.loop, "jitter": list(self.jitter.values()),
+                "procs": list(self.procs.values()), "events": self.events[-20:],
+                "stops": self.stops}
 
 
 class Hub:
@@ -53,6 +93,7 @@ class Hub:
         self.telemetry: dict = {}
         self.last_frame: dict | None = None
         self.flight_log: list[dict] = []
+        self.qnx = QnxState()
         self.holder: str | None = None
         self.holder_t = 0.0
         self._req = itertools.count(1)
@@ -170,6 +211,15 @@ class Hub:
             self.spawn(self._photo(m))
         elif t == "memory_frame":
             self.spawn(self._ingest(m))
+        elif t == "qnx":
+            self.qnx.add(m)
+            await self.to_uis(m)
+            if m.get("src") == "supervisor" and m.get("kind") == "restart":
+                ready = m.get("ready_ms")
+                await self.log_line("qnx", f"{m.get('name')} restarted: respawn {m.get('spawn_ms')} ms"
+                                    + (f", serving again {ready} ms" if ready is not None else ""))
+            elif m.get("kind") == "stop_latency" and "ms" in m:
+                await self.log_line("qnx", f"{m.get('what')} stop: {m['ms']} ms frame to stop")
         elif t == "memory_search":
             hits = await self._search(m.get("q", ""))
             await self.to_station({"type": "memory_result", "req": m.get("req"), "hits": hits})
@@ -259,6 +309,10 @@ def create_app(s: Settings | None = None, ai: AI | None = None) -> FastAPI:
     async def flight_log():
         return hub.flight_log
 
+    @app.get("/qnx")
+    async def qnx_state():
+        return hub.qnx.snapshot()
+
     @app.websocket("/ws/station")
     async def ws_station(ws: WebSocket, token: str = ""):
         local = ws.client is not None and ws.client.host in ("127.0.0.1", "::1", "testclient")
@@ -295,6 +349,7 @@ def create_app(s: Settings | None = None, ai: AI | None = None) -> FastAPI:
                             "telemetry": hub.telemetry})
         if hub.last_frame:
             await ws.send_json(hub.last_frame)
+        await ws.send_json(hub.qnx.snapshot())
         try:
             while True:
                 m = await ws.receive_json()
