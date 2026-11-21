@@ -17,6 +17,7 @@ import itertools
 import json
 import logging
 import math
+import os
 import time
 
 from shared.client import EdgeClient
@@ -31,7 +32,7 @@ from .planner import Planner
 log = logging.getLogger("station")
 
 TELEMETRY_UP_HZ = 5
-FRAME_UP_FPS = 4
+FRAME_UP_FPS = 10.0        # dashboard video (~40 KB/frame); override with FRAME_UP_FPS in .env
 MEMORY_EVERY_M = 0.5       # ingest a memory frame after moving this far
 MEMORY_EVERY_DEG = 30.0    # ... or turning this much
 MEMORY_EVERY_S = 15.0      # ... or this long
@@ -213,26 +214,30 @@ class Station:
         asyncio.ensure_future(self._send_cloud({"type": "qnx", **m}))
 
     async def uplink_loop(self) -> None:
-        """Telemetry at 5 Hz; a frame every 1/FRAME_UP_FPS s; memory frames on movement."""
-        frame_every = 1.0 / FRAME_UP_FPS
-        next_frame = 0.0
+        """Telemetry at TELEMETRY_UP_HZ. Video runs on its own loop so it isn't capped by this."""
         while True:
             await asyncio.sleep(1.0 / TELEMETRY_UP_HZ)
             if self.edge.telemetry:
                 await self._send_cloud(self.edge.telemetry)
-            now = time.monotonic()
-            if self.ws is None or now < next_frame:
-                continue
-            next_frame = now + frame_every
-            try:
-                fr = await self.camera.frame()
-            except Exception:
-                continue
-            b64 = base64.b64encode(fr.jpeg).decode()
-            await self._send_cloud({"type": "frame", "jpeg": b64, "pose": fr.pose.as_dict()})
-            if fr.pose.age <= 0.5 and self._memory_due(fr, now):  # stale pose: bad memory
-                await self._send_cloud({"type": "memory_frame", "jpeg": b64,
-                                        "pose": fr.pose.as_dict()})
+
+    async def video_loop(self) -> None:
+        """A frame every 1/FRAME_UP_FPS s for the dashboard; memory frames on movement."""
+        frame_every = 1.0 / float(os.environ.get("FRAME_UP_FPS") or FRAME_UP_FPS)
+        while True:
+            started = time.monotonic()
+            if self.ws is not None:
+                try:
+                    fr = await self.camera.frame()
+                except Exception:
+                    fr = None
+                if fr is not None:
+                    b64 = base64.b64encode(fr.jpeg).decode()
+                    await self._send_cloud({"type": "frame", "jpeg": b64, "pose": fr.pose.as_dict()})
+                    now = time.monotonic()
+                    if fr.pose.age <= 0.5 and self._memory_due(fr, now):  # stale pose: bad memory
+                        await self._send_cloud({"type": "memory_frame", "jpeg": b64,
+                                                "pose": fr.pose.as_dict()})
+            await asyncio.sleep(max(0.0, frame_every - (time.monotonic() - started)))
 
     def _memory_due(self, fr: Frame, now: float) -> bool:
         p = fr.pose
@@ -318,6 +323,7 @@ class Station:
             else:
                 tasks += [asyncio.create_task(self.cloud_loop()),
                           asyncio.create_task(self.uplink_loop()),
+                          asyncio.create_task(self.video_loop()),
                           asyncio.create_task(self.qnx_listen()),
                           asyncio.create_task(self.cloud_watchdog())]
                 await asyncio.gather(*tasks)
