@@ -92,6 +92,11 @@ Before any real flight:
 - [ ] Flow-only SITL test (no GPS, no rangefinder) before relying on baro height
 - [ ] Decide models and the LLM command schema (PRD "Still to decide")
 
+## Second review (2026-11-21)
+
+[review2.md](review2.md): a fresh-eyes review of the design and the code. 13 findings, 8 reproduced
+with scripts in `tools/review/`; none fixed yet. Partner: cross-check the table at the bottom.
+
 ## Open questions / known gaps
 
 - **camgrab vs the real `camera_api.h`:** `rpi_cam.cpp` (QNX's workshop) confirms
