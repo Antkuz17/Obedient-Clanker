@@ -29,6 +29,8 @@ def set_realtime(prio: int) -> None:
 
 async def main(a) -> None:
     cfg = SafetyConfig()
+    if a.sitl:
+        cfg.flow_quality_min = 0  # SITL has no optical flow; this run only
     if a.sim:
         from .sim import SimVehicle
         vehicle = SimVehicle(cfg, speedup=a.speedup)
@@ -53,6 +55,8 @@ if __name__ == "__main__":
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument("--sim", action="store_true", help="simulated vehicle")
     src.add_argument("--mav", help="MAVLink device, e.g. /dev/ser1 or tcp:127.0.0.1:5760")
+    ap.add_argument("--sitl", action="store_true",
+                    help="with --mav: ArduPilot SITL, skip the optical-flow quality check")
     ap.add_argument("--baud", type=int, default=115200)
     ap.add_argument("--port", type=int, default=P.EDGE_PORT)
     ap.add_argument("--video-port", type=int, default=P.VIDEO_PORT)
