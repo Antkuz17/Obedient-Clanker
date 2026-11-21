@@ -79,6 +79,7 @@ they are how the drone navigates, and they cap it at about 2 m up until changed:
 
 ## Next: get it hovering
 
+- [x] **Current sensor offset (2026-11-21)**: idle read 32.9 A (uncalibrated 0.82 V offset × `BATT_AMP_PERVLT` 40), so the FC "used" 3000 mAh in ~6 min and latched "Battery 1 low capacity failsafe". Set `BATT_AMP_OFFSET=0.82` (idle now 0.13 A), all failsafes kept. Still to do: calibrate `BATT_AMP_PERVLT` from the charger's mAh after a flight
 - [x] **Motor test, props off (2026-11-21)**: `tools/motor_test.py`: A-D order and directions correct
 - [x] **Preflight ALL GO again after rewiring (2026-11-21)**: needed an FC reboot (mAh counter), a stack restart (down camera unplugged at start) and separating the Arduino from the ESP8266 (contact killed its USB until moved apart: **keep them insulated**)
 - [x] **Preflight ALL GO on the real drone (2026-11-21)**: `tools/preflight.py` via the relay tap: FC link, profile, no pre-arm errors, **EKF `pos_h_rel` from flow + rangefinder**, flow 20 Hz q≈250 at the FC, rangefinder 0.14 m on the ground, battery 12.3 V, throttle low, SwA up, camera fresh. Fixes needed on the way: FC reboot to clear the battery mAh counter (FC stayed powered over USB during a pack swap), compass recalibration with everything mounted (`tools/compass_cal.py`, "mag field xy diff" pre-arm), relay auto-restart after an FC reboot
