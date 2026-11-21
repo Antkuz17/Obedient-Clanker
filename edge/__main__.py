@@ -1,7 +1,7 @@
 """Run the edge core.
 
   python -m edge --sim                      simulated drone + fake room video (dev, no hardware)
-  python -m edge --mav /dev/ser1            real FC on the QNX Pi
+  sudo python3 -m edge --mav usb             real FC on the QNX Pi (USB, needs root)
   python -m edge --mav tcp:127.0.0.1:5760   ArduPilot SITL
 """
 from __future__ import annotations
@@ -54,7 +54,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(prog="edge")
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument("--sim", action="store_true", help="simulated vehicle")
-    src.add_argument("--mav", help="MAVLink device, e.g. /dev/ser1 or tcp:127.0.0.1:5760")
+    src.add_argument("--mav", help="MAVLink device: usb (QNX Pi), /dev/ser1, tcp:127.0.0.1:5760 (SITL)")
     ap.add_argument("--sitl", action="store_true",
                     help="with --mav: ArduPilot SITL, skip the optical-flow quality check")
     ap.add_argument("--baud", type=int, default=115200)

@@ -1,8 +1,9 @@
 """MAVLink vehicle (ArduPilot Copter 4.7, GUIDED). Works against SITL and the real Matek H743.
 
 Device examples:
-  /dev/ser1                 QNX Pi 5 GPIO UART -> FC SERIAL1 (115200)
-  /dev/serusb1              QNX USB fallback
+  usb                       QNX Pi 5 USB -> FC (primary, verified; run as root) - mavlink_usb.py
+  /dev/ser1                 QNX Pi 5 GPIO UART -> FC SERIAL1 (115200), if we solder later
+  rawtcp:127.0.0.1:5760     SITL through the same StreamMav path the USB link uses
   tcp:127.0.0.1:5760        ArduPilot SITL
   udpin:0.0.0.0:14550       SITL / MAVProxy output
 
@@ -20,6 +21,7 @@ import time
 
 from pymavlink import mavutil
 
+from . import mavlink_usb
 from .vehicle import Vehicle, VehicleState, wrap360
 
 log = logging.getLogger("edge.mav")
@@ -53,8 +55,9 @@ class MavVehicle(Vehicle):
 
     # --- lifecycle ---------------------------------------------------------------------------
     async def start(self) -> None:
-        self.m = mavutil.mavlink_connection(self.device, baud=self.baud, source_system=255,
-                                            source_component=191, autoreconnect=True)
+        self.m = mavlink_usb.connect(self.device) or mavutil.mavlink_connection(
+            self.device, baud=self.baud, source_system=255, source_component=191,
+            autoreconnect=True)
         threading.Thread(target=self._reader, daemon=True, name="mav-rx").start()
         threading.Thread(target=self._heartbeat, daemon=True, name="mav-hb").start()
         threading.Thread(target=self._setup, daemon=True, name="mav-setup").start()
