@@ -79,6 +79,8 @@ they are how the drone navigates, and they cap it at about 2 m up until changed:
 
 ## Next: get it hovering
 
+- [x] **Motor test, props off (2026-11-21)**: `tools/motor_test.py`: A-D order and directions correct
+- [x] **Preflight ALL GO again after rewiring (2026-11-21)**: needed an FC reboot (mAh counter), a stack restart (down camera unplugged at start) and separating the Arduino from the ESP8266 (contact killed its USB until moved apart: **keep them insulated**)
 - [x] **Preflight ALL GO on the real drone (2026-11-21)**: `tools/preflight.py` via the relay tap: FC link, profile, no pre-arm errors, **EKF `pos_h_rel` from flow + rangefinder**, flow 20 Hz q≈250 at the FC, rangefinder 0.14 m on the ground, battery 12.3 V, throttle low, SwA up, camera fresh. Fixes needed on the way: FC reboot to clear the battery mAh counter (FC stayed powered over USB during a pack swap), compass recalibration with everything mounted (`tools/compass_cal.py`, "mag field xy diff" pre-arm), relay auto-restart after an FC reboot
 
 - [x] **A: flow-only SITL test** (`tools/sitl_flowonly.py`, 2026-11-21): **no rangefinder = no position, ever** (GUIDED refused on the ground and in the air). With a rangefinder that reads valid on the ground: GUIDED takeoff works, hover drift 0.03 m/20 s
