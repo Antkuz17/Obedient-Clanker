@@ -49,6 +49,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--addr", default=fclink.TAP)
     ap.add_argument("--seconds", type=float, default=20.0)
+    ap.add_argument("--min-quality", type=int, default=100,
+                    help="ignore flow samples below this quality (lost tracking dilutes the result)")
     a = ap.parse_args()
     m = fclink.connect(a.addr)
     fclink.stream(m, M.MAVLINK_MSG_ID_OPTICAL_FLOW, 20)
@@ -70,7 +72,10 @@ def main() -> int:
             flow.append((now, msg.flow_rate_x, msg.flow_rate_y, msg.quality))
 
     fx, fy, gr, gp, qs = [], [], [], [], []
+    dropped = sum(1 for f in flow if f[3] < a.min_quality)
     for t, x, y, q in flow:
+        if q < a.min_quality:
+            continue
         i = bisect.bisect_left(att_t, t)
         if not att_t or i >= len(att_t):
             continue
@@ -83,6 +88,7 @@ def main() -> int:
         print(f"barely any rotation (max {motion:.2f} rad/s): tilt more and rerun")
         return 1
     cxr, cyp, cxp, cyr = corr(fx, gr), corr(fy, gp), corr(fx, gp), corr(fy, gr)
+    print(f"(ignored {dropped} samples below quality {a.min_quality})")
     print(f"{len(fx)} samples, mean quality {sum(qs) / len(qs):.0f}, max rotation {motion:.2f} rad/s")
     print(f"corr(flowX, roll rate)  = {cxr:+.2f}    corr(flowX, pitch rate) = {cxp:+.2f}")
     print(f"corr(flowY, pitch rate) = {cyp:+.2f}    corr(flowY, roll rate)  = {cyr:+.2f}")
