@@ -4,3 +4,5 @@ __pycache__/
 .pytest_cache/
 flight_log.jsonl
 *.egg-info/
+
+.env
