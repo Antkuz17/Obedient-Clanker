@@ -21,7 +21,10 @@ here as they're done.
 
 ## Next: get it hovering
 
-- [ ] **A: flow-only SITL test** (`GPS1_TYPE=0`, `SIM_FLOW_ENABLE=1`, `FLOW_TYPE=10`, no rangefinder). Every SITL pass so far used GPS
+- [x] **A: flow-only SITL test** (`tools/sitl_flowonly.py`, 2026-11-21): **no rangefinder = no position, ever** (GUIDED refused on the ground and in the air). With a rangefinder that reads valid on the ground: GUIDED takeoff works, hover drift 0.03 m/20 s
+- [ ] **A: HC-SR04 → Arduino → Pi → `DISTANCE_SENSOR`** (now required, D13): Arduino sketch prints the distance over USB serial; a Pi process forwards it at 10–20 Hz (`RNGFND1_TYPE=10`, `RNGFND1_ORIENT=25`, low `RNGFND1_MIN`). Check that QNX sees the Arduino (pyusb, like the FC). Mount it away from the props, with a valid reading on the ground
+- [ ] **A/B: edge re-sends the EKF origin until the FC confirms it** (SITL: the one-shot origin at link-up was ignored before the EKF initialised; watch for "EKF3 IMU0 origin set" or `GPS_GLOBAL_ORIGIN`)
+- [ ] **A/B: short moves finish early**: `move_body fwd=0.5` reported done at +0.24 m with `pos_tolerance=0.3`; use a tolerance relative to the move (e.g. min(0.3, 0.3 × distance)) or 0.15 m with flow
 - [ ] **B: optical flow process** (`edge/flow/`): `ShmFrameReader("camgrab_down").gray()` → LK → rad/s → UDP :7002. Develop now with `python -m tools.fake_camgrab --name camgrab_down --webcam 0`
 - [ ] **B: hand-roll sign check** on the real drone: `OF.flowX` tracks `OF.bodyX`
 - [ ] **A + B: manual tethered AltHold hover** with the pilot
