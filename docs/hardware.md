@@ -21,7 +21,7 @@ for each item once it's checked in person.
 
 | Part | Details | Confirmed |
 |---|---|---|
-| RC transmitter + receiver | FlySky FS-i6X + FS-iA6B (iBUS). SwA up = Stabilize, SwA down = Land | ☐ |
+| RC transmitter + receiver | FlySky FS-i6X + FS-iA6B (iBUS). **SwA (channel 5): up = AltHold, down = Land.** GUIDED is entered by the computer; flipping SwA takes over | ☐ |
 | Wi-Fi MAVLink bridge | ESP8266 module (V2.0, external antenna) wired to the flight controller's UART1 pads (`SERIAL2`). Broadcasts a network called `Drone`. **Not working yet:** its firmware baud rate is unknown, so `SERIAL2_BAUD` has to be matched first. This is the laptop ↔ drone link | ☐ |
 
 ## Cameras and compute
