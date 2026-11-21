@@ -109,7 +109,17 @@ position (altitude used to sag about 0.1 m per command).
      `python3 -m tools.jitter --compare --out jitter.json` runs idle/hog x normal/FIFO 50 and
      prints p50/p99/max lateness + a histogram; the JSON (every sample) feeds the dashboard graph.
      macOS baseline (no FIFO): p50 ~2.5-3.4 ms, p99 5-12 ms, max up to 34 ms under the hog.
-     Not yet: the edge's own `EdgeServer.loop_stats` streamed live, and the loop in C.
+     Not yet: the edge's own `EdgeServer.loop_stats` streamed live.
+   - **C heartbeat watchdog: done** (`edge/hbwd/hbwd.c`, review D). The core pets it every safety
+     tick over UDP :14560 (`edge --hbwd 127.0.0.1:14560`); hbwd (50 Hz, SCHED_FIFO, pinned)
+     sends the FC's GCS heartbeat through the relay's write-only aux inlet
+     (`usb_relay --aux 127.0.0.1:14556`). Pets missing 250 ms → heartbeat stops, and if the last
+     pet said armed in GUIDED/LAND it sends LAND (3×, 100 ms apart); a pilot mode is left alone
+     (FC failsafe is the backstop). Prints JSON events and its own lateness histogram every
+     second (the jitter graph of the real safety loop). Verified: `tests/test_hbwd.py` (pymavlink
+     decodes its frames) and `tools/sitl_hbwd.py` against ArduPilot with the on-drone process
+     layout: edge frozen by SIGSTOP while hovering → FC in LAND **273 ms** later with the FC's
+     own failsafe off, landed + disarmed, heartbeats resume when the core comes back.
 
 ## Review follow-ups (from [review.md](review.md), 2026-11-21)
 

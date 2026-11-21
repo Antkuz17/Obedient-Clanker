@@ -52,6 +52,9 @@ Restart the SITL container (`docker restart hope-sitl`) between runs.
 .venv/bin/python -m tools.supervisor tools/supervisor_laptop.json   # sim edge :7100 + fake camgrab, restarts on kill
 .venv/bin/python -m tools.cmd 127.0.0.1:7100
 ```
+C heartbeat watchdog: `cc -O2 -o edge/hbwd/hbwd edge/hbwd/hbwd.c -lpthread`; SITL check
+`docker run --rm -d --name hope-sitl-hbwd -p 5770:5760 -p 5772:5762 hope-sitl && .venv/bin/python -m tools.sitl_hbwd`.
+
 macOS: AirPlay Receiver listens on :7000, so `edge --sim` on the default port fails with
 "address already in use"; pass `--port 7100` (or turn AirPlay Receiver off).
 

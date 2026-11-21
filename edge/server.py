@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import socket
 import time
 from pathlib import Path
 
@@ -42,7 +43,8 @@ class EdgeServer:
                  watchdog: WatchdogConfig | None = None, host: str = "0.0.0.0",
                  port: int = P.EDGE_PORT, perception_port: int | None = PERCEPTION_PORT,
                  flow_port: int | None = FLOW_PORT, log_path: Path | None = None,
-                 allowed_peers: set[str] | None = None):
+                 allowed_peers: set[str] | None = None,
+                 hbwd_addr: tuple[str, int] | None = None):
         self.v = vehicle
         self.safety_cfg = safety or SafetyConfig()
         self.wd = watchdog or WatchdogConfig()
@@ -60,6 +62,11 @@ class EdgeServer:
         self._server: asyncio.base_events.Server | None = None
         self._tasks: list[asyncio.Task] = []
         self.loop_stats: list[float] = []  # control-loop period samples (s), for the jitter graph
+        # edge/hbwd (C, SCHED_FIFO) is petted every safety tick; if the pets stop it drops the FC
+        # heartbeat and commands LAND (only when armed in our modes)
+        self.hbwd_addr = hbwd_addr
+        self._hbwd_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) if hbwd_addr else None
+        self._hbwd_seq = 0
 
     # --- lifecycle ---------------------------------------------------------------------------
     async def start(self) -> None:
@@ -168,6 +175,14 @@ class EdgeServer:
     def safety_tick(self, now: float) -> None:
         self.v.tick(now)  # FC heartbeat + LAND retries live in this loop (review A3, A2)
         ex, s = self.exec, self.v.state()
+        if self._hbwd_sock:
+            self._hbwd_seq += 1
+            ours = int(s.mode in ("GUIDED", "LAND"))
+            try:
+                self._hbwd_sock.sendto(f"PET {self._hbwd_seq} {int(s.armed)} {ours}\n".encode(),
+                                       self.hbwd_addr)
+            except OSError:
+                pass
         # pilot took another mode in flight -> stand down, forget targets (review2 #5)
         in_air = s.armed and not s.landed
         ours = s.mode == "GUIDED" or (s.mode == "LAND" and ex.state in ("LANDING", "FAILSAFE"))

@@ -56,13 +56,22 @@ def open_source(spec: str):
 
 
 class Relay:
-    def __init__(self, source: str, core_addr: tuple[str, int]):
+    def __init__(self, source: str, core_addr: tuple[str, int],
+                 aux_addr: tuple[str, int] | None = None):
         self.source_spec, self.core_addr = source, core_addr
+        # aux: a write-only inlet to the FC for edge/hbwd (the C heartbeat watchdog). It gets no
+        # FC traffic back; off unless --aux is given.
+        self.aux = None
+        if aux_addr:
+            self.aux = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.aux.bind(aux_addr)
+            self.aux.settimeout(0.2)
         self.udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.udp.bind(("127.0.0.1", 0))
         self.udp.settimeout(0.2)
         self.src = None
         self.src_lock = threading.Lock()
+        self.write_lock = threading.Lock()  # core + aux writers: never interleave two frames
         self.stop = threading.Event()
         self.bytes_up = self.bytes_down = 0
 
@@ -101,21 +110,26 @@ class Relay:
                 self.udp.sendto(data, self.core_addr)
                 self.bytes_down += len(data)
 
-    def core_to_fc(self) -> None:
+    def core_to_fc(self, sock: socket.socket | None = None) -> None:
+        sock = sock or self.udp
         while not self.stop.is_set():
             try:
-                data, _ = self.udp.recvfrom(4096)
+                data, _ = sock.recvfrom(4096)
             except socket.timeout:
                 continue
             src = self._ensure_source()
             try:
-                src.write(data)
+                with self.write_lock:
+                    src.write(data)
                 self.bytes_up += len(data)
             except Exception as e:
                 self._drop_source(e)
 
     def run(self) -> None:
         threading.Thread(target=self.core_to_fc, daemon=True, name="relay-up").start()
+        if self.aux:
+            threading.Thread(target=self.core_to_fc, args=(self.aux,), daemon=True,
+                             name="relay-aux").start()
         self.fc_to_core()
 
 
@@ -123,10 +137,15 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", default="usb", help="usb (default) or rawtcp:HOST:PORT")
     ap.add_argument("--core", default="127.0.0.1:14555", help="edge core's udpin address")
+    ap.add_argument("--aux", help="extra write-only inlet to the FC, e.g. 127.0.0.1:14556 (hbwd)")
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     host, port = a.core.split(":")
-    r = Relay(a.source, (host, int(port)))
+    aux = None
+    if a.aux:
+        ah, ap_ = a.aux.rsplit(":", 1)
+        aux = (ah, int(ap_))
+    r = Relay(a.source, (host, int(port)), aux)
     try:
         r.run()
     except KeyboardInterrupt:

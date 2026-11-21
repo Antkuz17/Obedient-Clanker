@@ -7,3 +7,5 @@ flight_log.jsonl
 
 .env
 data/
+edge/hbwd/hbwd
+edge/camgrab/camgrab

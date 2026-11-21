@@ -42,7 +42,9 @@ async def main(a) -> None:
 
     srv = EdgeServer(vehicle, cfg, port=a.port, perception_port=a.perception_port,
                      flow_port=a.flow_port, log_path=Path(a.log) if a.log else None,
-                     allowed_peers=set(a.station_ip) if a.station_ip else None)
+                     allowed_peers=set(a.station_ip) if a.station_ip else None,
+                     hbwd_addr=(a.hbwd.rsplit(":", 1)[0], int(a.hbwd.rsplit(":", 1)[1]))
+                     if a.hbwd else None)
     await srv.start()
 
     if not a.no_video:
@@ -84,6 +86,8 @@ if __name__ == "__main__":
     ap.add_argument("--speedup", type=float, default=1.0, help="sim only")
     ap.add_argument("--log", default="flight_log.jsonl", help="JSONL flight log ('' = off)")
     ap.add_argument("--rt-prio", type=int, default=0, help="SCHED_FIFO priority (0 = off)")
+    ap.add_argument("--hbwd", help="pet the C heartbeat watchdog at this UDP address, "
+                    "e.g. 127.0.0.1:14560 (edge/hbwd)")
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     if a.mav and not a.sitl and not a.station_ip and not a.allow_any_station:
