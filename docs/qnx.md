@@ -76,6 +76,20 @@ Use real-time priorities (`SCHED_FIFO`): watchdog and safety first, flow next, A
   verified models); it then works as unit 6 by changing that unit's PID to `0x0825` / `0x082d`
   (two identical C270s would need bus/device numbers instead of VID/PID). Put the cameras on
   different USB controllers (`usb -v` → "Upstream Host Controller").
+- **Running the whole stack (2026-11-21, verified):** `sudo nohup ./tools/start_pi.sh &` with
+  `supervisor_local.json` (= `tools/supervisor_pi.json` with the laptop IP). Everything runs with
+  0 crashes: relay (`--aux`, `--tap`), rangefinder, hbwd (loop max 0.7 ms), edge, camgrab ×2,
+  flow (straight to the FC: 20 Hz, quality 252 at the FC), video. Gotchas found on the board:
+  - **Two identical C270s** are told apart by USB bus in the sensor config (`address =
+    /dev/usb/io-usb-otg, <bus>, -1, 0x046d, 0x0825`): unit 5 = bus 0 = forward, unit 6 = bus 1
+    = down (verified by grabbing a frame from each).
+  - **Ghost camera streams:** a camgrab that died without `camera_close` leaves the sensor
+    service with a stale primary stream; new clients attach as secondary and get 0 fps
+    forever. `start_pi.sh` restarts the sensor service first; camgrab now exits after 5 s with
+    no frames so the supervisor retries.
+  - The supervisor must keep the user's groups when dropping root (camera needs `sensor`).
+  - hbwd links with `-lsocket` on QNX.
+  - The C270 drops to 8–15 fps in dim light: light the floor under the drone.
 - **HAM and adaptive partitioning are not available.** For demo 3 we write our own supervisor
   that restarts a crashed process; for demo 4 we use `SCHED_FIFO` priorities.
 - Wi-Fi config the Pi actually reads: `/data/var/etc/settings/wpa_supplicant.conf` (seeded from
