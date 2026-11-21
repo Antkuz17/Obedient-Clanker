@@ -158,7 +158,7 @@ async def test_sentences_still_go_to_the_llm(text):
 
 
 @pytest.mark.parametrize("text, want", [
-    ("take off", [("takeoff", 2.0)]),     # normal hover height
+    ("take off", [("takeoff", 1.0)]),     # normal hover height (slow-and-low profile)
     ("Take off to 1.2 metres.", [("takeoff", 1.2)]),
     ("Move forward one meter and turn left 90 degrees.", [("fwd", 1.0), ("yaw_deg", -90.0)]),
     ("Jarvis, go back 50 centimetres please.", [("fwd", -0.5)]),

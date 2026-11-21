@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 from .ai import AI
 from .config import MissingKey
 
+DEFAULT_TAKEOFF_M = 1.0  # slow-and-low profile: the edge's ceiling is 2 m, max takeoff 1.5 m
+
 log = logging.getLogger("brain")
 
 ACTIONS = ("none", "photo", "read", "solve", "describe")
@@ -48,7 +50,7 @@ Turn the user's request into tool calls, in order. Rules:
 flying area or distance limit. Its safety system on board still checks every move. If a request is \
 dangerous to people or the drone (crash into something, flip, chase people), make NO tool \
 call and refuse with attitude.
-- If the drone is landed and they ask for a move or mission, call takeoff first (2.0 m).
+- If the drone is landed and they ask for a move or mission, call takeoff first (1.0 m).
 - Chit-chat: no tool call, just answer.
 Current drone state: {state}"""
 
@@ -108,7 +110,7 @@ def normalize(name: str, args: dict) -> dict | None:
             return default
 
     if name == "takeoff":
-        return {"kind": "takeoff", "alt": f("alt", 2.0) or 2.0}
+        return {"kind": "takeoff", "alt": f("alt", DEFAULT_TAKEOFF_M) or DEFAULT_TAKEOFF_M}
     if name in ("land", "stop", "home"):
         return {"kind": name}
     if name == "move":
@@ -279,7 +281,7 @@ def fast_parse(text: str, telemetry: dict | None = None) -> BrainResult | None:
     for c in clauses:
         mv = {"kind": "move", "fwd": 0.0, "right": 0.0, "up": 0.0, "yaw_deg": 0.0}
         if m := _F_TAKEOFF.fullmatch(c):
-            alt = _fdist(m.group(1), m.group(2)) if m.group(1) else 2.0
+            alt = _fdist(m.group(1), m.group(2)) if m.group(1) else DEFAULT_TAKEOFF_M
             if not 0.3 <= alt <= 5.0:
                 return None
             actions.append({"kind": "takeoff", "alt": alt})
@@ -317,7 +319,7 @@ def fast_parse(text: str, telemetry: dict | None = None) -> BrainResult | None:
         return None  # "land and then go forward": odd, the LLM can sort it out
     if (telemetry and not telemetry.get("armed")
             and actions[0]["kind"] in ("move", "home")):
-        actions.insert(0, {"kind": "takeoff", "alt": 2.0})
+        actions.insert(0, {"kind": "takeoff", "alt": DEFAULT_TAKEOFF_M})
     reply = DEFAULT_REPLY[actions[0]["kind"]] if len(actions) == 1 else "On it."
     return BrainResult(reply, actions, "fast")
 
@@ -341,7 +343,7 @@ def rule_parse(text: str, telemetry: dict | None = None) -> BrainResult:
     actions: list[dict] = []
     if re.search(r"take ?off|lift off|get up|launch", t):
         m = re.search(_NUM + r" ?(?:m|metres?|meters?)", t)
-        actions.append({"kind": "takeoff", "alt": _n(m and m.group(1), 2.0)})
+        actions.append({"kind": "takeoff", "alt": _n(m and m.group(1), DEFAULT_TAKEOFF_M)})
     if re.search(r"(where|what|wherever) i'?m pointing|pointing at", t):
         actions.append({"kind": "mission", "target": "where I'm pointing", "action": _task(t),
                         "question": text, "after": "stay"})
@@ -392,6 +394,6 @@ def rule_parse(text: str, telemetry: dict | None = None) -> BrainResult:
     if not actions:
         return BrainResult("I have no idea what that means, and I'm a drone.", source="rules")
     if (telemetry and not telemetry.get("armed") and actions[0]["kind"] in ("move", "mission")):
-        actions.insert(0, {"kind": "takeoff", "alt": 2.0})
+        actions.insert(0, {"kind": "takeoff", "alt": DEFAULT_TAKEOFF_M})
     return BrainResult(DEFAULT_REPLY[actions[-1]["kind"]] if actions[0]["kind"] != "takeoff"
                        or len(actions) == 1 else "On it.", actions, "rules")
