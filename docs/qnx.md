@@ -65,6 +65,17 @@ Use real-time priorities (`SCHED_FIFO`): watchdog and safety first, flow next, A
   - For a one-off still, `camera_example4_record -u 5 -f mov -c none -t CbYCrY` (it needs a
     terminal; press a key to start, then to stop) writes an uncompressed MOV to
     `/data/share/sensor/`, and OpenCV on a laptop can read it. The MP4/AVC1 path segfaults.
+- **Second camera (2026-11-21):** the sensor config now pins **unit 5 = C270 (`046d:0825`)** and
+  **unit 6 = `046d:0x081b`** by USB ID (`/etc/config/sensor/sensor_rpi5.conf`; original saved as
+  `.orig`; the unused Intel D435 example units 6/7 are commented out). After editing, restart
+  the service as root: `slay -f sensor; sensor -U 521:521 -b external -r /data/share/sensor -c
+  /etc/config/sensor/sensor_rpi5.conf &`. **The 081b camera (probably a C310) does not work on
+  QNX:** `slog2info` shows `Missing format/frame descriptors ... numFormats 3`, then `unit 6:
+  Failed to connect device interface: err = 22`. It's a UVC parser incompatibility, not
+  bandwidth (it still fails on its own USB controller). **Fix: a second C270 or C920** (QNX's
+  verified models); it then works as unit 6 by changing that unit's PID to `0x0825` / `0x082d`
+  (two identical C270s would need bus/device numbers instead of VID/PID). Put the cameras on
+  different USB controllers (`usb -v` → "Upstream Host Controller").
 - **HAM and adaptive partitioning are not available.** For demo 3 we write our own supervisor
   that restarts a crashed process; for demo 4 we use `SCHED_FIFO` priorities.
 - Wi-Fi config the Pi actually reads: `/data/var/etc/settings/wpa_supplicant.conf` (seeded from
