@@ -63,18 +63,18 @@ they are how the drone navigates, and they cap it at about 2 m up until changed:
 
 ## Now: before anything flies
 
-- [ ] **A + B: Pi bench test, props OFF.** Commands in STATUS.md "QNX port".
+- [x] **A + B: Pi bench test, props OFF.** (2026-11-21: full stack under the supervisor, gate rejections, computer arm/land props-off) Commands in STATUS.md "QNX port".
   - [x] Copy `edge/`, `shared/` and `tools/` to the Pi (`~/hope`)
   - [x] Run `tools/usb_relay.py` as root, then `python3 -m edge --mav udpin:127.0.0.1:14555 --station-ip <laptop> --no-video`
   - [x] From the laptop: `python -m tools.cmd <pi ip>`, then `t` shows live telemetry (2026-11-21: battery, mode, attitude; gate rejected takeoff for flow quality 0 and a move while landed)
-  - [ ] Arm/disarm works; the gate's rejection reasons show up
+  - [x] Arm/disarm works; the gate's rejection reasons show up
   - [ ] Pull the laptop's Wi-Fi → edge hovers, then lands (watch the mode change)
   - [ ] `slay` the edge core → the FC lands on its own (needs A4 params)
 - [x] **A: FC failsafe params (review A4)**, set and read back 2026-11-21; stopping the edge core raised "GCS Failsafe" on the FC (disarmed, so no action): `FS_GCS_ENABLE=5`, `FS_GCS_TIMEOUT=2`, `FS_EKF_ACTION=1`. Never connect Mission Planner as sysid 255 at the same time
 - [x] **A: transmitter** (2026-11-21, verified): the FS-i6X only offers SwA/VrA/VrB on channels 5/6 (SwB-D unavailable in the stock menu), so **SwA on channel 5: up = AltHold (`FLTMODE1-5=2`), down = Land (`FLTMODE6=9`)**. **The computer enters GUIDED itself**; the pilot takes over by flipping SwA (down = land; down-then-up = AltHold). Mode changes in about 0.2 s.
   - [x] **Edge rule (B / whoever fixes review2 #1, #5):** once the pilot changes mode away from GUIDED, the edge must **never** switch back to GUIDED or re-send LAND on its own. It reports "pilot has control" and rejects moves until the station explicitly re-takes off
 - [x] **A: build `camgrab` on the Pi**: needs `apk add qnx-sf-base-dev qnx-screen-dev`. Verified: unit 5 → `camgrab_fwd`, 640×480 NV12, **30 fps, about 3 ms frame age** in Python (after the `edge/camera.py` mmap fix). Note: it warns "640x480 not accepted, keeping the camera default" (the default is 640×480 anyway); `-l` lists units 1, 2 and 5: `apk add qnx-sf-base-dev`, `cc -O2 -o camgrab edge/camgrab/camgrab.c -lcamapi`, `./camgrab -l`. If it fails on `stride` / `uv_stride` / `camera_get_supported_cameras`, check `/usr/include/camera/camera_api.h`
-- [ ] **B: two cameras**: does QNX give the second C270 its own unit? Each camera on its own USB controller; the down camera at 320×240. `supervisor_pi.json` now expects it as **unit 6 → `camgrab_down`** (flow reads it)
+- [x] **two cameras** (2026-11-21: second C270, units 5/6 pinned by USB bus; see qnx.md): does QNX give the second C270 its own unit? Each camera on its own USB controller; the down camera at 320×240. `supervisor_pi.json` now expects it as **unit 6 → `camgrab_down`** (flow reads it)
 
 ## Next: get it hovering
 
@@ -88,8 +88,8 @@ they are how the drone navigates, and they cap it at about 2 m up until changed:
   - [x] Code: `tools/hcsr04/hcsr04.ino` (prints `d <mm>` at 20 Hz; Trig D9, Echo D10), `tools/rangefinder.py` (`--usb` on the Pi as root, `--serial COMx` on a laptop) → `{"range_m"}` on UDP :7002 → edge → `DISTANCE_SENSOR` (min 2 cm, max 200 cm)
   - [x] Sketch uploaded (arduino-cli, Elegoo Uno = `2341:0043` on COM8); 17.8 readings/s on the laptop. Arduino moved to the Pi (USB controller 0, next to the FC); `tools/rangefinder.py --usb` as root reads it (needs SET_LINE_CODING, now in the code)
   - [x] FC params set + FC rebooted: `RNGFND1_TYPE=10`, `RNGFND1_ORIENT=25`, `RNGFND1_MIN=0.02`, `RNGFND1_MAX=2`. **End to end verified 2026-11-21:** the FC reports `range_m` 0.37–0.38 m at about 18 Hz for a surface held at about 37 cm (no echo is reported as 2.01 m = out of range)
-  - [ ] Mount it on the drone pointing down, away from the props, on foam; check the on-ground reading is valid (above 2 cm)
-  - [ ] Add `tools.rangefinder --usb` (root) to `tools/supervisor_pi.json` next to the relay
+  - [x] Mounted pointing down (on-ground reading 0.12–0.16 m)
+  - [x] `tools.rangefinder --usb` (root) in `tools/supervisor_pi.json`
 - Note for B: on Windows, `test_camera::test_reader_follows_a_restarted_grabber`, `test_jitter::test_measure_runs_at_rate` and `test_supervisor::test_killed_child_is_restarted_and_timed` fail (shared memory, timing and process-kill differences); they pass on macOS. Not Pi bugs
 - [x] **A/B: edge re-sends the EKF origin until the FC confirms it** (done: 1 Hz until `GPS_GLOBAL_ORIGIN`, "origin set" or a position) (SITL: the one-shot origin at link-up was ignored before the EKF initialised; watch for "EKF3 IMU0 origin set" or `GPS_GLOBAL_ORIGIN`)
 - [x] **A/B: short moves finish early** (done: tolerance min(0.3, max(0.1, 0.3 × distance)), takeoff too; flow-only SITL ALL PASS: fwd 0.5 → +0.34 m, takeoff 0.8 → 0.56 m): `move_body fwd=0.5` reported done at +0.24 m with `pos_tolerance=0.3`; use a tolerance relative to the move (e.g. min(0.3, 0.3 × distance)) or 0.15 m with flow
@@ -98,9 +98,11 @@ they are how the drone navigates, and they cap it at about 2 m up until changed:
   - [x] **Hand-roll sign check** (2026-11-21, real drone, `tools/flow_signcheck.py`): raw flow was backwards on both axes (corr flowX/roll −0.51, flowY/pitch −0.61, cross ≈ 0) → **`--flip-x --flip-y`** in `supervisor_pi.json`; rechecked: +0.50 / +0.34, cross ≈ 0. Strength is limited by light/texture (quality drops while moving; down camera at 8–15 fps in dim light)
   - [ ] Measure the real C270 HFOV (or tune `FLOW_FXSCALER`) and set `edge/flow` `--hfov` (default now 45°, from the 55° diagonal spec; also `edge/video.py:HFOV_DEG`)
   - [ ] **Drone lead: check the direct sensor path (review3 #8)** on the bench: supervisor up, `slay` the edge core, the FC must still show `OPTICAL_FLOW` and `DISTANCE_SENSOR` arriving (Mission Planner status / MAVLink inspector on another link)
-- [ ] **B: hand-roll sign check** on the real drone: `OF.flowX` tracks `OF.bodyX`
-- [ ] **A + B: manual tethered AltHold hover** with the pilot
+- [x] **hand-roll sign check** on the real drone (`--flip-x --flip-y`, see above)
+- [x] **manual tethered AltHold hover** with the pilot (2026-11-21: lifts, no position hold in AltHold as expected)
 - [ ] **A + B: tethered GUIDED hover** via `tools.cmd`: takeoff 0.8 m, hold 30 s, land
+  - 2026-11-21 try 1: never lifted. Baro read prop wash as a 1 m climb (rangefinder 0.16 m), FC cut throttle on the ground; violent tilt from a 3.7°/4.2° level offset + back-left heavy. Fixes: level calibration, balance, `EK3_SRC1_POSZ=2` (rangefinder height), foam over the baro, `tools/auto_hover.py` lands if FC height and rangefinder disagree
+  - try 2: level and balanced (0° tilt, motors equal); baro still faked a climb → auto_hover's cross-check aborted and landed correctly. Next try uses rangefinder height (applied)
 - [ ] **A + B: `move_body fwd=0.5`** on the real drone
 
 ## Then: make it smart (Vultr)
@@ -138,7 +140,7 @@ to end on the sim with no keys). Still to do with real keys / hardware:
 - [x] **A: supervisor** (no HAM; `tools/supervisor.py`): restarts camgrab / flow / vision / relay, logs restart time in ms
 - [x] **A: video server as its own process** (pose from the core over localhost UDP; `python -m edge.video`, core `--video-proc 127.0.0.1:7003`; in the Pi supervisor config at prio 10)
 - [ ] **TFLite person detection** → UDP :7001 (`person_m`, `t`, `infer_ms`): **code done** (`edge/vision/`, in `supervisor_pi.json` at prio 41; tests with a fake interpreter). Still to do on the Pi:
-  - [ ] `python -m tools.fetch_person_model` on the laptop, then `python -m tools.deploy_pi`
+  - [x] `python -m tools.fetch_person_model` on the laptop, then `python -m tools.deploy_pi` (runs on the Pi: XNNPACK delegate, sends to :7001)
   - [ ] On the Pi: `python3 -m edge.vision --shm camgrab_fwd --print`. Check it starts (tflite-runtime 2.21), the inference time, and that a person in view reads a sensible distance (stand at 1, 2 and 3 m). Class 0 must be "person" (the script prints the first labels)
   - [ ] Then forward moves work on the real drone without `--no-person-check`
 - [ ] **Forward obstacle HC-SR04** (code done: sketch pings down D9/D10 and forward D11/D12 alternately; `rangefinder.py` sends `fwd_m`; gate keeps 0.7 m from echoes): wire it, re-upload the sketch, check `python -m tools.rangefinder ... --print` shows forward readings (an unwired sensor reads "clear"), then add `--require-obstacle-sensor` to the edge in `supervisor_pi.json`
