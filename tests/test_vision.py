@@ -15,7 +15,7 @@ from edge.vision import Detection, PersonDetector, focal_px, nearest_person, per
 from edge.vision.__main__ import run
 from shared import protocol as P
 from shared.client import EdgeClient
-from tools.rangefinder import parse_line
+from tools.rangefinder import SpikeFilter, parse_line
 
 W, H = 640, 480
 
@@ -141,6 +141,32 @@ def test_rangefinder_lines():
     assert parse_line(b"f 750") == ("f", 0.75)
     for bad in (b"x 1", b"f", b"f abc", b""):
         assert parse_line(bad) is None
+
+
+def feed(filt, readings, hz=20.0):
+    return [filt.update(m, i / hz) for i, m in enumerate(readings)]
+
+
+def test_spike_filter_holds_prop_noise_on_the_floor():
+    # the worst stretch of the 2nd autonomous try (on the floor, props spinning; 2.01 = no echo)
+    raw = [0.17, -1, 1.99, -1, 0.17, -1, 0.14, 0.16, 0.14, 0.19, 0.14, -1, 1.36, 0.16, 0.45, 0.16]
+    out = feed(SpikeFilter(), raw)
+    assert all(0.13 <= m <= 0.20 for m in out)
+
+
+def test_spike_filter_follows_a_real_climb_and_a_step():
+    f = SpikeFilter()
+    climb = [0.15 + 0.025 * i for i in range(40)]                # 0.5 m/s at 20 Hz
+    assert feed(f, climb) == climb
+    f = SpikeFilter()
+    out = feed(f, [0.5] * 10 + [0.9] * 10)                         # flew over a table
+    assert out[10:14] == [0.5] * 4 and out[14:] == [0.9] * 6      # 5 agreeing readings
+
+
+def test_spike_filter_reports_sustained_no_echo():
+    out = feed(SpikeFilter(), [0.5] * 5 + [-1] * 6)
+    assert out[5:9] == [0.5] * 4 and out[9:] == [-1.0, -1.0]
+    assert feed(SpikeFilter(), [-1, 0.3]) == [-1.0, 0.3]           # nothing to hold yet
 
 
 FLYING = VehicleState(connected=True, armed=True, mode="GUIDED", alt=1.0, battery_v=12.0,
