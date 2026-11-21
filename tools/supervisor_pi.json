@@ -45,7 +45,6 @@
       "edge",
       "--mav",
       "udpin:127.0.0.1:14555",
-      "--gps",
       "--station-ip",
       "LAPTOP_IP",
       "--stats-udp",
