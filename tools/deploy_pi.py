@@ -27,6 +27,9 @@ def main() -> None:
     ap.add_argument("--host", default=os.environ.get("QNX_HOST", "192.168.68.131"))
     ap.add_argument("--build", action="store_true", help="rebuild camgrab and hbwd on the Pi")
     ap.add_argument("--run", help="then run this command in ~/hope on the Pi and print its output")
+    ap.add_argument("--autostart", choices=("on", "off"),
+                    help="on: install tools/onboot.sh as /boot/onboot (stack starts at power-on); "
+                         "off: remove it")
     ap.add_argument("--stations", help="comma-separated laptop IPs allowed to command the drone; "
                     "writes ~/hope/supervisor_local.json from tools/supervisor_pi.json (the first "
                     "IP also gets the QNX stats). Restart the stack to apply")
@@ -93,6 +96,15 @@ def main() -> None:
         with sf.open(f"{REMOTE}/supervisor_local.json", "w") as f:
             f.write(json.dumps(cfg, indent=2))
         print(f"wrote supervisor_local.json: stations {ips} (restart the stack to apply)")
+
+    if a.autostart:
+        pw = os.environ.get("QNX_PASS", "qnxuser")
+        if a.autostart == "on":
+            run("cp tools/start_pi.sh start_sup.sh && chmod +x start_sup.sh && "
+                f"echo {pw} | sudo -S sh -c 'cp tools/onboot.sh /boot/onboot && sed -i "
+                "\"s/\r$//\" /boot/onboot' 2>&1 | grep -v Password; ls -la /boot/onboot")
+        else:
+            run(f"echo {pw} | sudo -S rm -f /boot/onboot 2>&1 | grep -v Password; echo removed")
 
     if a.build:
         run("cc -O2 -o edge/camgrab/camgrab edge/camgrab/camgrab.c -lcamapi && echo camgrab ok;"
