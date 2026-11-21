@@ -1,0 +1,17 @@
+# Flow-only indoor config for SITL: no GPS, simulated optical flow, baro height, NO rangefinder.
+# Mirrors docs/flight-setup.md. Used by tools/sitl_flowonly.py (see its docstring).
+GPS1_TYPE 0
+SIM_FLOW_ENABLE 1
+FLOW_TYPE 10
+EK3_SRC1_POSXY 0
+EK3_SRC1_VELXY 5
+EK3_SRC1_POSZ 1
+EK3_SRC1_VELZ 0
+EK3_SRC1_YAW 1
+RNGFND1_TYPE 0
+FS_GCS_ENABLE 5
+FS_GCS_TIMEOUT 2
+FS_EKF_ACTION 1
+WPNAV_SPEED 50
+WPNAV_SPEED_UP 30
+WPNAV_SPEED_DN 30

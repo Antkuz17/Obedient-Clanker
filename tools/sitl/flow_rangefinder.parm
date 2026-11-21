@@ -1,0 +1,5 @@
+# Add-on to flowonly.parm: a simulated downward rangefinder (like an HC-SR04, 2 m max).
+RNGFND1_TYPE 100
+RNGFND1_ORIENT 25
+RNGFND1_MIN 0
+RNGFND1_MAX 2.0
