@@ -33,6 +33,9 @@ def main() -> None:
     ap.add_argument("--stations", help="comma-separated laptop IPs allowed to command the drone; "
                     "writes ~/hope/supervisor_local.json from tools/supervisor_pi.json (the first "
                     "IP also gets the QNX stats). Restart the stack to apply")
+    ap.add_argument("--demo", action="store_true",
+                    help="with --stations: run the edge in no-fly demo mode (edge/demo.py); "
+                         "rerun --stations without it to fly again")
     a = ap.parse_args()
     c = paramiko.SSHClient()
     c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -92,10 +95,13 @@ def main() -> None:
                     continue
                 out.append(cmd[i].replace("LAPTOP_IP", ips[0]))
                 i += 1
+            if a.demo and child["name"] == "edge":
+                out.append("--demo")
             child["cmd"] = out
         with sf.open(f"{REMOTE}/supervisor_local.json", "w") as f:
             f.write(json.dumps(cfg, indent=2))
-        print(f"wrote supervisor_local.json: stations {ips} (restart the stack to apply)")
+        print(f"wrote supervisor_local.json: stations {ips}"
+              + (", DEMO MODE (never flies)" if a.demo else "") + " (restart the stack to apply)")
 
     if a.autostart:
         pw = os.environ.get("QNX_PASS", "qnxuser")
