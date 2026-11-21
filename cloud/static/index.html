@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hope Drone</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #171b22; --line: #262c36; --text: #e6e9ef; --muted: #8b93a1;
+    --accent: #5aa9ff; --ok: #3ccf8e; --warn: #f5b942; --bad: #ff5d5d;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 12px 16px 40px; display: grid; gap: 12px;
+    grid-template-columns: 1fr; }
+  @media (min-width: 860px) { main { grid-template-columns: 1.4fr 1fr; } }
+  header { display: flex; align-items: center; gap: 10px; grid-column: 1 / -1; }
+  header h1 { font-size: 17px; margin: 0; flex: 1; letter-spacing: .02em; }
+  .pill { font-size: 12px; padding: 3px 9px; border-radius: 99px; background: var(--panel);
+    border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+  .pill.ok { color: var(--ok); border-color: #1f5a41; } .pill.bad { color: var(--bad); border-color: #5c2525; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+  #video { width: 100%; aspect-ratio: 4 / 3; background: #000; border-radius: 8px; object-fit: contain;
+    display: block; }
+  .tele { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 10px; }
+  .tele div { background: var(--bg); border-radius: 8px; padding: 6px 8px; min-width: 0; }
+  .tele b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .tele span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .row { display: flex; gap: 8px; }
+  button { font: inherit; border: 0; border-radius: 10px; padding: 12px 14px; cursor: pointer;
+    color: var(--text); background: #232a35; touch-action: manipulation; }
+  button:active { transform: scale(.98); }
+  .stop { background: var(--bad); color: #fff; font-weight: 700; flex: 1; font-size: 17px; }
+  .land { background: var(--warn); color: #1b1300; font-weight: 700; flex: 1; font-size: 17px; }
+  #talk { width: 100%; padding: 22px; font-size: 18px; font-weight: 600; background: var(--accent);
+    color: #041526; margin: 10px 0; user-select: none; -webkit-user-select: none; }
+  #talk.rec { background: var(--bad); color: #fff; }
+  form { display: flex; gap: 8px; }
+  input[type=text] { flex: 1; min-width: 0; font: inherit; padding: 11px 12px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+  #reply { min-height: 44px; font-size: 16px; margin: 10px 0 0; }
+  #reply.empty { color: var(--muted); }
+  #log { height: 260px; overflow-y: auto; font: 12.5px/1.45 ui-monospace, Menlo, monospace;
+    margin: 8px 0 0; padding: 0; list-style: none; }
+  #log li { padding: 2px 0; border-bottom: 1px solid #1c2129; word-break: break-word; }
+  #log .who { color: var(--accent); } #log .edge { color: var(--warn); } #log .jarvis { color: var(--ok); }
+  #log time { color: var(--muted); margin-right: 6px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; }
+  #photos { display: flex; gap: 8px; overflow-x: auto; }
+  #photos figure { margin: 0; flex: 0 0 140px; }
+  #photos img { width: 140px; border-radius: 6px; display: block; }
+  #photos figcaption { font-size: 11px; color: var(--muted); }
+  #hits li { margin-bottom: 6px; } #hits img { width: 72px; vertical-align: middle; border-radius: 4px; margin-right: 8px; }
+  #hits { list-style: none; padding: 0; margin: 8px 0 0; font-size: 13px; }
+  label.small { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Hope Drone</h1>
+    <span id="st-station" class="pill bad">drone offline</span>
+    <span id="st-ctrl" class="pill">watching</span>
+  </header>
+
+  <section class="card">
+    <img id="video" alt="Forward camera">
+    <div class="tele">
+      <div><span>State</span><b id="t-state">–</b></div>
+      <div><span>Alt</span><b id="t-alt">–</b></div>
+      <div><span>Battery</span><b id="t-bat">–</b></div>
+      <div><span>Position</span><b id="t-pos">–</b></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="row">
+      <button class="stop" id="b-stop">STOP</button>
+      <button class="land" id="b-land">LAND</button>
+    </div>
+    <button id="talk">Hold to talk</button>
+    <form id="f-text">
+      <input id="i-text" type="text" placeholder="…or type: fly to the door and take a photo" autocomplete="off">
+      <button>Send</button>
+    </form>
+    <p id="reply" class="empty">Jarvis is listening.</p>
+    <label class="small"><input id="c-audio" type="checkbox" checked> Play replies on this device</label>
+  </section>
+
+  <section class="card">
+    <h2>Flight log</h2>
+    <ul id="log"></ul>
+  </section>
+
+  <section class="card">
+    <h2>Photos</h2>
+    <div id="photos"></div>
+    <h2 style="margin-top:14px">Memory</h2>
+    <form id="f-mem"><input id="i-mem" type="text" placeholder="where did I leave my keys?"><button>Search</button></form>
+    <ul id="hits"></ul>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const clientId = (() => {
+  try { let c = localStorage.getItem("hd-client"); if (!c) { c = "phone-" + Math.random().toString(36).slice(2, 7); localStorage.setItem("hd-client", c); } return c; }
+  catch { return "phone-" + Math.random().toString(36).slice(2, 7); }
+})();
+let ws, me = clientId;
+
+function connect() {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  ws = new WebSocket(`${proto}://${location.host}/ws/ui?client=${encodeURIComponent(clientId)}`);
+  ws.onmessage = (e) => handle(JSON.parse(e.data));
+  ws.onclose = () => { station(false); setTimeout(connect, 1500); };
+}
+function send(m) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); }
+
+function station(on) {
+  const el = $("st-station");
+  el.textContent = on ? "drone online" : "drone offline";
+  el.className = "pill " + (on ? "ok" : "bad");
+}
+function control(holder) {
+  const el = $("st-ctrl");
+  el.textContent = !holder ? "controls free" : holder === me ? "you have the controls" : `${holder} is flying`;
+  el.className = "pill" + (holder === me ? " ok" : "");
+}
+function fmtTime(t) { return new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
+function logLine(r) {
+  const li = document.createElement("li");
+  const cls = r.who === "jarvis" ? "jarvis" : r.who === "edge" ? "edge" : "who";
+  li.innerHTML = `<time>${fmtTime(r.t)}</time><span class="${cls}"></span> `;
+  li.querySelector("span").textContent = r.who;
+  li.append(document.createTextNode(r.text));
+  const log = $("log"); const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 20;
+  log.append(li); while (log.children.length > 200) log.firstChild.remove();
+  if (atBottom) log.scrollTop = log.scrollHeight;
+}
+function telemetry(t) {
+  if (!t || !t.state) return;
+  $("t-state").textContent = t.state + (t.active_cmd ? " · " + t.active_cmd : "");
+  $("t-alt").textContent = (t.alt ?? 0).toFixed(2) + " m";
+  $("t-bat").textContent = t.battery_v ? t.battery_v.toFixed(1) + " V" : "–";
+  $("t-bat").style.color = t.battery_v && t.battery_v < 10.6 ? "var(--bad)" : "";
+  $("t-pos").textContent = `${(t.n ?? 0).toFixed(1)}, ${(t.e ?? 0).toFixed(1)} · ${Math.round(t.yaw ?? 0)}°`;
+}
+const audioQ = []; let playing = false;
+function playAudio(b64) {
+  if (!$("c-audio").checked) return;
+  audioQ.push(b64); if (!playing) nextAudio();
+}
+function nextAudio() {
+  const b64 = audioQ.shift(); if (!b64) { playing = false; return; }
+  playing = true; const a = new Audio("data:audio/mpeg;base64," + b64);
+  a.onended = a.onerror = nextAudio; a.play().catch(nextAudio);
+}
+function photo(url, caption) {
+  const f = document.createElement("figure");
+  f.innerHTML = `<a target="_blank"><img></a><figcaption></figcaption>`;
+  f.querySelector("a").href = url; f.querySelector("img").src = url;
+  f.querySelector("figcaption").textContent = caption || "";
+  $("photos").prepend(f);
+}
+function handle(m) {
+  switch (m.type) {
+    case "hello": me = m.you; station(m.station); control(m.holder); (m.log || []).forEach(logLine); telemetry(m.telemetry); break;
+    case "station": station(m.connected); break;
+    case "control": control(m.holder); break;
+    case "telemetry": station(true); telemetry(m); break;
+    case "frame": $("video").src = "data:image/jpeg;base64," + m.jpeg; break;
+    case "log": logLine(m); break;
+    case "reply": $("reply").textContent = m.text; $("reply").className = ""; break;
+    case "heard": if (m.who === me) $("reply").textContent = "“" + m.text + "”"; break;
+    case "audio": playAudio(m.mp3); break;
+    case "photo": photo(m.url, m.caption); break;
+  }
+}
+
+$("b-stop").onclick = () => send({ type: "op", op: "stop" });
+$("b-land").onclick = () => send({ type: "op", op: "land" });
+$("f-text").onsubmit = (e) => { e.preventDefault(); const v = $("i-text").value.trim(); if (v) { send({ type: "text", text: v }); $("i-text").value = ""; } };
+$("f-mem").onsubmit = async (e) => {
+  e.preventDefault(); const q = $("i-mem").value.trim(); if (!q) return;
+  const hits = await (await fetch("/memory/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ q }) })).json();
+  const ul = $("hits"); ul.innerHTML = hits.length ? "" : "<li>Nothing remembered.</li>";
+  hits.forEach((h) => { const li = document.createElement("li"); li.innerHTML = `<img>`; li.querySelector("img").src = h.jpeg_url;
+    li.append(`${h.caption} — (${h.n.toFixed(1)}, ${h.e.toFixed(1)}) at ${fmtTime(h.t)}`); ul.append(li); });
+};
+
+// push-to-talk: hold the button, release to send. getUserMedia needs HTTPS.
+let rec, chunks = [];
+async function startTalk(e) {
+  e.preventDefault(); if (rec && rec.state === "recording") return;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find((t) => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || "";
+    rec = new MediaRecorder(stream, mime ? { mimeType: mime } : {}); chunks = [];
+    rec.ondataavailable = (ev) => ev.data.size && chunks.push(ev.data);
+    rec.onstop = async () => {
+      stream.getTracks().forEach((t) => t.stop());
+      $("talk").classList.remove("rec"); $("talk").textContent = "Thinking…";
+      const type = rec.mimeType || "audio/webm"; const ext = type.includes("mp4") ? "m4a" : "webm";
+      const fd = new FormData(); fd.append("audio", new Blob(chunks, { type }), "clip." + ext); fd.append("client", me);
+      try {
+        const r = await fetch("/voice", { method: "POST", body: fd });
+        const j = await r.json(); if (!r.ok) $("reply").textContent = j.detail || "Voice failed.";
+      } catch { $("reply").textContent = "Voice upload failed."; }
+      $("talk").textContent = "Hold to talk";
+    };
+    rec.start(); $("talk").classList.add("rec"); $("talk").textContent = "Listening… release to send";
+  } catch (err) { $("reply").textContent = "Mic unavailable: " + err.message; }
+}
+function stopTalk(e) { e.preventDefault(); if (rec && rec.state === "recording") rec.stop(); }
+const talk = $("talk");
+talk.addEventListener("pointerdown", startTalk); talk.addEventListener("pointerup", stopTalk);
+talk.addEventListener("pointerleave", stopTalk); talk.addEventListener("contextmenu", (e) => e.preventDefault());
+
+connect();
+</script>
+</body>
+</html>

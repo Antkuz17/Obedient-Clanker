@@ -6,3 +6,4 @@ flight_log.jsonl
 *.egg-info/
 
 .env
+data/

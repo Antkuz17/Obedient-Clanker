@@ -1,0 +1,376 @@
+"""Station + cloud: brain, localization, planner (against the sim edge), memory, cloud relay.
+
+No network and no keys: the AI is a fake with the same methods as station.ai.AI.
+"""
+import asyncio
+import json
+import math
+import socket
+import zlib
+
+import httpx
+import numpy as np
+import pytest
+
+from edge.config import SafetyConfig, WatchdogConfig
+from edge.server import EdgeServer
+from edge.sim import SimVehicle
+from edge.vehicle import ned_to_body
+from edge.video import SIM_WORLD, intrinsics
+from shared.client import EdgeClient
+from station import localize_stub
+from station.ai import AI
+from station.brain import Brain, rule_parse
+from station.camera import Frame, Pose
+from station.config import MissingKey, Settings
+from station.localize import box_to_goal, locate, parse_box
+from station.planner import Planner, compass
+
+
+def free_port() -> int:
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.bind(("127.0.0.1", 0))
+    p = s.getsockname()[1]
+    s.close()
+    return p
+
+
+class FakeAI:
+    """Stands in for station.ai.AI. Embeddings: hashed bag of words, so similar text is close."""
+
+    def __init__(self, chat_reply: dict | None = None, vision_reply: str = "It says HELLO."):
+        self.chat_reply = chat_reply
+        self.vision_reply = vision_reply
+        self.last_latency = {"chat": 0.5}
+        self.calls: list[str] = []
+
+    async def chat(self, messages, tools=None, **kw):
+        self.calls.append("chat")
+        if self.chat_reply is None:
+            raise httpx.ConnectError("down")
+        return self.chat_reply
+
+    async def vision(self, prompt, jpeg, system="", max_tokens=400):
+        self.calls.append("vision")
+        return self.vision_reply
+
+    async def embed(self, texts):
+        out = []
+        for t in texts:
+            v = np.zeros(64, np.float32)
+            for w in t.lower().replace(",", " ").split():
+                v[zlib.crc32(w.rstrip("s").encode()) % 64] += 1
+            out.append(v.tolist())
+        return out
+
+    async def speak(self, text):
+        return b"mp3:" + text.encode()
+
+    async def transcribe(self, audio, filename="clip.webm"):
+        return audio.decode()
+
+    async def aclose(self):
+        pass
+
+
+def tool_call(name: str, **args) -> dict:
+    return {"function": {"name": name, "arguments": json.dumps(args)}}
+
+
+# --- brain ----------------------------------------------------------------------------------
+@pytest.mark.parametrize("text,kinds", [
+    ("take off", ["takeoff"]),
+    ("move back 1 metre", ["move"]),
+    ("turn around", ["move"]),
+    ("land", ["land"]),
+    ("stop!", ["stop"]),
+    ("come back", ["home"]),
+    ("fly to the door and take a photo, then come back", ["mission"]),
+    ("where did I leave my keys?", ["recall"]),
+    ("what's written here?", ["look"]),
+    ("crash into the wall", []),
+])
+def test_rule_parse(text, kinds):
+    r = rule_parse(text, {"armed": True, "alt": 1.0})
+    assert [a["kind"] for a in r.actions] == kinds
+    assert r.reply
+
+
+def test_rule_parse_details():
+    mv = rule_parse("move back 1 metre", {"armed": True}).actions[0]
+    assert mv["fwd"] == -1.0 and mv["yaw_deg"] == 0
+    assert rule_parse("turn around", {"armed": True}).actions[0]["yaw_deg"] == 180
+    assert rule_parse("go up half a metre", {"armed": True}).actions[0]["up"] == 0.5
+    m = rule_parse("fly to the door and take a photo, then come back", {"armed": True}).actions[0]
+    assert (m["target"], m["action"], m["after"]) == ("door", "photo", "come_back")
+    # landed: a move gets a takeoff first
+    assert [a["kind"] for a in rule_parse("go forward 1 metre", {"armed": False}).actions] == [
+        "takeoff", "move"]
+
+
+async def test_brain_uses_tool_calls():
+    ai = FakeAI({"content": "Up we go.", "tool_calls": [
+        tool_call("takeoff", alt=1.0), tool_call("move", up=0.5, yaw_deg=180),
+        tool_call("mission", target="red poster", action="read", after="come_back"),
+        tool_call("flip"), tool_call("move")]})  # junk calls are dropped
+    r = await Brain(ai).think("take off, go up a bit and turn around, then read the red poster")
+    assert r.source == "llm" and r.reply == "Up we go."
+    assert [a["kind"] for a in r.actions] == ["takeoff", "move", "mission"]
+    assert r.actions[1] == {"kind": "move", "fwd": 0.0, "right": 0.0, "up": 0.5, "yaw_deg": 180.0}
+    assert r.actions[2]["after"] == "come_back"
+
+
+async def test_brain_refusal_and_fallback():
+    r = await Brain(FakeAI({"content": "I'd rather not become modern art.", "tool_calls": []})
+                    ).think("crash into the wall")
+    assert r.actions == [] and "modern art" in r.reply
+    r = await Brain(FakeAI(None)).think("land")  # LLM down -> rules
+    assert r.source == "rules" and r.actions == [{"kind": "land"}]
+    r = await Brain(None).think("take off")      # no key -> rules
+    assert r.actions[0]["kind"] == "takeoff"
+
+
+async def test_ai_missing_key_and_requests():
+    s = Settings(vultr_key="", eleven_key="", eleven_voice="")
+    ai = AI(s)
+    with pytest.raises(MissingKey) as e:
+        await ai.chat([{"role": "user", "content": "hi"}])
+    assert e.value.var == "VULTR_INFERENCE_KEY"
+    assert await ai.speak("hello") == b""  # no TTS key -> text only, no crash
+    await ai.aclose()
+
+    seen = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen.append((req.url.host, req.url.path, req.headers.get("authorization"),
+                     req.headers.get("xi-api-key")))
+        if req.url.path.endswith("/chat/completions"):
+            return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+        if req.url.path.endswith("/embeddings"):
+            return httpx.Response(200, json={"data": [{"index": 0, "embedding": [1, 0]}]})
+        if req.url.host == "api.elevenlabs.io":
+            return httpx.Response(200, content=b"MP3")
+        return httpx.Response(404)
+
+    s = Settings(vultr_key="vk", eleven_key="ek", eleven_voice="jarvis")
+    ai = AI(s, transport=httpx.MockTransport(handler))
+    assert (await ai.chat([{"role": "user", "content": "hi"}]))["content"] == "ok"
+    assert await ai.vision("read", b"\xff\xd8jpeg") == "ok"
+    assert await ai.embed(["x"]) == [[1, 0]]
+    assert await ai.speak("hi") == b"MP3"
+    await ai.aclose()
+    assert seen[0][2] == "Bearer vk" and seen[-1] == ("api.elevenlabs.io",
+                                                      "/v1/text-to-speech/jarvis", None, "ek")
+
+
+# --- localization ---------------------------------------------------------------------------
+def sim_box(name: str, pose: Pose, K: dict) -> list[float]:
+    """The same projection edge.video.SimCamera draws."""
+    _, n, e, z0, h, w, _ = next(o for o in SIM_WORLD if o[0] == name)
+    fwd, right = ned_to_body(n - pose.n, e - pose.e, pose.yaw)
+    u = K["cx"] + K["fx"] * right / fwd
+    half = K["fx"] * (w / 2) / fwd
+    return [u - half, K["cy"] - K["fx"] * (z0 + h - pose.alt) / fwd,
+            u + half, K["cy"] - K["fx"] * (z0 - pose.alt) / fwd]
+
+
+@pytest.mark.parametrize("name,pose", [
+    ("door", Pose(0, 0, 1.0, 0, 0)),
+    ("door", Pose(0.5, -0.8, 1.0, 15, 0)),
+    ("chair", Pose(0, 0, 1.0, 60, 0)),
+])
+def test_box_to_goal_recovers_sim_positions(name, pose):
+    K = intrinsics()
+    hit = box_to_goal(name, sim_box(name, pose, K), pose, K)
+    _, n, e, *_ = next(o for o in SIM_WORLD if o[0] == name)
+    assert hit["n"] == pytest.approx(n, abs=0.15) and hit["e"] == pytest.approx(e, abs=0.15)
+
+
+def test_parse_box_formats():
+    K = intrinsics()
+    box, conf = parse_box('```json\n{"found": true, "box": [250, 100, 750, 900], "conf": 0.9}\n```',
+                          K["width"], K["height"])
+    assert box == pytest.approx([160, 48, 480, 432]) and conf == 0.9
+    assert parse_box('{"found": false}', 640, 480) is None
+    assert parse_box("no idea", 640, 480) is None
+
+
+async def test_locate_with_vlm_box():
+    K = intrinsics()
+    pose = Pose(0, 0, 1.0, 0, 0)
+    x0, y0, x1, y1 = sim_box("door", pose, K)
+    norm = [x0 / 640 * 1000, y0 / 480 * 1000, x1 / 640 * 1000, y1 / 480 * 1000]
+    ai = FakeAI(vision_reply=json.dumps({"found": True, "box": norm, "conf": 0.8}))
+    hit = await locate(ai, "door", b"jpg", pose, K)
+    assert hit["n"] == pytest.approx(3.0, abs=0.15) and hit["conf"] == 0.8
+    ai.vision_reply = '{"found": true, "box": [1, 1, 900, 900], "conf": 0.1}'
+    assert await locate(ai, "door", b"jpg", pose, K) is None  # low confidence
+
+
+# --- planner against the sim edge -----------------------------------------------------------
+class SimCam:
+    def __init__(self, sim: SimVehicle):
+        self.sim = sim
+
+    async def K(self):
+        return intrinsics()
+
+    async def frame(self):
+        s = self.sim.state()
+        return Frame(b"\xff\xd8sim", Pose(s.n, s.e, s.alt, s.yaw, 0.0))
+
+
+@pytest.fixture
+async def rig():
+    cfg = SafetyConfig()
+    sim = SimVehicle(cfg, speedup=10.0)
+    srv = EdgeServer(sim, cfg, WatchdogConfig(hover_after_s=0.6, land_after_s=2.0),
+                     host="127.0.0.1", port=0, perception_port=free_port(), flow_port=None)
+    await srv.start()
+    edge = await EdgeClient("127.0.0.1", srv.port).connect()
+    await asyncio.sleep(0.3)
+    yield sim, edge
+    await edge.close()
+    await srv.close()
+
+
+def make_planner(sim, edge, ai=None, memory=None):
+    said, photos = [], []
+
+    async def say(t):
+        said.append(t)
+
+    async def on_photo(fr, caption):
+        photos.append((fr, caption))
+
+    p = Planner(edge, SimCam(sim), locate=localize_stub.locate, ai=ai, memory=memory, say=say,
+                on_photo=on_photo)
+    return p, said, photos
+
+
+async def run_plan(p, actions, timeout=40):
+    p.submit(actions)
+    await asyncio.wait_for(p.wait(), timeout)
+
+
+async def test_mission_door_photo_come_back(rig):
+    sim, edge = rig
+    p, said, photos = make_planner(sim, edge, ai=FakeAI(vision_reply="A brown door."))
+    await run_plan(p, [{"kind": "mission", "target": "door", "action": "photo",
+                        "question": "", "after": "stay"}])
+    s = sim.state()
+    assert s.armed and s.n == pytest.approx(2.0, abs=0.35) and abs(s.e) < 0.35  # 1 m short
+    assert photos and "door" in photos[0][1].lower() and said[-1].startswith("Got the shot")
+    await run_plan(p, [{"kind": "home"}])
+    assert math.hypot(sim.state().n, sim.state().e) < 0.35
+
+
+async def test_mission_scans_until_found(rig):
+    sim, edge = rig
+    p, said, _ = make_planner(sim, edge)
+    await run_plan(p, [{"kind": "takeoff", "alt": 1.0},
+                       {"kind": "mission", "target": "the chair", "action": "none",
+                        "question": "", "after": "stay"}], timeout=60)
+    assert any(l.startswith("yaw") for l in p.log)  # had to turn to find it
+    s = sim.state()
+    d = math.hypot(-1.0 - s.n, 2.0 - s.e)
+    assert d == pytest.approx(1.0, abs=0.4)
+    assert said[-1] == "At the chair."
+
+
+async def test_mission_not_found_and_gate_rejection(rig):
+    sim, edge = rig
+    p, said, _ = make_planner(sim, edge)
+    await run_plan(p, [{"kind": "mission", "target": "unicorn", "action": "none",
+                        "question": "", "after": "stay"}], timeout=60)
+    assert "couldn't find the unicorn" in said[-1]
+    await run_plan(p, [{"kind": "move", "fwd": 0, "right": 0, "up": 10, "yaw_deg": 0}])
+    assert said[-1].startswith("Safety says no")
+
+
+async def test_look_read_and_stop_preempts(rig):
+    sim, edge = rig
+    p, said, _ = make_planner(sim, edge, ai=FakeAI(vision_reply="It says EXIT."))
+    await run_plan(p, [{"kind": "takeoff", "alt": 1.0},
+                       {"kind": "look", "action": "read", "question": ""}])
+    assert said[-1] == "It says EXIT."
+    p.submit([{"kind": "move", "fwd": 2.5, "right": 0, "up": 0, "yaw_deg": 0}])
+    await asyncio.sleep(0.3)
+    stop = p.submit([{"kind": "stop"}])
+    await asyncio.wait_for(stop, 10)
+    assert "plan cancelled" in p.log and sim.state().n < 2.3
+
+
+async def test_recall_says_where_and_flies_there(rig):
+    sim, edge = rig
+
+    async def memory(q):
+        return [{"caption": "silver keys on a chair", "n": -2.0, "e": -1.0, "alt": 1.0,
+                 "yaw": 200.0, "t": __import__("time").time() - 125}]
+
+    p, said, _ = make_planner(sim, edge, memory=memory)
+    await run_plan(p, [{"kind": "recall", "query": "my keys", "fly_there": True}], timeout=60)
+    assert "south-west" in said[0] and "2 minutes ago" in said[0]
+    s = sim.state()
+    assert s.n == pytest.approx(-2.0, abs=0.35) and s.e == pytest.approx(-1.0, abs=0.35)
+    assert said[-1] == "This is where I saw it."
+
+
+def test_compass():
+    assert compass(1, 0) == "north" and compass(0, 1) == "east" and compass(-1, -1) == "south-west"
+
+
+# --- memory ---------------------------------------------------------------------------------
+async def test_memory_ingest_and_search(tmp_path):
+    from cloud.memory import Memory
+    mem = Memory(tmp_path, FakeAI())
+    await mem.ingest(b"j1", {"n": 0, "e": 3, "yaw": 90, "t": 100}, "white whiteboard centre")
+    await mem.ingest(b"j2", {"n": -2, "e": -1.5, "yaw": 200, "t": 200},
+                     "silver keys on a grey table, left")
+    await mem.ingest(b"j3", {"n": 2, "e": -2.5, "yaw": 300, "t": 300}, "green plant in a pot")
+    hits = await mem.search("where did I leave my keys")
+    assert hits[0]["n"] == -2 and "keys" in hits[0]["caption"]
+    assert mem.jpeg_path(hits[0]["id"]).read_bytes() == b"j2"
+    assert mem.count() == 3 and len(mem.recent()) == 3
+
+
+# --- cloud ----------------------------------------------------------------------------------
+def test_cloud_relays_commands_to_station(tmp_path):
+    from fastapi.testclient import TestClient
+    from cloud.app import create_app
+
+    s = Settings(vultr_key="", station_token="tok", data_dir=tmp_path)
+    app = create_app(s, ai=FakeAI())
+    with TestClient(app) as c:
+        assert c.get("/health").json()["station"] is False
+        with pytest.raises(Exception):
+            with c.websocket_connect("/ws/station?token=wrong") as ws:
+                ws.receive_json()
+        with c.websocket_connect("/ws/station?token=tok") as st, \
+                c.websocket_connect("/ws/ui?client=judge") as ui:
+            assert ui.receive_json()["type"] == "hello"
+            st.send_json({"type": "telemetry", "state": "IDLE", "armed": False, "alt": 0.0})
+            r = c.post("/text", json={"text": "take off", "client": "judge"}).json()
+            assert r["ok"] and r["actions"][0]["kind"] == "takeoff"
+            m = st.receive_json()
+            assert m["type"] == "actions" and m["actions"][0]["kind"] == "takeoff"
+            assert st.receive_json() == {"type": "audio", "mp3": "bXAzOkxpZnRpbmcgb2ZmLg==",
+                                         "text": "Lifting off."}
+            # another viewer can't steal the controls, but can always hit STOP
+            r = c.post("/text", json={"text": "land", "client": "someone"}).json()
+            assert not r["ok"] and "controls" in r["reply"]
+            ui.send_json({"type": "op", "op": "stop"})
+            for _ in range(10):
+                m = st.receive_json()
+                if m["type"] == "actions":
+                    break
+            assert m["actions"] == [{"kind": "stop"}]
+            # memory search round trip from the station
+            st.send_json({"type": "memory_search", "q": "keys", "req": 7})
+            while (m := st.receive_json())["type"] != "memory_result":
+                pass
+            assert m == {"type": "memory_result", "req": 7, "hits": []}
+        # voice: FakeAI.transcribe echoes the bytes
+        r = c.post("/voice", files={"audio": ("clip.webm", b"land")},
+                   data={"client": "judge"}).json()
+        assert r["text"] == "land" and r["ok"] is False  # station gone
