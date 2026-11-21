@@ -189,11 +189,28 @@ int main(int argc, char **argv) {
            g_fmt == FMT_NV12 ? "NV12" : "YUYV");
     fflush(stdout);
 
-    while (!g_stop) sleep(1);
+    /* Stall watchdog. Right after a previous owner of the camera dies, QNX's camera service
+     * still holds it for a few seconds: camera_open and camera_start_viewfinder succeed, but no
+     * frame ever arrives (seen on the Pi: 0 fps forever after a quick restart). Exit instead of
+     * hanging, so the supervisor restarts us with backoff once the camera is free. */
+    uint64_t last_seq = 0;
+    int idle_s = 0, rc = 0;
+    while (!g_stop) {
+        sleep(1);
+        uint64_t s = __atomic_load_n(&hd->seq, __ATOMIC_ACQUIRE);
+        idle_s = (s == last_seq) ? idle_s + 1 : 0;
+        last_seq = s;
+        if (idle_s >= (s == 0 ? 5 : 3)) {
+            fprintf(stderr, "camgrab: no frames from unit %d for %d s; exiting so the "
+                    "supervisor restarts us\n", unit, idle_s);
+            rc = 2;
+            break;
+        }
+    }
 
     camera_stop_viewfinder(h);
     camera_close(h);
     munmap(g_map, total);
     shm_unlink(shm_name);
-    return 0;
+    return rc;
 }
