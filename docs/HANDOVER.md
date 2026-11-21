@@ -112,6 +112,22 @@ sudo sh -c 'slay -f camgrab; slay -f hbwd; slay -f python3; nohup ~/hope/start_s
   about 55 s after power-on. Log: `/boot/onboot.log`. Off: `touch ~/hope/NO_AUTOSTART`.
   The script relaunches itself with `on -d`: a plain `&` job is killed when mount_fs.sh exits.
 
+## Demo mode (no flying indoors)
+
+The indoor demo: talk to the laptop, Jarvis answers through the JBL (Bluetooth to the laptop),
+the drone never moves. Turn it on with
+`python -m tools.deploy_pi --stations 192.168.68.130,192.168.68.100 --demo`, then restart the
+stack; turn it off by running the same without `--demo`. In demo mode (`edge/demo.py`):
+
+- Every flight command still goes through the real safety gate with real sensor data. If the
+  gate refuses, Jarvis says the real reason ("move of 3.0 m exceeds the 2.0 m limit"). If it
+  clears, Jarvis gives a sarcastic "I would, but we're indoors" line. Nothing reaches the FC.
+- Say "take off" first. A cleared takeoff starts a pretend hover (telemetry: armed, 1 m, mode
+  `GUIDED-DEMO`) so moves are judged as if flying; "land" ends it.
+- Verified on the real drone 2026-11-21: take off / turn around / move back / forward /
+  "move right 3 m" (real gate refusal) / land; the FC never left STABILIZE.
+- `auto_hover` and every takeoff are refused while it's on: turn it off for flight tests.
+
 ## Tools (laptop unless noted)
 
 | Tool | Purpose |
