@@ -8,6 +8,7 @@ from typing import Callable
 
 from shared import protocol as P
 
+from . import demo
 from .config import ExecConfig, flight_time, stopping_distance
 from .safety import Perception, SafetyGate, obstacle_ahead, path_blocked, person_room
 from .vehicle import Vehicle, ned_to_body, wrap360, yaw_err
@@ -42,6 +43,8 @@ class Executor:
         self._flow_bad_since: float | None = None
         # readings older than this describe another direction (the drone turned since)
         self._fresh_since = 0.0
+        self.demo = False  # edge/demo.py: judge flight commands, never fly them
+        self.demo_up = False  # demo: a takeoff was cleared, so we pretend to hover until land
 
     def _set(self, n: float, e: float, alt: float, yaw: float) -> None:
         self.target = (n, e, alt, wrap360(yaw))
@@ -88,6 +91,10 @@ class Executor:
             self.emit(P.ack(cid, False, reason))
             self.emit(P.event("safety_reject", f"{op}: {reason}"))
             return False
+        if self.demo and op in demo.REFUSED_OPS:
+            return self._demo_refuse(cid, op, args, s)
+        if self.demo and op == "land":
+            self.demo_up = False  # pretend landing; the real path below finds it already down
         if self._phase == "LANDING" and op in ("stop", "hover", "land"):
             # landing beats stop: never pull a landing drone back into a hover
             self.emit(P.ack(cid, True, "landing continues"))
@@ -123,6 +130,22 @@ class Executor:
         self._active = (cid, op)
         self._task = asyncio.create_task(self._run(cid, op, args, verdict))
         return True
+
+    def _demo_refuse(self, cid: str, op: str, args: dict, s) -> bool:
+        """Demo mode: the real gate's verdict, then refuse. Nothing reaches the vehicle."""
+        if op == "takeoff":  # judged from where it really is: on the ground
+            verdict = self.gate.check(op, args, s, False, self.perception, home=self.home)
+        else:
+            verdict = self.gate.check(op, args, demo.pretend_hover(s), True, self.perception,
+                                      home=self.home)
+        reason = verdict.reason if not verdict.ok else demo.sarcastic(op, args)
+        if op == "takeoff" and verdict.ok:
+            self.demo_up = True  # from now on, moves are what gets judged (not another takeoff)
+        self.log({"t": time.time(), "kind": "cmd", "id": cid, "op": op, "args": args,
+                  "ok": False, "demo": True, "gate_ok": verdict.ok, "reason": reason})
+        self.emit(P.ack(cid, False, reason))
+        self.emit(P.event("safety_reject", f"{op} (demo): {reason}"))
+        return False
 
     def revalidate(self, s, cfg) -> str | None:
         """Re-check the *running* command every safety tick (review2 #4, #6). Returns a reason

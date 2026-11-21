@@ -67,6 +67,10 @@ async def main(a) -> None:
                      if a.video_proc else None,
                      stats_addr=(a.stats_udp.rsplit(":", 1)[0], int(a.stats_udp.rsplit(":", 1)[1]))
                      if a.stats_udp else None)
+    if a.demo:
+        srv.exec.demo = True
+        logging.warning("DEMO MODE: flight commands are judged by the safety gate and refused; "
+                        "nothing is sent to the flight controller (edge/demo.py)")
     await srv.start()
 
     if not a.no_video and not a.video_proc:
@@ -100,6 +104,9 @@ if __name__ == "__main__":
     ap.add_argument("--require-obstacle-sensor", action="store_true",
                     help="refuse forward moves while the forward ultrasonic sensor is silent "
                          "(turn on once it is mounted)")
+    ap.add_argument("--demo", action="store_true",
+                    help="no-fly demo: every flight command passes through the safety gate and "
+                         "is then refused with the gate's reason or a sarcastic line; never flies")
     ap.add_argument("--baud", type=int, default=115200)
     ap.add_argument("--port", type=int, default=P.EDGE_PORT)
     ap.add_argument("--video-port", type=int, default=P.VIDEO_PORT)

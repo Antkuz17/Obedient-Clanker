@@ -15,10 +15,12 @@ import queue
 import socket
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 
 from shared import protocol as P
 
+from . import demo
 from .config import SafetyConfig, WatchdogConfig
 from .executor import Executor
 from .safety import SafetyGate
@@ -185,7 +187,12 @@ class EdgeServer:
 
     def telemetry(self) -> dict:
         s = self.v.state()
-        return {"type": P.TELEMETRY, "t": time.time(), "state": self.exec.state,
+        state = self.exec.state
+        if self.exec.demo and self.exec.demo_up and s.connected and not s.armed:
+            # edge/demo.py: show the pretend hover the commands are judged against (only to the
+            # station; nothing on the edge acts on this)
+            s, state = replace(demo.pretend_hover(s), mode=demo.DEMO_MODE), "HOVER"
+        return {"type": P.TELEMETRY, "t": time.time(), "state": state,
                 "armed": s.armed, "mode": s.mode, "n": round(s.n, 3), "e": round(s.e, 3),
                 "alt": round(s.alt, 3), "yaw": round(s.yaw, 1), "vn": round(s.vn, 3),
                 "ve": round(s.ve, 3), "vd": round(s.vd, 3), "battery_v": round(s.battery_v, 2),
