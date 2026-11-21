@@ -32,7 +32,7 @@ def load_dotenv(path: Path = ROOT / ".env") -> None:
 
 
 def _env(name: str, default: str = "") -> str:
-    return os.environ.get(name, default)
+    return os.environ.get(name) or default  # blank lines in .env mean "use the default"
 
 
 @dataclass

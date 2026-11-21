@@ -24,6 +24,7 @@ to 1 m short of the door, took the photo, came home.
 | Deploy guide (VM, systemd, Caddy HTTPS) | `cloud/deploy.md`, `.env.example` | not deployed yet |
 | Station link safety: edge reconnect (also when the Pi goes silent: no telemetry for 3 s), cancels the plan on a drop; **cloud lost 30 s while hovering idle → says so and lands** (review2 "nobody owns the cloud died") | `station/station.py` | tests: edge server killed and restarted; cloud outage lands the sim |
 | Station honours `X-Pose-Age` from the separate video process: a pose older than 0.5 s can't place a target (mission refused, said aloud) and isn't stored in memory | `station/camera.py`, `station/planner.py`, `station/station.py` | test + live run vs `python -m edge.video --camera sim` (core killed → age 2 s) |
+| Key checker `python -m station.check_ai`, VM deploy script `cloud/deploy.sh`, sim stack `python -m station.dev`, demo runbook, Devpost draft | `station/check_ai.py`, `cloud/deploy.sh`, `station/dev.py`, `docs/demo.md`, `docs/devpost-cloud.md` | checker vs mocked Vultr (test); deploy.sh syntax only (**no VM yet**); dev stack run + photo mission |
 | Dashboard websocket path | `cloud/static/index.html` | JS syntax check + a Python client speaking the page's protocol: 5 Hz telemetry, ~2.5 fps frames, log, reply, LAND. **Not rendered in a browser yet** (Chrome extension wasn't connected) |
 
 ## Done (Person A)

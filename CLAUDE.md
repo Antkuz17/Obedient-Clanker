@@ -42,9 +42,8 @@ docker build -t hope-sitl tools/sitl && docker run --rm -d --name hope-sitl -p 5
 Restart the SITL container (`docker restart hope-sitl`) between runs.
 
 ```sh
-.venv/bin/python -m edge --sim --port 7100 --video-port 8180
-.venv/bin/uvicorn cloud.app:app --port 8100            # dashboard on http://127.0.0.1:8100
-.venv/bin/python -m station --edge 127.0.0.1:7100 --video-port 8180 --cloud ws://127.0.0.1:8100 --stub-locate
+.venv/bin/python -m station.dev        # sim edge + video + cloud + station; dashboard http://127.0.0.1:8100
+.venv/bin/python -m station.check_ai   # once keys are in .env: test every model + voice latency
 .venv/bin/python -m station --edge 127.0.0.1:7100 --video-port 8180 --local --stub-locate  # no cloud
 ```
 

@@ -135,6 +135,7 @@ async def to_wav16k(audio: bytes) -> bytes:
         return audio
     p = await asyncio.create_subprocess_exec(
         "ffmpeg", "-loglevel", "error", "-i", "pipe:0", "-ac", "1", "-ar", "16000",
-        "-f", "wav", "pipe:1", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE)
+        "-f", "wav", "pipe:1", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL)
     out, _ = await p.communicate(audio)
     return out if p.returncode == 0 and out else audio

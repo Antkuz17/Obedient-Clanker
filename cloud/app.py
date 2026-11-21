@@ -261,8 +261,9 @@ def create_app(s: Settings | None = None, ai: AI | None = None) -> FastAPI:
 
     @app.websocket("/ws/station")
     async def ws_station(ws: WebSocket, token: str = ""):
-        if token != s.station_token:
-            await ws.close(code=4401)
+        local = ws.client is not None and ws.client.host in ("127.0.0.1", "::1", "testclient")
+        if token != s.station_token or (s.station_token == "dev-token" and not local):
+            await ws.close(code=4401)  # the default token only works on localhost
             return
         await ws.accept()
         if hub.station:

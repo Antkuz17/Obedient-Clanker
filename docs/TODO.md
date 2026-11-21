@@ -20,8 +20,8 @@ Check with `curl https://<cloud>/health` → `"keys": {"vultr": true, "elevenlab
       (the Jarvis voice). Without it: Vultr `chatterbox` TTS, then text only
 - [ ] 🔴 **A: Vultr account/credits for a VM** (cloud app + dashboard) and a **domain** pointing
       at it (phones need HTTPS for the mic). Steps: [cloud/deploy.md](../cloud/deploy.md)
-- [ ] 🔴 **A: `STATION_TOKEN`**: a long random string, the same on the laptop and the VM
-- [ ] **A: check the models on the real key**: vision model returns usable boxes on real C270
+- [x] **A: `STATION_TOKEN`**: generated into this laptop's `.env` (2026-11-21). Copy the same `.env` to the VM (`cloud/deploy.sh` does it)
+- [ ] **A: check the models on the real key**: **one command, `python -m station.check_ai`** (brain, STT, vision boxes on a sim frame, read/solve, embeddings, rerank, TTS, voice latency): vision model returns usable boxes on real C270
       frames; STT latency; ElevenLabs vs chatterbox (models.md "Still to test")
 
 ## Now: before anything flies
@@ -81,12 +81,12 @@ to end on the sim with no keys). Still to do with real keys / hardware:
       live video, telemetry, STOP/LAND for anyone, one viewer has the controls, flight log,
       photos, memory search
 - [x] **A: laptop ↔ cloud WSS** (`station/station.py`: dials out, ping 15 s, backoff to 15 s)
-- [ ] 🔴 **A: deploy to the Vultr VM** with Caddy + HTTPS ([cloud/deploy.md](../cloud/deploy.md))
+- [ ] 🔴 **A: deploy to the Vultr VM**: one command once the VM + domain exist: `scp .env root@<vm>:/root/hope.env && ssh root@<vm> 'bash -s' < cloud/deploy.sh <domain>` ([cloud/deploy.md](../cloud/deploy.md))
 - [ ] **A: measure the size prior and HFOV on the real C270** (`edge/video.py:HFOV_DEG`,
       `station/localize.py:SIZE_PRIOR`) and test `locate()` on real frames
 - [ ] **A: audio out**: test the Nest Mini as a Windows Bluetooth speaker early; laptop speaker as
       the fallback (`station/audio.py` plays on the default output; install ffmpeg)
-- [ ] **A: voice latency** under 3 s end to end (`/health`, `AI.last_latency`)
+- [ ] **A: voice latency** under 3 s end to end: `python -m station.check_ai --only brain,voice` prints the estimate
 
 ## Then: the QNX demo (review D)
 
@@ -102,6 +102,6 @@ to end on the sim with no keys). Still to do with real keys / hardware:
 ## Last 2 hours
 
 - [ ] Feature freeze
-- [ ] Rehearse the 60-second QNX demo and the Vultr demo 3×
+- [ ] Rehearse the 60-second QNX demo and the Vultr demo 3× (Vultr: script in [demo.md](demo.md); `python -m station.dev` runs it on the sim)
 - [ ] Record a backup video
-- [ ] Devpost: A writes up real-time, voice, dashboard and memory; B writes up on-board AI
+- [ ] Devpost: cloud half drafted in [devpost-cloud.md](devpost-cloud.md) (fill in real latencies after `check_ai`); drone lead writes the QNX / on-board half

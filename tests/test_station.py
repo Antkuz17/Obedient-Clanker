@@ -537,3 +537,50 @@ async def test_stale_pose_blocks_localization(rig):
                         "after": "stay"}])
     assert "position feed is 4 seconds old" in said[-1]
     assert not any(l.startswith("goto") for l in p.log)
+
+
+async def test_check_ai_runs_against_a_fake_vultr(capsys):
+    """The key checker's request shapes and verdicts, against a mocked Vultr + ElevenLabs."""
+    from station import check_ai
+    door = [500 - 1000 * 0.15, 0, 500 + 1000 * 0.15, 1000]  # rough; parse only
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        path = req.url.path
+        if path.endswith("/models"):
+            return httpx.Response(200, json={"data": [{"id": m} for m in (
+                "glm-5.3-flash", "qwen3.8-flash-next", "qwen3.8-27b", "whisper-large-v3-turbo",
+                "qwen3-embedding-4b", "bge-reranker-v2-m3", "chatterbox")]})
+        if path.endswith("/chat/completions"):
+            body = json.loads(req.content)
+            if body["model"] == "qwen3.8-27b":
+                prompt = body["messages"][-1]["content"][0]["text"]
+                txt = ("It says EXIT 42." if "Read" in prompt else "84. 12 times 7." if "Solve"
+                       in prompt else json.dumps({"found": True, "box": door, "conf": 0.9}))
+                return httpx.Response(200, json={"choices": [{"message": {"content": txt}}]})
+            user = body["messages"][-1]["content"]
+            tc = ([] if "crash" in user else
+                  [tool_call("move", up=0.5, yaw_deg=180)] if "half" in user else
+                  [tool_call("recall", query="keys")] if "keys" in user else
+                  [tool_call("mission", target="red poster", action="read", after="come_back")])
+            return httpx.Response(200, json={"choices": [{"message": {
+                "content": "Sure.", "tool_calls": tc}}]})
+        if path.endswith("/embeddings"):
+            return httpx.Response(200, json={"data": [{"index": 0, "embedding": [0.1] * 8}]})
+        if path.endswith("/rerank"):
+            return httpx.Response(200, json={"results": [{"index": 0, "relevance_score": 0.1},
+                                                         {"index": 1, "relevance_score": 0.9}]})
+        if path.endswith("/audio/speech") or req.url.host == "api.elevenlabs.io":
+            return httpx.Response(200, content=b"ID3fake-mp3")
+        if path.endswith("/audio/transcriptions"):
+            return httpx.Response(200, json={"text": "Fly to the door and take a photo."})
+        return httpx.Response(404)
+
+    s = Settings(vultr_key="k", eleven_key="e", eleven_voice="v")
+    check_ai.results.clear()
+    code = await check_ai.main(None, s, AI(s, transport=httpx.MockTransport(handler)))
+    out = capsys.readouterr().out
+    by = {(r[0], r[1]) for r in check_ai.results}
+    assert ("brain", "FAIL") not in by and ("stt", "PASS") in by and ("rerank", "PASS") in by
+    assert ("models", "PASS") in by and ("voice e2e", "PASS") in by
+    assert "read -> 'It says EXIT 42.'" in out
+    assert code in (0, 1)  # vision box accuracy depends on the fake box; shape is what's tested

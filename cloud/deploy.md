@@ -1,5 +1,9 @@
 # Deploying the cloud app on Vultr
 
+**Short version:** create the VM, point the domain at it, then from the laptop:
+`scp .env root@<vm-ip>:/root/hope.env && ssh root@<vm-ip> 'bash -s' < cloud/deploy.sh <domain>`.
+The script does steps 2–5 below (packages, service, Caddy HTTPS, health check).
+
 Needs (docs/TODO.md "CRITICAL"): a Vultr VM, a domain whose A record points at it, and the keys.
 
 1. **VM:** Vultr Cloud Compute, Ubuntu 24.04, the smallest plan is enough (the models are
