@@ -30,7 +30,7 @@ reviewer's reading and should be confirmed when fixing them.
 | Nest Mini as a Windows Bluetooth speaker | **Risky.** Often pairs but won't appear as an output; needs Home app setup first | Test early. Fallback: laptop speaker or any Bluetooth/USB speaker. Cast is worse (3–30 s start, mDNS breaks on a hotspot) |
 | Phone mic over HTTPS | Works | iOS Safari < 18.4 records only mp4/AAC: always `ffmpeg → 16 kHz mono wav` before Whisper |
 | Vultr LLM + tool calling | Works | `https://api.vultrinference.com/v1/chat/completions`; tool calling is documented for `kimi-k2-instruct`. Check `GET /v1/models` first |
-| **Vultr speech-to-text** | **Doesn't exist** (only chat, prompt, TTS); vision models are unnamed | **faster-whisper on the laptop CPU** (`small.en` int8, about 1 s per clip). Vultr TTS is fine |
+| **Vultr speech-to-text** | **Doesn't exist** (only chat, prompt, TTS); vision models are unnamed | **faster-whisper on our own Vultr VM** (CPU is enough: `small.en` int8 about 1 s per clip; GPU if credits allow). Laptop as fallback. TTS: ElevenLabs, with Vultr TTS as fallback |
 | Vultr GPU via MLH credits | Unknown (a Vultr-run event this month excluded GPUs) | Ask at the booth; plan CPU + Serverless Inference |
 | HTTPS on a Vultr VM | Works | Caddy + domain A record; `sslip.io` if DNS is slow |
 | Laptop → cloud WSS | Works | Ping every 15–20 s, reconnect with backoff |

@@ -17,8 +17,9 @@ section 5. This doc is the wiring around them.
 | **FlySky transmitter** | Safety pilot's hands | Direct RF to the receiver: SwA = Land, works if everything else is dead |
 
 **Network:** the Pi and the laptop are on **one Wi-Fi we control**: a travel router if we can get
-one; an iPhone hotspot is risky (Apple doesn't guarantee client-to-client traffic), so use fixed
-IPs and no mDNS. Not the venue Wi-Fi. Venue networks often block devices from talking to each
+one, or the venue Wi-Fi if the Pi and laptop can reach each other on it (test: no client
+isolation, no login page); an iPhone hotspot is risky (Apple doesn't guarantee client-to-client traffic), so use fixed
+IPs and no mDNS. Venue networks often block devices from talking to each
 other and need a login page. The laptop reaches Vultr through that same Wi-Fi. Phones reach
 Vultr over any internet.
 
@@ -38,10 +39,10 @@ Example: *"fly to the door and take a photo"*.
 |---|---|---|---|---|
 | 1 | You → phone | Mic | Speech while holding the button | The browser's `getUserMedia` needs **HTTPS**, so Vultr needs a domain + TLS (GoDaddy domain + Let's Encrypt) |
 | 2 | Phone → Vultr `POST /voice` | HTTPS | Audio clip (webm/opus, about 2–5 s) | **Fallback:** the laptop mic with a push-to-talk key, posted to the same endpoint |
-| 3 | Laptop: speech-to-text | faster-whisper (`small.en`, int8, CPU) | Text: "fly to the door and take a photo" | **Vultr has no hosted STT.** The phone audio goes to Vultr, which forwards it over the WSS to the laptop, or the phone page posts to the laptop through Vultr. Convert to 16 kHz mono wav first (iOS records mp4/AAC) |
+| 3 | Vultr: speech-to-text | **faster-whisper on our own Vultr VM** (CPU `small.en` int8 about 1 s per clip; GPU if credits allow) | Text: "fly to the door and take a photo" | Vultr has no *hosted* STT, so we run it ourselves. Convert to 16 kHz mono wav first (iOS records mp4/AAC). Laptop faster-whisper is the fallback if the VM is down |
 | 4 | Vultr: LLM brain | Vultr Serverless Inference, `api.vultrinference.com/v1/chat/completions`, `kimi-k2-instruct` (tool calling documented) | System prompt (personality, rules) + text + latest telemetry → **one tool call** `mission(where="the door", what="photo", after="come_back")` + a spoken one-liner ("On it.") | Dumb or dangerous requests: no tool call, just a sassy refusal |
 | 5 | Vultr → laptop | The WSS connection the laptop opened at startup | `{mission, reply_text, request_id}` | The laptop is behind NAT, so it **dials out**; the cloud never connects in |
-| 6 | Vultr: text-to-speech | In process | `reply_text` → mp3 | Sent to the laptop (and the phone) right away, so it talks while it starts moving |
+| 6 | Vultr: text-to-speech | **ElevenLabs** streaming API (the Jarvis voice), Vultr TTS as fallback | `reply_text` → mp3 | Sent to the laptop (and the phone) right away, so it talks while it starts moving |
 | 7 | Laptop → Nest Mini | Bluetooth A2DP | Plays the mp3 | The Nest is the laptop's default audio output |
 | 8 | Laptop: planner | In process | `mission()` → primitives: `scan` until `locate("door")` finds it → `goto(n, e)` stopping about 1 m short → photo → `return_home` | `locate()` (B) needs a forward frame + pose: step 9 |
 | 9 | Pi → laptop | HTTP `:8080/forward.mjpg` and `/forward.jpg` + `X-Pose` | JPEG frames, 640×480, 10–15 fps | Pi side: the camera grabber; there's no OpenCV capture on QNX |
@@ -53,7 +54,7 @@ Example: *"fly to the door and take a photo"*.
 | 15 | Laptop → Vultr | WSS | Telemetry at 2–5 Hz, JPEG at about 5 fps, `done`/`event`, the photo | Vultr fans out to every open dashboard |
 | 16 | Vultr: VLM (for "read" / "solve" / "describe") | Serverless Inference | Frame + question → answer text → TTS → back through steps 6–7 | |
 
-**Latency budget, voice to "moving":** upload 0.3 s + STT on the laptop 1.0 s + LLM 1.0 s + WSS
+**Latency budget, voice to "moving":** upload 0.3 s + STT on the VM 1.0 s + LLM 1.0 s + WSS
 0.2 s + first `cmd` 0.1 s ≈ **2.6 s**. Target is under 3 s (PRD section 8).
 
 ## 2. Inside the drone (QNX Pi)
