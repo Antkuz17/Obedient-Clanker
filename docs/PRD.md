@@ -129,9 +129,12 @@ projected through the real camera model). Everything except optical flow and fli
 be built against it. `python -m tools.cmd` is a REPL that speaks the protocol.
 
 **Perception input (B → A, on the Pi):** B's vision process sends UDP JSON to
-`127.0.0.1:7001`: `{"person_m": float|null, "palm": bool}` at ≥ 5 Hz. B's flow process sends
+`127.0.0.1:7001`: `{"person_m": float|null, "palm": bool}` at ≥ 5 Hz, optionally `"t"` (frame
+capture time) and `"infer_ms"` (`edge/vision`). B's flow process sends
 `{"fx", "fy", "q", "dt_us", "ground_m"}` (rad/s) to `127.0.0.1:7002`, and A's core forwards it
-to the FC as `OPTICAL_FLOW`. They are separate processes, so `slay`-ing them never stops the
+to the FC as `OPTICAL_FLOW`. The rangefinder bridge (`tools/rangefinder.py`) sends
+`{"range_m"}` (down, to the FC) and `{"fwd_m"}` (forward HC-SR04, -1 = no echo; the gate
+refuses forward moves ending within `obstacle_close_m`) to the same port. They are separate processes, so `slay`-ing them never stops the
 core.
 
 **Camera frames (A → B, on the Pi):** `edge/camgrab/camgrab.c` (QNX `libcamapi`) publishes the
@@ -153,8 +156,8 @@ jpeg_url, score}]`. A's planner and dashboard call it; B owns ingest and ranking
 
 | Rule | Default |
 |---|---|
-| Altitude window | 0.3–1.8 m (the HC-SR04 tops out at about 2 m) |
-| Geofence | Box ±3 m N/E around the first takeoff point of this edge run (later takeoffs don't move it) |
+| Altitude window | **Outdoors (2026-11-21): no ceiling.** Floor 0.3 m (moves can't go lower; takeoff / land can). `alt_max` in `edge/config.py` brings a ceiling back |
+| Geofence | **Off (outdoors).** `fence_half` in `edge/config.py` brings back a box ±N m around the first takeoff point. No per-move distance cap either (`max_step`) |
 | Max single move | 3 m |
 | Max horizontal / vertical speed | 0.5 / 0.3 m/s |
 | Battery | Reject new moves below 10.6 V (3S); auto-land below 10.2 V |

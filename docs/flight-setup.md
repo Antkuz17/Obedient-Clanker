@@ -1,5 +1,7 @@
 # Indoor flight setup: software optical flow + ultrasonic height
 
+**Outdoors (2026-11-21):** GPS navigation instead: `python3 -m tools.fc_profile --outdoor --apply --reboot` and run the edge with `--gps` (both in place; see TODO "Outdoors"). The rest of this page is the indoor setup.
+
 No GPS indoors and no optical-flow sensor. The Pi computes optical flow from the down webcam and
 sends it to ArduPilot as if it were a real flow sensor. An HC-SR04 gives height. ArduPilot's own
 BlueOS OpticalFlow extension does the same thing; we reuse its pixel-to-radians math.

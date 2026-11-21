@@ -31,7 +31,7 @@ write the other role's modules beyond the stubs and interfaces in PRD section 5.
 
 ```sh
 uv venv --python 3.11 .venv && uv pip install --python .venv -e '.[dev]'
-.venv/bin/python -m pytest -q                  # all tests (sim-based, about 20 s)
+.venv/bin/python -m pytest -q                  # all tests (sim-based, about 90 s)
 .venv/bin/python -m edge --sim                 # fake drone: TCP :7000, video :8080
 .venv/bin/python -m tools.cmd                  # REPL: takeoff alt=1 / move_body fwd=1 / t / land
 # ArduPilot SITL (Docker/OrbStack; x86 binary runs under Rosetta)

@@ -59,7 +59,7 @@ moves, yaw, gate rejection, return to the takeoff point, watchdog hover → land
 edge event loop makes ArduPilot's own GCS failsafe land the drone**. FC reboot under the relay:
 the edge re-sends stream rates + origin and position comes back.
 
-The test suite has 132 passing tests (`.venv/bin/python -m pytest -q`), plus `tools/sitl_flight.py`, which
+The test suite has 174 passing tests (`.venv/bin/python -m pytest -q`), plus `tools/sitl_flight.py`, which
 must print ALL PASS.
 
 Fixed after SITL: the stream transport handed pymavlink whole chunks, so messages queued up
@@ -128,6 +128,74 @@ position (altitude used to sag about 0.1 m per command).
      decodes its frames) and `tools/sitl_hbwd.py` against ArduPilot with the on-drone process
      layout: edge frozen by SIGSTOP while hovering → FC in LAND **273 ms** later with the FC's
      own failsafe off, landed + disarmed, heartbeats resume when the core comes back.
+
+## Limits removed for flying outdoors (2026-11-21, cloud lead's call; **drone lead: please review**)
+
+`edge/config.py`: `alt_max`, `fence_half`, `max_step`, `max_takeoff_alt` are now `None` (no
+limit); the gate and planner skip a limit that is `None`, so setting a number restores it. The
+0.3 m floor stays (a move can't fly into the ground; takeoff and land are unaffected). The brain
+prompt no longer says "indoors, 6 x 6 m box, 1.5 m"; the voice fast path has no distance or
+height cap. Limit tests now opt into the old values; new tests check there are none by default.
+Not changed: the dashboard's fence mini-map (`index.html`, being redesigned) still draws ±3 m.
+
+Then, same day: **every limit we set is gone.**
+- **2 m height cap** (it came from flow + a 2 m ultrasonic with the GPS off): `edge --gps` (no
+  fake EKF origin, no optical-flow requirement; on in `supervisor_pi.json`) +
+  `tools/fc_profile.py --outdoor --apply --reboot` (ArduPilot's GPS defaults: `GPS1_TYPE=1`,
+  `EK3_SRC1_POSXY/VELXY/VELZ=3`, baro height, compass yaw). **Not applied to the FC yet.**
+- **Speed:** the edge now writes `WP_SPD=20`, `WP_SPD_UP=10` (ArduPilot's maxima) instead of
+  0.5 / 0.3 m/s; descent `WP_SPD_DN=1.5` (ArduPilot's default; faster risks vortex ring state).
+  Real top speed is set by the airframe and the FC's `ANGLE_MAX` (default, not ours). No cap
+  on the scan op's turn rate.
+- Timeouts (edge + planner) now come from `edge.config.flight_time` with assumed speeds
+  (≤ 2 m/s across, ≤ 1 m/s up/down), so faster settings never shorten them; the sim has its
+  own speeds (`SimVehicle.SPEED_*`).
+- Dashboard: the ±3 m fence map is now a track around the takeoff point that zooms to fit;
+  the "can't see the floor" warning is gone.
+- **Kept on purpose (they react to danger, they don't limit where it flies):** stop/refuse
+  forward moves near a person (1 m) or an echo (0.7 m); refuse forward moves while the person
+  detector is down (real drone); battery refuse 10.6 V / land 10.2 V; station link lost →
+  hover 1 s, land 5 s; cloud lost 30 s while idle in the air → land; no EKF position → no
+  takeoff / land; pilot's switch always wins; the 0.3 m floor for moves. Each is one line in
+  `edge/config.py` or `station/station.py` if the team wants it different.
+- Not re-run: SITL (`tools/sitl_*`), which now fly at the new speeds.
+
+## On-board person detector + forward obstacle sensor (2026-11-21 afternoon, cloud lead with Claude; **drone lead: please review before flying**)
+
+Suite: 185 passed (11 new in `tests/test_vision.py`). **Not run with the real model or on the
+Pi yet**: no TFLite runtime on the laptop (installing one was blocked here); the Pi has
+`tflite-runtime` 2.21.
+
+| Piece | Files | Verified how |
+|---|---|---|
+| Person detector: camgrab_fwd → COCO SSD-MobileNet v1 (quantised, class 0 = person) → nearest-person distance → UDP :7001 with frame time + inference ms, up to 10 Hz, 2 threads. Silent when frames stop (the gate then refuses forward moves). Exit 2 if the model/runtime is missing (supervisor retries) | `edge/vision/`, `tools/fetch_person_model.py` (pinned SHA-256), `supervisor_pi.json` (prio 41) | fake interpreter: output mapping by name / shape, score + class filter, uint8 / float input, the loop; start-up failure exit code |
+| Distance: full body → 1.7 m / box height; cut off top or bottom (anyone within ~2.7 m on a 45° C270) → 0.4 m shoulders / box width, erring closer. ±30 % | `edge/vision/__init__.py` | unit tests |
+| Gate: forward moves must **end** ≥ `person_close_m` (1.0) from a person and ≥ `obstacle_close_m` (0.7) from a forward echo; a running forward move stops when either gets too close. `--require-obstacle-sensor` makes a silent forward sensor block forward moves | `edge/safety.py`, `edge/executor.py`, `edge/server.py` (`fwd_m` on :7002, stale after 0.5 s), `edge/config.py`, `edge/__main__.py` | unit + sim tests |
+| Forward HC-SR04 on the same Arduino (D11/D12), pinged alternately with the down one, each ~20 Hz | `tools/hcsr04/hcsr04.ino`, `tools/rangefinder.py` | line parsing test; **sketch not compiled or uploaded** |
+
+Known limits: palm stop is not done (`palm` always false). An unwired forward sensor reads "clear". A
+mission to a *person* now has its approach end right at the 1 m person limit, so it may be
+refused; that is the gate doing its job.
+
+## Fourth review fixes (2026-11-21 afternoon, cloud lead with Claude; **drone lead: please review the `edge/` rows before flying**)
+
+Suite: 174 passed (11 new tests). Not run on SITL or the real FC.
+
+| # | Problem | Fix | Checked how |
+|---|---|---|---|
+| 1 | **Pilot PIN brute-forceable**: 4 digits, no attempt limit (9,000 POSTs to `/text`) | `cloud/app.py`: 5 wrong PINs per address, then locked 30 s, doubling (max 32 min); empty PIN never counts; `deploy.sh` makes an **8-digit** PIN and replaces one shorter than 6. Non-ASCII PIN no longer 500s | test |
+| 2 | No-PIN commands were spoken (ElevenLabs credits) and broadcast to every viewer and the laptop speaker | refusal goes to the caller only; `/memory/search` limited to 10/min per address (still open to viewers) | tests |
+| 3 | One slow phone stalled the station relay and every other viewer (sends awaited in turn) | `cloud/app.py` `Viewer`: own sender task per viewer; frames + telemetry latest-wins, other messages queued, dropped at 500 behind. Station `memory_search` no longer blocks the relay | test |
+| 4 | Two tabs in one browser shared a client id; the first froze | `Hub.viewer_id`: unique ids | test |
+| 5 | QNX stats UDP :7010 took datagrams from anyone on the Wi-Fi | `station/station.py`: only EDGE_HOST and localhost | test |
+| 6 | Memory frames (caption + embedding, paid) every 15 s while sitting on the ground | only while airborne | — |
+| 7 | Planner set its fence centre even when the takeoff was refused; STOP/LAND tasks were unreferenced (GC could drop them) | `station/planner.py` | suite |
+| 8 | `edge/executor.py`: a bad-flow streak from one move carried into the next (one blurry frame could abort it) | streak reset when no move runs | test |
+| 9 | `edge/executor.py` + `server.py`: a failsafe LAND fired while disarmed latched and refused every takeoff until restart; the 1 s tick-failure landing fired only once per edge run | cleared when there is nothing to land; re-armed after a good tick | test |
+| 10 | `edge/mav.py`: a failed arm was reported only after the full climb timeout (~11 s) | `takeoff_failed` flag; the executor stops waiting | test (sim stand-in) |
+| 11 | `edge/server.py`: safety loop slept 20 ms *after* each tick (ran below 50 Hz, tick time counted as jitter) | absolute deadlines, no catch-up bursts | test: 5 ms tick still ~50 Hz |
+
+Not changed: the real drone still refuses forward moves with no person detector (`edge/vision/` doesn't exist; `supervisor_pi.json` doesn't pass `--no-person-check`). Decide before the demo.
 
 ## Third review fixes (2026-11-21, cloud lead with Claude; **drone lead: please review before flying**)
 

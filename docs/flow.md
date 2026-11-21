@@ -165,8 +165,8 @@ Limits live in `edge/config.py`:
 
 | Rule | Limit |
 |---|---|
-| Altitude window | 0.3–1.5 m (takeoff at most 1.5 m) |
-| Geofence | ±3 m north/east around the first takeoff of this edge run. Later takeoffs don't move it; takeoff outside it is refused |
+| Altitude window | Floor 0.3 m; **no ceiling** (outdoors, 2026-11-21; `alt_max` to restore) |
+| Geofence | **Off** (outdoors). `fence_half` restores ±N m around the first takeoff of this edge run |
 | Single move | ≤ 3 m |
 | Speed | 0.5 m/s horizontal, 0.3 m/s vertical, 45°/s yaw, scan ≤ 30°/s |
 | Battery | Moves refused below 10.6 V; auto-land below 10.2 V |

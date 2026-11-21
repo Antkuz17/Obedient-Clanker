@@ -7,13 +7,13 @@
 Without the Vultr key the station silently uses the rule brain: no LLM, no speech-to-text,
 no vision, no memory, no voice.
 
-Status on the cloud lead's laptop, checked 2026-11-21:
+Status on the cloud lead's laptop, checked 2026-11-21 (keys rechecked 14:10: Vultr key answers `check_ai --only models`; realtime STT 401 still open, see STATUS):
 
 | ✓ | `.env` variable | Where | What it powers / how to get it | Status |
 |---|---|---|---|---|
-| [ ] | 🔴 `VULTR_INFERENCE_KEY` | laptop + VM | Brain (`glm-5.3-flash`), STT (`whisper-large-v3-turbo`), vision (`qwen3.8-27b`), embeddings, rerank, `chatterbox` TTS. Vultr dashboard → Serverless Inference. A working key was used for `docs/models.md` timings; get it from whoever ran those | **blank** |
-| [ ] | 🔴 `ELEVENLABS_API_KEY` | laptop + VM | Jarvis voice. elevenlabs.io → Profile → API keys. Without it: `chatterbox`, then text only | **blank** |
-| [ ] | 🔴 `ELEVENLABS_VOICE_ID` | laptop + VM | The cloned/chosen Jarvis voice. ElevenLabs → Voices → copy ID | **blank** |
+| [x] | `VULTR_INFERENCE_KEY` | laptop + VM | Brain (`glm-5.3-flash`), STT (`whisper-large-v3-turbo`), vision (`qwen3.8-27b`), embeddings, rerank, `chatterbox` TTS. Vultr dashboard → Serverless Inference. A working key was used for `docs/models.md` timings; get it from whoever ran those | set |
+| [x] | `ELEVENLABS_API_KEY` | laptop + VM | Jarvis voice. elevenlabs.io → Profile → API keys. Without it: `chatterbox`, then text only | set |
+| [x] | `ELEVENLABS_VOICE_ID` | laptop + VM | The cloned/chosen Jarvis voice. ElevenLabs → Voices → copy ID | set |
 | [x] | `STATION_TOKEN` | laptop + VM (same value) | Laptop ↔ cloud link auth. Generated 2026-11-21; `cloud/deploy.sh` copies it | set |
 | [x] | `CONTROL_PIN` | VM only | Dashboard pilot PIN (viewers without it can only watch + STOP) | optional: `deploy.sh` makes one up and prints it |
 | [ ] | `CLOUD_URL` | laptop only | `wss://<your-domain>` of the Vultr VM. Needs the VM + domain below | **blank** |
@@ -36,6 +36,31 @@ B = Person B (on-drone perception + hardware). Split changed 2026-11-21: A took 
 software that isn't tied to drone hardware (localization, VLM tasks, visual memory).
 Details and commands: [STATUS.md](STATUS.md). Plan and split: [PRD.md](PRD.md). Tick items
 here as they're done.
+
+## 🔴 Outdoors (decided 2026-11-21): what has to change before it can fly outside
+
+Fence, ceiling and step limits are already off (STATUS "Limits removed"). These are not rules,
+they are how the drone navigates, and they cap it at about 2 m up until changed:
+
+- [ ] **Turn the GPS on** (HGLRC M100-PRO is already on the drone, disabled): on the Pi,
+      `python3 -m tools.fc_profile --outdoor` (check), then `--outdoor --apply --reboot`.
+      Re-enable the GPS arming check if it was skipped (`ARMING_SKIPCHK`, flight-setup.md).
+      Wait for a 3D fix before arming; the edge refuses takeoff until the EKF has a position
+- [x] **Edge in GPS mode** (code done): `edge --gps` (in `supervisor_pi.json`): no fake EKF
+      origin, no optical-flow requirement
+- [ ] **Link range:** the laptop ↔ Pi link is Wi-Fi. No station heartbeat for 1 s → hover, 5 s → land
+      where it is. Range test it outdoors; consider a better antenna / router on the field
+- [x] **Speed** (code done): `WP_SPD=20`, `WP_SPD_UP=10`, `WP_SPD_DN=1.5` written on every
+      connect. Top speed now depends on the airframe and `ANGLE_MAX`
+- [ ] **Battery:** 3S 3000 mAh on an F450 with 10" props is roughly 8–12 min; measure it
+- [ ] **Forward safety at speed:** the forward HC-SR04 sees 2 m and the stop distance is 0.7 m.
+      At 20 m/s the drone covers that in a tenth of a second and needs ~10+ m to stop, so the
+      person / obstacle stops only protect at low speed. The person detector's range estimate
+      is weak beyond ~5 m
+- [x] **Dashboard**: fence map replaced by a zooming track
+- [ ] **Rules:** Transport Canada for a drone over 250 g (an F450 build is well over): registration, a pilot certificate,
+      122 m (400 ft) max, distance from bystanders, and controlled airspace near
+      London Airport (CYXU). Check before flying on campus
 
 ## Now: before anything flies
 
@@ -111,7 +136,11 @@ to end on the sim with no keys). Still to do with real keys / hardware:
 - [x] **A: jitter histogram** (`tools/jitter.py`; run on the Pi as root) under a CPU hog, with and without priority
 - [x] **A: supervisor** (no HAM; `tools/supervisor.py`): restarts camgrab / flow / vision / relay, logs restart time in ms
 - [x] **A: video server as its own process** (pose from the core over localhost UDP; `python -m edge.video`, core `--video-proc 127.0.0.1:7003`; in the Pi supervisor config at prio 10)
-- [ ] **B: TFLite person detection** → UDP :7001 (`person_m`); show inference ms
+- [ ] **TFLite person detection** → UDP :7001 (`person_m`, `t`, `infer_ms`): **code done** (`edge/vision/`, in `supervisor_pi.json` at prio 41; tests with a fake interpreter). Still to do on the Pi:
+  - [ ] `python -m tools.fetch_person_model` on the laptop, then `python -m tools.deploy_pi`
+  - [ ] On the Pi: `python3 -m edge.vision --shm camgrab_fwd --print`. Check it starts (tflite-runtime 2.21), the inference time, and that a person in view reads a sensible distance (stand at 1, 2 and 3 m). Class 0 must be "person" (the script prints the first labels)
+  - [ ] Then forward moves work on the real drone without `--no-person-check`
+- [ ] **Forward obstacle HC-SR04** (code done: sketch pings down D9/D10 and forward D11/D12 alternately; `rangefinder.py` sends `fwd_m`; gate keeps 0.7 m from echoes): wire it, re-upload the sketch, check `python -m tools.rangefinder ... --print` shows forward readings (an unwired sensor reads "clear"), then add `--require-obstacle-sensor` to the edge in `supervisor_pi.json`
 - [ ] **B: palm stop** (QNX workshop hand model)
 - [x] **A: dashboard QNX card** (code done, sim-verified): live 50 Hz loop jitter graph
       (`edge --stats-udp <laptop>:7010`), jitter benchmark table (`tools.jitter --compare --udp
