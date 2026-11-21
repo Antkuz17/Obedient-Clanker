@@ -370,7 +370,7 @@ def create_app(s: Settings | None = None, ai: AI | None = None) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def index():
-        return (STATIC / "index.html").read_text()
+        return (STATIC / "index.html").read_text(encoding="utf-8")
 
     @app.get("/health")
     async def health():
