@@ -119,6 +119,8 @@ class MavVehicle(Vehicle):
                                                     mav.MAV_LANDED_STATE_UNDEFINED)
                 elif t == "STATUSTEXT":
                     log.info("FC: %s", msg.text)
+                    if msg.text.startswith(("PreArm", "Arm", "Takeoff")):
+                        self.last_error = msg.text
                 # flow quality is what *we* last sent; stale flow = 0
                 s.flow_quality = (self._last_flow_q
                                   if time.monotonic() - self._last_flow_t < 0.5 else 0)
@@ -143,7 +145,7 @@ class MavVehicle(Vehicle):
         while time.monotonic() < deadline and not self.state().armed:
             time.sleep(0.1)
         if not self.state().armed:
-            log.error("arming failed; check STATUSTEXT for the pre-arm reason")
+            log.error("arming failed: %s", self.last_error or "no reason from FC")
             return
         self._cmd(mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 0, 0, 0, 0, alt)
 

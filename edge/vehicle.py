@@ -29,6 +29,8 @@ class VehicleState:
 class Vehicle:
     """Minimal flight primitives. All targets are local NED positions + yaw (deg)."""
 
+    last_error: str = ""  # latest FC complaint (e.g. "PreArm: ..."), surfaced in done reasons
+
     def state(self) -> VehicleState:
         raise NotImplementedError
 
