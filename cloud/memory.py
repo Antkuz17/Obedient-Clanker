@@ -93,6 +93,15 @@ class Memory:
             if score >= self.min_score:
                 out.append({**_row(r), "score": round(score, 3)})
         out.sort(key=lambda d: -d["score"])
+        out = out[:20]
+        if len(out) > 1 and hasattr(self.ai, "rerank"):
+            try:  # cross-encoder over the captions; keyword/recency bonus kept as a tiebreak
+                rr = await self.ai.rerank(q, [h["caption"] for h in out])
+                for h, s in zip(out, rr):
+                    h["score"] = round(s + 0.1 * (h["score"] - out[-1]["score"]), 3)
+                out.sort(key=lambda d: -d["score"])
+            except Exception:
+                pass  # no reranker on this key: first-stage order stands
         return out[:k]
 
     def recent(self, kind: str | None = None, limit: int = 20) -> list[dict]:

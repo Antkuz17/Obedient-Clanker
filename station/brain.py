@@ -40,6 +40,8 @@ Turn the user's request into tool calls, in order. Rules:
 - Distances in metres, angles in degrees. "a bit" = 0.5 m. "turn around" = 180 degrees.
 - Positive fwd = forward, positive right = right, positive up = up, positive yaw = clockwise.
 - Flying to a named thing ("the door", "the red poster") is a mission, not a move.
+- "Fly to where I'm pointing" / "go to that" while pointing is a mission with target \
+"where I'm pointing".
 - "What's written here", "solve this", "what do you see" with no named target is look.
 - "Where did I leave X" / "have you seen X" is recall; fly_there only if they ask you to go.
 - The drone flies indoors between 0.3 and 1.5 m high, inside a 6 x 6 m box, at most 3 m per \
@@ -224,7 +226,10 @@ def rule_parse(text: str, telemetry: dict | None = None) -> BrainResult:
     if re.search(r"take ?off|lift off|get up|launch", t):
         m = re.search(_NUM + r" ?(?:m|metres?|meters?)", t)
         actions.append({"kind": "takeoff", "alt": _n(m and m.group(1), 1.0)})
-    if m := _mission:
+    if re.search(r"(where|what|wherever) i'?m pointing|pointing at", t):
+        actions.append({"kind": "mission", "target": "where I'm pointing", "action": _task(t),
+                        "question": text, "after": "stay"})
+    elif m := _mission:
         target = m.group(1).strip()
         after = "come_back" if re.search(r"come back|return", t) else "stay"
         actions.append({"kind": "mission", "target": target, "action": _task(t),

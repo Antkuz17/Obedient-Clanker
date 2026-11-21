@@ -70,6 +70,10 @@ to end on the sim with no keys). Still to do with real keys / hardware:
       floor contact) → NED; sim ground-truth stub `station/localize_stub.py`
 - [x] **A: VLM tasks** (`station/vision.py`) and **visual memory** (`cloud/memory.py`: caption +
       embedding + pose in SQLite, numpy search, `/memory/search`)
+- [x] **A: closed-loop approach** (fly half way, look again, correct; sim with +40 % range error:
+      0.89 m → 0.34 m off the stop point), **second look for shaky sightings** (conf < 0.7),
+      **"fly to where I'm pointing"** (VLM names the object), **memory re-ranking**
+      (`bge-reranker-v2-m3` via `/rerank`, falls back if the key/endpoint doesn't have it)
 - [x] **A: cloud app + phone dashboard** (`cloud/app.py`, `cloud/static/index.html`): push-to-talk,
       live video, telemetry, STOP/LAND for anyone, one viewer has the controls, flight log,
       photos, memory search

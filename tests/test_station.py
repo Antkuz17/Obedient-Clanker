@@ -435,3 +435,86 @@ async def test_station_lands_when_cloud_lost(rig, tmp_path, monkeypatch):
     await _until(lambda: not sim.state().armed, 30)
     assert said == ["I've lost the cloud, so I'm landing."]
     wd.cancel()
+
+
+# --- off-drone perception: closed-loop approach, confirmation, pointing, rerank --------------
+def biased_locate(scale: float):
+    """Ground truth with the range from the capture pose scaled: size-prior error."""
+    async def loc(ai, name, jpeg, pose, K):
+        hit = await localize_stub.locate(ai, name, jpeg, pose, K)
+        if hit:
+            hit = {**hit, "n": pose.n + scale * (hit["n"] - pose.n),
+                   "e": pose.e + scale * (hit["e"] - pose.e)}
+        return hit
+    return loc
+
+
+async def test_closed_loop_approach_beats_one_shot(rig):
+    sim, edge = rig
+    chair = (-1.0, 2.0)
+    errs = {}
+    for refine_max in (0, 2):
+        p, said, _ = make_planner(sim, edge)
+        p.locate = biased_locate(1.4)  # range 40 % too long
+        p.cfg.refine_beyond, p.cfg.refine_max = 1.5, refine_max
+        await run_plan(p, [{"kind": "takeoff", "alt": 1.0}, {"kind": "home"}])
+        await run_plan(p, [{"kind": "move", "yaw_deg": -sim.state().yaw}])
+        await run_plan(p, [{"kind": "mission", "target": "chair", "action": "none",
+                            "question": "", "after": "stay"}], timeout=60)
+        s = sim.state()
+        errs[refine_max] = abs(math.hypot(chair[0] - s.n, chair[1] - s.e) - 1.0)
+        if refine_max:
+            assert any(l.startswith("refine 0: new fix") for l in p.log)
+    print("approach error (m):", errs)
+    assert errs[2] < 0.6 * errs[0], errs
+
+
+async def test_shaky_sighting_needs_a_second_look(rig):
+    sim, edge = rig
+    calls = []
+
+    async def flaky(ai, name, jpeg, pose, K):
+        calls.append(1)
+        return {"n": 3.0, "e": 0.0, "dist": 3.0, "bearing": 0.0, "conf": 0.4} if len(calls) == 1 else None
+
+    p, said, _ = make_planner(sim, edge)
+    p.locate = flaky
+    p.cfg.scan_step = 180  # two looks only
+    await run_plan(p, [{"kind": "takeoff", "alt": 1.0},
+                       {"kind": "mission", "target": "door", "action": "none", "question": "",
+                        "after": "stay"}], timeout=40)
+    assert "unconfirmed sighting" in p.log and "couldn't find the door" in said[-1]
+
+
+async def test_fly_to_where_im_pointing(rig):
+    sim, edge = rig
+    r = rule_parse("fly to where I'm pointing", {"armed": True})
+    assert r.actions[0]["target"] == "where I'm pointing"
+    p, said, _ = make_planner(sim, edge, ai=FakeAI(vision_reply="The door."))
+    await run_plan(p, r.actions, timeout=60)
+    assert said[0] == "You're pointing at the door." and said[-1] == "At the door."
+    assert sim.state().n == pytest.approx(2.0, abs=0.4)
+    p, said, _ = make_planner(sim, edge, ai=FakeAI(vision_reply="NONE"))
+    await run_plan(p, r.actions)
+    assert "can't tell what you're pointing at" in said[-1]
+
+
+async def test_memory_rerank_and_fallback(tmp_path):
+    from cloud.memory import Memory
+
+    class RerankAI(FakeAI):
+        async def rerank(self, q, docs):
+            return [1.0 if "drawer" in d else 0.0 for d in docs]
+
+    mem = Memory(tmp_path / "a", RerankAI(), min_score=-1)
+    await mem.ingest(b"1", {"n": 0, "e": 0, "t": 1}, "keys keys keys on a table")
+    await mem.ingest(b"2", {"n": 1, "e": 1, "t": 2}, "keys inside an open drawer")
+    assert (await mem.search("keys"))[0]["caption"] == "keys inside an open drawer"
+
+    class BrokenRerank(FakeAI):
+        async def rerank(self, q, docs):
+            raise httpx.HTTPStatusError("404", request=None, response=None)
+
+    mem = Memory(tmp_path / "b", BrokenRerank())
+    await mem.ingest(b"1", {"n": 0, "e": 0, "t": 1}, "silver keys on a table")
+    assert (await mem.search("keys"))[0]["caption"] == "silver keys on a table"

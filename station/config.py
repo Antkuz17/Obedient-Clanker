@@ -47,6 +47,7 @@ class Settings:
     vision_model: str = field(default_factory=lambda: _env("VISION_MODEL", "qwen3.8-27b"))
     stt_model: str = field(default_factory=lambda: _env("STT_MODEL", "whisper-large-v3-turbo"))
     embed_model: str = field(default_factory=lambda: _env("EMBED_MODEL", "qwen3-embedding-4b"))
+    rerank_model: str = field(default_factory=lambda: _env("RERANK_MODEL", "bge-reranker-v2-m3"))
     vultr_tts_model: str = field(default_factory=lambda: _env("VULTR_TTS_MODEL", "chatterbox"))
     # ElevenLabs (voice out). Empty key -> Vultr TTS -> text only.
     eleven_key: str = field(default_factory=lambda: _env("ELEVENLABS_API_KEY"))

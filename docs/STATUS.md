@@ -15,6 +15,7 @@ to 1 m short of the door, took the photo, came home.
 | Brain: Jarvis prompt, 8 tools, refusals, rule fallback with no key / LLM down | `station/brain.py` | unit tests (LLM mocked) |
 | Planner: actions → gated primitives, scan until found, approach 1 m short, 3 m legs, fence clamp, tasks, recall, stop pre-empts | `station/planner.py` | e2e vs the sim edge |
 | `locate()`: VLM box → bearing/range → NED; sim ground-truth stub | `station/localize.py`, `station/localize_stub.py` | geometry recovers sim object positions to 0.15 m; **VLM box quality untested** |
+| Closed-loop approach, second-look confirmation, "where I'm pointing", memory rerank | `station/planner.py`, `station/vision.py`, `cloud/memory.py`, `station/ai.py` | sim tests (biased locate: 0.89 → 0.34 m error); rerank mocked, **`/rerank` endpoint on Vultr unverified** |
 | Vision tasks read / solve / describe / caption | `station/vision.py` | mocked |
 | Visual memory: SQLite + numpy cosine + keyword + recency | `cloud/memory.py` | unit test with a fake embedder |
 | Cloud: `/voice`, `/text`, `/ws/station` (token), `/ws/ui`, control holder, STOP/LAND for all, memory API, flight log | `cloud/app.py` | TestClient test + smoke run |

@@ -84,6 +84,15 @@ class AI:
         data = sorted(r.json()["data"], key=lambda d: d.get("index", 0))
         return [d["embedding"] for d in data]
 
+    async def rerank(self, query: str, docs: list[str]) -> list[float]:
+        """Relevance of each doc to the query (Cohere/Jina-style /rerank). Higher = better."""
+        r = await self._post("rerank", "/rerank", json={
+            "model": self.s.rerank_model, "query": query, "documents": docs})
+        out = [0.0] * len(docs)
+        for x in r.json().get("results", []):
+            out[x["index"]] = float(x.get("relevance_score", x.get("score", 0.0)))
+        return out
+
     async def transcribe(self, audio: bytes, filename: str = "clip.webm") -> str:
         wav = await to_wav16k(audio)
         name = "clip.wav" if wav is not audio else filename

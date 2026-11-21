@@ -38,6 +38,9 @@ MemorySearch = Callable[[str], Awaitable[list[dict]]]
 OnPhoto = Callable[[Frame, str], Awaitable[None]]
 
 
+POINTING = re.compile(r"point")
+
+
 class PlanAborted(Exception):
     pass
 
@@ -49,6 +52,10 @@ class PlannerConfig:
     scan_step: float = 45.0        # deg per look while searching (60 deg HFOV, some overlap)
     fence_margin: float = 0.4      # stay this far inside the edge's geofence
     max_step: float = SafetyConfig.max_step
+    refine_beyond: float = 2.0     # target further than this: fly half way, look again, correct
+    refine_max: int = 2            # at most this many re-looks on the way in
+    confirm_below: float = 0.7     # sightings less confident than this need a second look
+    confirm_m: float = 0.6         # ... that lands within this distance of the first
 
 
 def compass(dn: float, de: float) -> str:
@@ -203,16 +210,30 @@ class Planner:
         if a.get("yaw_deg"):
             await self._prim("yaw", deg=a["yaw_deg"], relative=True)
 
+    async def look_for(self, target: str, K: dict) -> tuple[dict, Frame] | None:
+        """One look. A shaky sighting (conf < confirm_below) must be seen again, in about the
+        same place, in a second frame; the two fixes are averaged."""
+        fr = await self._frame()
+        hit = await self.locate(self.ai, target, fr.jpeg, fr.pose, K)
+        if hit and hit.get("conf", 1.0) < self.cfg.confirm_below:
+            fr2 = await self._frame()
+            hit2 = await self.locate(self.ai, target, fr2.jpeg, fr2.pose, K)
+            if not hit2 or math.hypot(hit2["n"] - hit["n"], hit2["e"] - hit["e"]) > self.cfg.confirm_m:
+                self.log.append("unconfirmed sighting")
+                return None
+            hit = {**hit, "n": (hit["n"] + hit2["n"]) / 2, "e": (hit["e"] + hit2["e"]) / 2,
+                   "conf": max(hit["conf"], hit2["conf"])}
+        return (hit, fr) if hit else None
+
     async def find(self, target: str) -> tuple[dict, Frame] | None:
         """Look ahead, then turn step by step for at most one full turn."""
         K = await self.camera.K() if self.camera else {}
         steps = int(round(360 / self.cfg.scan_step))
         for i in range(steps):
-            fr = await self._frame()
-            hit = await self.locate(self.ai, target, fr.jpeg, fr.pose, K)
-            self.log.append(f"look {i}: {'found' if hit else 'nothing'}")
-            if hit:
-                return hit, fr
+            found = await self.look_for(target, K)
+            self.log.append(f"look {i}: {'found' if found else 'nothing'}")
+            if found:
+                return found
             if i < steps - 1:
                 await self._prim("yaw", deg=self.cfg.scan_step, relative=True)
         return None
@@ -220,10 +241,13 @@ class Planner:
     async def _do_mission(self, a: dict) -> None:
         target = re.sub(r"^(the|a|an|my|that) ", "", a["target"].strip().lower())
         await self._ensure_airborne()
+        if POINTING.search(target):
+            target = await self._pointed_at()
         found = await self.find(target)
         if not found:
             raise PlanAborted(f"I looked all the way round and couldn't find the {target}.")
         hit, _ = found
+        hit = await self._refine(target, hit)
         cn, ce = self.tel.get("n", 0.0), self.tel.get("e", 0.0)
         d = math.hypot(hit["n"] - cn, hit["e"] - ce)
         if d > self.cfg.approach_m + 0.2:
@@ -240,6 +264,49 @@ class Planner:
             await self._prim("return_home")
         elif after == "land":
             await self._prim("land")
+
+    def _stop_point(self, hit: dict) -> tuple[float, float, float]:
+        """(n, e, distance to target) of the point approach_m short of the target."""
+        cn, ce = self.tel.get("n", 0.0), self.tel.get("e", 0.0)
+        d = math.hypot(hit["n"] - cn, hit["e"] - ce)
+        f = max(0.0, (d - self.cfg.approach_m) / d) if d > 1e-6 else 0.0
+        return cn + f * (hit["n"] - cn), ce + f * (hit["e"] - ce), d
+
+    async def _refine(self, target: str, hit: dict) -> dict:
+        """Closed-loop approach. Range from box size is the weakest number in locate()
+        (+-30 % or worse); bearing is good. So while the target is far: fly half way to the
+        stop point, face it, look again and take the new fix. Each re-look shrinks the range
+        error with the distance."""
+        K = await self.camera.K() if self.camera else {}
+        for i in range(self.cfg.refine_max):
+            sn, se, d = self._stop_point(hit)
+            if d <= self.cfg.refine_beyond:
+                break
+            cn, ce = self.tel.get("n", 0.0), self.tel.get("e", 0.0)
+            await self._goto((cn + sn) / 2, (ce + se) / 2)
+            cn, ce = self.tel.get("n", 0.0), self.tel.get("e", 0.0)
+            await self._face(math.degrees(math.atan2(hit["e"] - ce, hit["n"] - cn)))
+            again = await self.look_for(target, K)
+            self.log.append(f"refine {i}: {'new fix' if again else 'lost it, keeping the old fix'}")
+            if not again:
+                break
+            hit = again[0]
+        return hit
+
+    async def _pointed_at(self) -> str:
+        """"Fly to where I'm pointing": the vision model names what the person points at."""
+        if not self.ai:
+            raise PlanAborted("I need my vision model to see where you're pointing.")
+        fr = await self._frame()
+        try:
+            name = await vision.ask(self.ai, "pointing", fr.jpeg)
+        except Exception as e:
+            raise PlanAborted(f"My vision model didn't answer ({e}).") from e
+        name = re.sub(r"^(the|a|an) ", "", name.strip(" .").lower())
+        if not name or "none" in name or len(name.split()) > 4:
+            raise PlanAborted("I can't tell what you're pointing at. Point at it in front of me.")
+        await self.say(f"You're pointing at the {name}.")
+        return name
 
     async def _task_at(self, action: str, question: str, target: str = "") -> None:
         fr = await self._frame()
