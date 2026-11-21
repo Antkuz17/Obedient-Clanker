@@ -2,6 +2,12 @@
 
 Last updated: 2026-11-21. Update this at the end of every session.
 
+**2026-11-21 night (cloud lead):** one-line refusals (planner holds the brain's reply until the
+edge accepts the first flight step; demo sarcastic lines lose the "Safety says no:" prefix;
+dashboard parses `op (demo):`); `locate()` fixed (VLM reasoning off: it used all 120 tokens and
+returned nothing); `rule_parse` reads cm. `check_ai` 15/15 with the live keys, 207 tests pass.
+Open: dashboard auth + VM deploy (decide together), rehearsal with the real drone.
+
 **2026-11-21: pilot PIN removed.** `CONTROL_PIN`, the PIN check and lockout (`cloud/app.py`), the
 dashboard PIN dialog, and the `deploy.sh` PIN generation are gone. Any dashboard viewer (local or
 through the proxy) can now type, talk, LAND and STOP. The review-fix rows below that mention the
@@ -20,7 +26,7 @@ to 1 m short of the door, took the photo, came home.
 | Brain: Jarvis prompt, 8 tools, refusals, rule fallback with no key / LLM down. **Spoken "stop" / "land" (short utterances only) skip the LLM** (`is_urgent`); `/voice` logs speech-to-text and brain latency per command | `station/brain.py`, `cloud/app.py` | unit tests (LLM mocked) |
 | Voice latency: **fast path** (`fast_parse`: whole utterance = simple clauses with explicit distances inside limits, e.g. "forward 1 m and turn left 90", skips the LLM) and optional **streamed STT** (`/ws/voice` → `voxtral-mini-4b-realtime`, off unless `STT_STREAM_MODEL` is set) | `station/brain.py`, `station/ai.py` `StreamingSTT`, `cloud/app.py`, `cloud/static/index.html` | **end to end on the live server with real speech, 2026-11-21 14:20**: upload path release→command 0.5–0.8 s for simple commands (fast path), 1.5 s via the LLM. Streaming measured *slower*: a steady ~1.4 s after release (the realtime model lags real-time audio), so it is off by default |
 | Planner: actions → gated primitives, scan until found, approach 1 m short, 3 m legs, fence clamp, tasks, recall, stop pre-empts | `station/planner.py` | e2e vs the sim edge |
-| `locate()`: VLM box → bearing/range → NED; sim ground-truth stub | `station/localize.py`, `station/localize_stub.py` | geometry recovers sim object positions to 0.15 m; **VLM box quality untested** |
+| `locate()`: VLM box → bearing/range → NED; sim ground-truth stub | `station/localize.py`, `station/localize_stub.py` | geometry recovers sim object positions to 0.15 m; live VLM boxes on check_ai sim frames within 0.2 deg bearing (2026-11-21 night); **not yet tried on a real door** |
 | Closed-loop approach, second-look confirmation, "where I'm pointing", memory rerank | `station/planner.py`, `station/vision.py`, `cloud/memory.py`, `station/ai.py` | sim tests (biased locate: 0.89 → 0.34 m error); rerank mocked, **`/rerank` endpoint on Vultr unverified** |
 | Vision tasks read / solve / describe / caption | `station/vision.py` | mocked |
 | Visual memory: SQLite + numpy cosine + keyword + recency | `cloud/memory.py` | unit test with a fake embedder |

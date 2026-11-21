@@ -217,17 +217,20 @@ every command with its real safety gate but never flies. Run it with
 - [ ] Devpost: the QNX / on-board half.
 
 **Cloud lead (teammate): station/ and cloud/**
-- [ ] Demo wording: a refused command is spoken as the brain's "On it." and then "Safety says
-      no: I'd love to turn around...". Make it one line: skip the brain's reply when the edge
-      refuses, and drop the "Safety says no:" prefix for demo-mode lines (the edge reason
-      already says it; demo refusals carry `(demo)` in the `safety_reject` event).
-- [ ] `locate()` / "fly to the door": `check_ai` vision fails (no usable box). Test on a real
-      frame from `http://192.168.68.131:8080/forward.jpg` before changing the prompt.
-- [ ] `rule_parse` reads "50 cm" as 50 m (the gate catches it, still a bug).
+- [x] Demo wording (2026-11-21 night): the brain's reply now waits for the edge's verdict on
+      the first flight step (spoken if accepted, dropped if refused); demo-mode sarcastic lines
+      have no "Safety says no:" prefix (real gate reasons keep it). Tests in test_station /
+      test_demo. Not yet heard through the JBL against the real drone.
+- [x] `locate()`: root cause was the VLM's reasoning eating all 120 tokens (empty reply). Fixed
+      with `think=False`; `check_ai` 15/15. The real forward frame was a wall at the time, so
+      still try "fly to the door" with a door in view. Note: at 1 m up the C270 can't see the
+      bottom of anything closer than ~3 m, so close objects come back as an upper bound and
+      the planner won't fly to them (by design).
+- [x] `rule_parse` reads centimetres.
 - [ ] Dashboard has no auth since the PIN was removed: fine on the laptop, not on a public VM.
 - [ ] Cloud VM deploy (only needed if judges use their own phones).
 - [ ] Vultr demo rehearsal (docs/demo.md) and the Devpost cloud half (docs/devpost-cloud.md).
-- Keys: replaced 2026-11-21 evening, `check_ai` 13/15 PASS, voice to response est. 1.8 s.
+- Keys: replaced 2026-11-21 evening, `check_ai` 15/15 PASS (night), voice to response est. 1.7 s.
 
 ## Rules that bit us
 
