@@ -182,11 +182,17 @@ stack; turn it off by running the same without `--demo`. In demo mode (`edge/dem
 ## Open items
 
 **Cloud lead:**
-- The Vultr key returns 401 on every AI call, so voice is down. Regenerate it and update `.env`.
+- Vultr key replaced 2026-11-21 evening: `check_ai` 13/15 PASS (voice to response est. 1.8 s).
+  Still failing: `locate()` (the VLM gave no usable box for door / chair).
+- Demo polish: refusals are spoken as "Safety says no: ..." after the brain's "On it.".
 - The dashboard PIN was removed (`/text` and `/voice` have no auth).
 - `rule_parse` reads cm as m.
 - The cloud VM has not been deployed.
 - Audio out and voice latency are untested.
+
+**Indoor voice demo (laptop mic, JBL Go 4 as the laptop's speaker, drone in demo mode):**
+`python -m station --edge 192.168.68.131 --local --mic`: Enter to talk, Enter to send.
+Needs `pip install sounddevice` on the laptop. Verified with typed commands against the real drone.
 
 **Drone lead:**
 - Autonomous hover try 3. The rangefinder spike filter is in (both earlier tries logged
