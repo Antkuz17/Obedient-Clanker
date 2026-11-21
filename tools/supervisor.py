@@ -80,6 +80,27 @@ class Child:
                    user=d.get("user"))
 
 
+HW_GROUPS = ("sensor", "gpio", "i2c", "spi", "mbox", "screen")  # what the drone's children need
+
+
+def _user_groups(user: str, gid: int, grp) -> list[int]:
+    """The user's supplementary groups, de-duplicated and capped at the OS limit (QNX allows
+    fewer than qnxuser belongs to: "too many extra_groups"), hardware groups first."""
+    groups = list(dict.fromkeys(g for g in os.getgrouplist(user, gid) if g != gid))
+    def rank(g: int) -> int:
+        try:
+            name = grp.getgrgid(g).gr_name
+        except KeyError:
+            return len(HW_GROUPS)
+        return HW_GROUPS.index(name) if name in HW_GROUPS else len(HW_GROUPS)
+    groups.sort(key=rank)
+    try:
+        cap = max(1, os.sysconf("SC_NGROUPS_MAX") - 1)
+    except (ValueError, OSError):
+        cap = 7
+    return groups[:cap]
+
+
 def _realtime(prio: int | None):
     if prio is None or not hasattr(os, "sched_setscheduler"):
         return None
@@ -171,7 +192,15 @@ class Supervisor:
     # --- lifecycle ---------------------------------------------------------------------------
     def _spawn(self, c: Child) -> None:
         env = {**os.environ, **c.env}
-        kw = {"user": c.user} if c.user and os.geteuid() == 0 else {}
+        kw = {}
+        if c.user and os.geteuid() == 0:
+            # Popen(user=) alone only switches the uid: the child keeps root's groups and loses
+            # the user's own (on QNX camera_open needs the "sensor" group -> Permission denied).
+            import grp
+            import pwd
+            pw = pwd.getpwnam(c.user)
+            kw = {"user": pw.pw_uid, "group": pw.pw_gid,
+                  "extra_groups": _user_groups(c.user, pw.pw_gid, grp)}
         if self.child_logs:  # not the terminal: a closed SSH session must not break children
             os.makedirs(self.child_logs, exist_ok=True)
             out = open(os.path.join(self.child_logs, f"{c.name}.log"), "ab")
