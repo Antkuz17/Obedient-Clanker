@@ -40,7 +40,9 @@ PROFILE: dict[str, tuple[float, bool, str]] = {
     "EK3_FLOW_DELAY": (60, False, "ms; frame age + exposure + processing, tune from logs"),
     "EK3_SRC1_POSXY": (0, False, "no absolute horizontal position"),
     "EK3_SRC1_VELXY": (5, False, "optical flow"),
-    "EK3_SRC1_POSZ": (1, False, "baro (SITL flow-only pass used baro)"),
+    # Rangefinder is the main height source indoors: near the floor the baro reads prop wash as
+    # a climb (2nd autonomous try: baro +0.4 m while still on the ground, FC cut throttle).
+    "EK3_SRC1_POSZ": (2, True, "rangefinder height (baro lies in prop wash near the floor)"),
     # first autonomous try: the baro read prop wash near the floor as a 1 m climb while the
     # rangefinder said 0.16 m, so the FC cut throttle on the ground. Use the rangefinder for
     # height whenever it's below 70% of its max range (1.4 m), baro above that.

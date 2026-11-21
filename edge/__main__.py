@@ -38,10 +38,10 @@ async def main(a) -> None:
         # Slow-and-low profile for the real drone (drone lead, 2026-11-21), indoors and out,
         # until it has proven itself: 2 m ceiling, gentle speeds, and a 2 m cap per move (which
         # also catches a misread unit: "50 cm" parsed as 50 m flew 16.7 m in sim).
-        cfg.alt_max, cfg.max_takeoff_alt, cfg.max_step = 2.0, 1.5, 2.0
+        cfg.alt_max, cfg.max_takeoff_alt, cfg.max_step = 1.5, 1.2, 2.0  # rangefinder height: stay < 2 m
         cfg.speed_xy, cfg.speed_z, cfg.speed_dn = 0.5, 0.5, 0.5
         cfg.accel_xy, cfg.jerk_xy = 2.0, 5.0
-        logging.info("slow-and-low profile: ceiling 2 m, takeoff <= 1.5 m, move <= 2 m, 0.5 m/s")
+        logging.info("slow-and-low profile: ceiling 1.5 m, takeoff <= 1.2 m, move <= 2 m, 0.5 m/s")
     if cfg.speed_xy > (fastest := max_checked_speed(cfg)):
         # the person / obstacle checks couldn't stop it in time any faster (edge/config.py)
         logging.warning("speed_xy %.2f m/s is faster than the checks can stop; using %.2f",
