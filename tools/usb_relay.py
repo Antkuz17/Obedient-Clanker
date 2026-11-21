@@ -57,8 +57,18 @@ def open_source(spec: str):
 
 class Relay:
     def __init__(self, source: str, core_addr: tuple[str, int],
-                 aux_addr: tuple[str, int] | None = None):
+                 aux_addr: tuple[str, int] | None = None,
+                 tap_addr: tuple[str, int] | None = None):
         self.source_spec, self.core_addr = source, core_addr
+        # tap: a two-way port for tools (tools/fc_profile.py, preflight.py, flow_signcheck.py)
+        # while the core runs. FC traffic is copied to whoever last sent to it. Tools must use
+        # their own sysid (254) and never send heartbeats, so they can't mask the core's GCS
+        # failsafe. Off unless --tap is given.
+        self.tap, self.tap_peer = None, None
+        if tap_addr:
+            self.tap = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.tap.bind(tap_addr)
+            self.tap.settimeout(0.2)
         # aux: a write-only inlet to the FC for edge/hbwd (the C heartbeat watchdog). It gets no
         # FC traffic back; off unless --aux is given.
         self.aux = None
@@ -109,14 +119,21 @@ class Relay:
             if data:
                 self.udp.sendto(data, self.core_addr)
                 self.bytes_down += len(data)
+                if self.tap_peer is not None:
+                    try:
+                        self.tap.sendto(data, self.tap_peer)
+                    except OSError:
+                        self.tap_peer = None
 
     def core_to_fc(self, sock: socket.socket | None = None) -> None:
         sock = sock or self.udp
         while not self.stop.is_set():
             try:
-                data, _ = sock.recvfrom(4096)
+                data, peer = sock.recvfrom(4096)
             except socket.timeout:
                 continue
+            if sock is self.tap:
+                self.tap_peer = peer
             src = self._ensure_source()
             try:
                 with self.write_lock:
@@ -130,6 +147,9 @@ class Relay:
         if self.aux:
             threading.Thread(target=self.core_to_fc, args=(self.aux,), daemon=True,
                              name="relay-aux").start()
+        if self.tap:
+            threading.Thread(target=self.core_to_fc, args=(self.tap,), daemon=True,
+                             name="relay-tap").start()
         self.fc_to_core()
 
 
@@ -138,6 +158,7 @@ def main() -> None:
     ap.add_argument("--source", default="usb", help="usb (default) or rawtcp:HOST:PORT")
     ap.add_argument("--core", default="127.0.0.1:14555", help="edge core's udpin address")
     ap.add_argument("--aux", help="extra write-only inlet to the FC, e.g. 127.0.0.1:14556 (hbwd)")
+    ap.add_argument("--tap", help="two-way port for tools while the core runs, e.g. 127.0.0.1:14557")
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     host, port = a.core.split(":")
@@ -145,7 +166,11 @@ def main() -> None:
     if a.aux:
         ah, ap_ = a.aux.rsplit(":", 1)
         aux = (ah, int(ap_))
-    r = Relay(a.source, (host, int(port)), aux)
+    tap = None
+    if a.tap:
+        th, tp = a.tap.rsplit(":", 1)
+        tap = (th, int(tp))
+    r = Relay(a.source, (host, int(port)), aux, tap)
     try:
         r.run()
     except KeyboardInterrupt:
