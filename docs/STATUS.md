@@ -58,7 +58,7 @@ moves, yaw, gate rejection, return to the takeoff point, watchdog hover → land
 edge event loop makes ArduPilot's own GCS failsafe land the drone**. FC reboot under the relay:
 the edge re-sends stream rates + origin and position comes back.
 
-The test suite has 36 passing tests (`.venv/bin/python -m pytest -q`), plus `tools/sitl_flight.py`, which
+The test suite has 132 passing tests (`.venv/bin/python -m pytest -q`), plus `tools/sitl_flight.py`, which
 must print ALL PASS.
 
 Fixed after SITL: the stream transport handed pymavlink whole chunks, so messages queued up
@@ -127,6 +127,29 @@ position (altitude used to sag about 0.1 m per command).
      decodes its frames) and `tools/sitl_hbwd.py` against ArduPilot with the on-drone process
      layout: edge frozen by SIGSTOP while hovering → FC in LAND **273 ms** later with the FC's
      own failsafe off, landed + disarmed, heartbeats resume when the core comes back.
+
+## Third review fixes (2026-11-21, cloud lead with Claude; **drone lead: please review before flying**)
+
+A third fresh-eyes review found these; all are fixed, uncommitted at the time of writing. Suite:
+132 passed. SITL (private containers): `sitl_flight`, `sitl_flowonly`, `sitl_hbwd` ALL PASS.
+
+| # | Problem | Fix | Checked how |
+|---|---|---|---|
+| 1 | **Height came from the drifting baro zero at boot**, NAV_TAKEOFF climbs from the ground at arming. With +0.96 m of drift, takeoff "finished" on the ground, the drone then climbed to a reading of 1.75 m (above the 1.5 m ceiling) and the next `move_body fwd=0.5` flew it into the ground | `edge/mav.py`: the ground level is tracked while disarmed / ON_GROUND and frozen in flight; `alt` and position targets are relative to it | SITL with `SIM_BARO_DRIFT` ±0.03 m/s: edge height = FC height above the arming point, takeoff and moves hold 0.80 m both ways; unit test |
+| 2 | **The fence moved to wherever the drone last took off** | `edge/executor.py`: home = first takeoff of this edge run, kept; `edge/safety.py`: takeoff refused outside the area ("restart the edge to reset"); planner clamps around the same point | sim test; gate test |
+| 3 | **A door filling the frame read as 2.3-2.9 m away** at any closer range, and the drone flew towards it | `station/localize.py`: a cut-off box gives only an upper bound; floor range used when the bottom is visible; otherwise `upper_bound` and the planner just faces it | unit tests at 1.2/1.6/2.0 m |
+| 4 | **Anyone with the dashboard URL could fly it**; the control lock trusted the browser's name. Behind Caddy everyone also looked like localhost (the `dev-token` check too) | `CONTROL_PIN` (cloud `.env`): needed for commands, voice and LAND; STOP stays open to all. No PIN: only this machine, never via the proxy. `deploy.sh` refuses without it. `/memory/reset` (PIN) | TestClient tests |
+| 5 | Pi config ran flow on the forward camera | `supervisor_pi.json`: `camgrab_down` (unit 6, 320×240) → flow. **Needs the second C270/C920** and unit 6 set up as in qnx.md | config only |
+| 6 | **One exception ended the 50 Hz safety loop** (watchdog gone, core still accepting commands) | `edge/server.py`: the loop catches and continues; hbwd is petted only after a *complete* tick (so a persistent failure lands via hbwd); without hbwd it lands after 1 s of failures | sim tests; `sitl_hbwd` (LAND 267 ms) |
+| 7 | **Station/dashboard LAND overrode the pilot** in AltHold | `edge/executor.py`: land/stop/hover refused while the pilot has another mode (pilot always wins) | SITL: refused in ALT_HOLD, mode stayed; land works after hand-back |
+| 8 | Flow and height reached the FC only via the Python core: a core crash = blind landing. Flight log writes could stall the loop | `edge/fcdirect.py`: flow and rangefinder send MAVLink 2 straight to the relay aux inlet (`--fc 127.0.0.1:14556`, on in `supervisor_pi.json`); the core only records quality. Flight log on a writer thread | unit tests decode the frames. **Not run against a real FC: check the FC sees `OPTICAL_FLOW` and `DISTANCE_SENSOR` with the core stopped** |
+| 9 | No-key rule parser moved on stray words ("take off right now" slid right, "calm down" descended) | `station/brain.py`: a direction needs a distance or a movement verb; "back up a bit" = back 0.5 m | unit tests |
+| — | HFOV 60° was wrong (spec is 55° *diagonal* ≈ 45° horizontal) | 45° in `edge/flow`, `edge/video.py`; scan step 40°. **Still measure it** | — |
+| — | One blurry frame aborted a move and the plan | flow must be bad for 0.5 s | sim tests |
+| — | Supervisor died with the SSH session | ignores SIGHUP; `--child-logs DIR` | test |
+
+Still open from that review: no person/palm detector (forward moves stay refused on the real
+drone, by design), no motor kill switch on the transmitter, no FC-side fence.
 
 ## Review follow-ups (from [review.md](review.md), 2026-11-21)
 

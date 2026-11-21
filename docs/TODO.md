@@ -37,7 +37,7 @@ Check with `curl https://<cloud>/health` → `"keys": {"vultr": true, "elevenlab
 - [x] **A: transmitter** (2026-11-21, verified): the FS-i6X only offers SwA/VrA/VrB on channels 5/6 (SwB-D unavailable in the stock menu), so **SwA on channel 5: up = AltHold (`FLTMODE1-5=2`), down = Land (`FLTMODE6=9`)**. **The computer enters GUIDED itself**; the pilot takes over by flipping SwA (down = land; down-then-up = AltHold). Mode changes in about 0.2 s.
   - [x] **Edge rule (B / whoever fixes review2 #1, #5):** once the pilot changes mode away from GUIDED, the edge must **never** switch back to GUIDED or re-send LAND on its own. It reports "pilot has control" and rejects moves until the station explicitly re-takes off
 - [x] **A: build `camgrab` on the Pi**: needs `apk add qnx-sf-base-dev qnx-screen-dev`. Verified: unit 5 → `camgrab_fwd`, 640×480 NV12, **30 fps, about 3 ms frame age** in Python (after the `edge/camera.py` mmap fix). Note: it warns "640x480 not accepted, keeping the camera default" (the default is 640×480 anyway); `-l` lists units 1, 2 and 5: `apk add qnx-sf-base-dev`, `cc -O2 -o camgrab edge/camgrab/camgrab.c -lcamapi`, `./camgrab -l`. If it fails on `stride` / `uv_stride` / `camera_get_supported_cameras`, check `/usr/include/camera/camera_api.h`
-- [ ] **B: two cameras**: does QNX give the second C270 its own unit? Each camera on its own USB controller; the down camera at 320×240
+- [ ] **B: two cameras**: does QNX give the second C270 its own unit? Each camera on its own USB controller; the down camera at 320×240. `supervisor_pi.json` now expects it as **unit 6 → `camgrab_down`** (flow reads it)
 
 ## Next: get it hovering
 
@@ -54,7 +54,8 @@ Check with `curl https://<cloud>/health` → `"keys": {"vultr": true, "elevenlab
 - [x] **Drone lead: optical flow process** (`edge/flow/`, `python3 -m edge.flow --shm <name> --print`): LK at 320×240, forward-backward check, median shift → rad/s (f = 277 px for a 60° HFOV), quality from inliers + agreement → UDP :7002. Unit tests on synthetic shifts. **On the Pi with the C270: q≈207, ~135 tracks, 10 ms/frame, 15 Hz** (camera at 15 fps in dim light)
   - [ ] FC flow params: `FLOW_TYPE=5`, `EK3_SRC1_POSXY=0`, `EK3_SRC1_VELXY=5`, `EK3_SRC1_POSZ=1`, `EK3_SRC1_VELZ=0`, `GPS1_TYPE=0`, `EK3_FLOW_DELAY` ≈ 60 ms (tune), `FLOW_OPTIONS=0`; reboot
   - [ ] **Hand-roll sign check** (camera mounted pointing down, props off): roll right → FC `OPTICAL_FLOW.flow_rate_x` has the same sign as `ATTITUDE.rollspeed`; pitch → `flow_rate_y` vs `pitchspeed`. Fix with `--flip-x/--flip-y/--swap-xy`
-  - [ ] Measure the real C270 HFOV (or tune `FLOW_FXSCALER`) and set `edge/flow` `--hfov`
+  - [ ] Measure the real C270 HFOV (or tune `FLOW_FXSCALER`) and set `edge/flow` `--hfov` (default now 45°, from the 55° diagonal spec; also `edge/video.py:HFOV_DEG`)
+  - [ ] **Drone lead: check the direct sensor path (review3 #8)** on the bench: supervisor up, `slay` the edge core, the FC must still show `OPTICAL_FLOW` and `DISTANCE_SENSOR` arriving (Mission Planner status / MAVLink inspector on another link)
 - [ ] **B: hand-roll sign check** on the real drone: `OF.flowX` tracks `OF.bodyX`
 - [ ] **A + B: manual tethered AltHold hover** with the pilot
 - [ ] **A + B: tethered GUIDED hover** via `tools.cmd`: takeoff 0.8 m, hold 30 s, land
@@ -81,6 +82,7 @@ to end on the sim with no keys). Still to do with real keys / hardware:
       live video, telemetry, STOP/LAND for anyone, one viewer has the controls, flight log,
       photos, memory search
 - [x] **A: laptop ↔ cloud WSS** (`station/station.py`: dials out, ping 15 s, backoff to 15 s)
+- [ ] 🔴 **A: `CONTROL_PIN`** in the VM's `.env` (the pilot PIN; `deploy.sh` refuses without it). Give it only to whoever stands by the drone; judges get STOP
 - [ ] 🔴 **A: deploy to the Vultr VM**: one command once the VM + domain exist: `scp .env root@<vm>:/root/hope.env && ssh root@<vm> 'bash -s' < cloud/deploy.sh <domain>` ([cloud/deploy.md](../cloud/deploy.md))
 - [ ] **A: measure the size prior and HFOV on the real C270** (`edge/video.py:HFOV_DEG`,
       `station/localize.py:SIZE_PRIOR`) and test `locate()` on real frames

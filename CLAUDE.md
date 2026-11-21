@@ -62,7 +62,8 @@ macOS: AirPlay Receiver listens on :7000, so `edge --sim` on the default port fa
 - `shared/protocol.py` is the frozen A↔B contract. Change it only with both people agreeing,
   and update PRD section 5 at the same time.
 - Every flight command goes through `edge/safety.py`. Never add a path to the vehicle that
-  skips the gate. `stop` and `land` are always allowed; landing beats stop.
+  skips the gate. `stop` and `land` are always allowed, except while the pilot has another
+  mode (the pilot always wins); landing beats stop.
 - Code under `edge/` and `shared/` must run on the Pi's **Python 3.14** (QNX 8; the suite passes on
   3.14 and 3.11): stdlib + pymavlink + numpy
   + OpenCV only. No new pip dependencies there without checking they install on QNX.

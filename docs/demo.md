@@ -10,7 +10,8 @@ on the drone.
 2. `curl https://<domain>/health` → `"station": true`, `"keys": {"vultr": true, "elevenlabs": true}`.
 3. Laptop: `python -m station --edge <pi ip>`; the Nest Mini is the default speaker (or the laptop's).
 4. Open the dashboard on **your phone** and on the laptop. Hold-to-talk once ("what do you see?")
-   so the phone has granted mic permission.
+   so the phone has granted mic permission. Type the pilot PIN (`CONTROL_PIN`) into the
+   dashboard on *your* phone only; judges' phones can watch and press STOP without it.
 5. Walk the drone (or carry it, props off) round the room once so visual memory has frames:
    put the keys somewhere visible first. `/memory/recent` should list a dozen or more frames.
 6. Have a QR code of `https://<domain>` ready so judges can open it on their own phones.
@@ -19,7 +20,7 @@ on the drone.
 
 | # | Say / do | What they see | Track point |
 |---|---|---|---|
-| 1 | Hand a judge the QR code. "This is the drone's dashboard, on Vultr. Anyone can watch; one person has the controls; anyone can hit STOP." | Live video, telemetry, flight log on their phone | Vultr deployment, multi-user |
+| 1 | Hand a judge the QR code. "This is the drone's dashboard, on Vultr. Anyone can watch and anyone can hit STOP; flying it takes the pilot PIN, because there are 10-inch props here." | Live video, telemetry, flight log on their phone | Vultr deployment, multi-user |
 | 2 | Hold to talk: **"Take off."** | Jarvis answers aloud, drone climbs to 1 m | Whisper + LLM on Vultr Serverless Inference |
 | 3 | **"Fly to the door and take a photo, then come back."** | Turns until it finds the door, flies to 1 m short, looks again on the way, photo appears on the phone, flies home | VLM localization, planner |
 | 4 | Point at the whiteboard: **"What's written there?"** (or "solve that") | Reads / solves it aloud | VLM tasks |

@@ -105,9 +105,9 @@ Ops (all distances in metres, angles in degrees, local frame = NED from the take
 | `yaw` | `deg`, `relative` (bool) | Turn in place. |
 | `scan` | `rate_dps` | Slow 360° yaw; finishes after one turn or when `stop` arrives. |
 | `hover` | | Hold position. |
-| `stop` | | Cancel whatever is running and hover. Always accepted. |
+| `stop` | | Cancel whatever is running and hover. Always accepted, except while the pilot has another mode (the pilot wins). |
 | `return_home` | | Go to (0, 0) at the current altitude. |
-| `land` | | Land and disarm. Always accepted. |
+| `land` | | Land and disarm. Always accepted, except while the pilot has another mode (the pilot wins). |
 
 ### Edge → Station
 
@@ -154,13 +154,13 @@ jpeg_url, score}]`. A's planner and dashboard call it; B owns ingest and ranking
 | Rule | Default |
 |---|---|
 | Altitude window | 0.3–1.8 m (the HC-SR04 tops out at about 2 m) |
-| Geofence | Box ±3 m N/E around home |
+| Geofence | Box ±3 m N/E around the first takeoff point of this edge run (later takeoffs don't move it) |
 | Max single move | 3 m |
 | Max horizontal / vertical speed | 0.5 / 0.3 m/s |
 | Battery | Reject new moves below 10.6 V (3S); auto-land below 10.2 V |
 | Flow quality | Reject moves when quality < 50 |
 | Person too close | Reject forward moves if a person is closer than ~1.0 m (bounding-box height proxy) |
-| State | Moves need `armed` + GUIDED; `stop` and `land` are always allowed |
+| State | Moves need `armed` + GUIDED; `stop` and `land` are always allowed unless the pilot has taken over (AltHold etc.) |
 
 ## 6. Work split
 
