@@ -25,7 +25,8 @@ from edge.mavlink_usb import UsbCdc
 
 log = logging.getLogger("usb_relay")
 SILENT_REOPEN_S = 3.0  # FC silent this long -> reopen the USB device
-SILENT_EXIT_S = 5.0    # still silent (read stuck inside libusb) -> exit; the supervisor restarts us
+SILENT_EXIT_S = 5.0
+TAP_PEER_TTL_S = 30.0  # a tap tool must send something at least this often to keep getting data    # still silent (read stuck inside libusb) -> exit; the supervisor restarts us
 
 
 class TcpStream:
@@ -63,11 +64,13 @@ class Relay:
                  aux_addr: tuple[str, int] | None = None,
                  tap_addr: tuple[str, int] | None = None):
         self.source_spec, self.core_addr = source, core_addr
-        # tap: a two-way port for tools (tools/fc_profile.py, preflight.py, flow_signcheck.py)
-        # while the core runs. FC traffic is copied to whoever last sent to it. Tools must use
+        # tap: a two-way port for tools (tools/fc_profile.py, preflight.py, blackbox.py, ...)
+        # while the core runs. FC traffic is copied to every tool that sent to it in the last
+        # TAP_PEER_TTL_S seconds. Tools must use
         # their own sysid (254) and never send heartbeats, so they can't mask the core's GCS
         # failsafe. Off unless --tap is given.
-        self.tap, self.tap_peer = None, None
+        self.tap = None
+        self.tap_peers: dict = {}  # addr -> last time it sent us something (several tools at once)
         if tap_addr:
             self.tap = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.tap.bind(tap_addr)
@@ -145,11 +148,16 @@ class Relay:
                 last_rx = self.last_rx = time.monotonic()
                 self.udp.sendto(data, self.core_addr)
                 self.bytes_down += len(data)
-                if self.tap_peer is not None:
-                    try:
-                        self.tap.sendto(data, self.tap_peer)
-                    except OSError:
-                        self.tap_peer = None
+                if self.tap_peers:
+                    now = time.monotonic()
+                    for peer, seen in list(self.tap_peers.items()):
+                        if now - seen > TAP_PEER_TTL_S:
+                            self.tap_peers.pop(peer, None)  # tool gone quiet: stop copying
+                            continue
+                        try:
+                            self.tap.sendto(data, peer)
+                        except OSError:
+                            self.tap_peers.pop(peer, None)
 
     def core_to_fc(self, sock: socket.socket | None = None) -> None:
         sock = sock or self.udp
@@ -159,7 +167,7 @@ class Relay:
             except socket.timeout:
                 continue
             if sock is self.tap:
-                self.tap_peer = peer
+                self.tap_peers[peer] = time.monotonic()
             src = self._ensure_source()
             try:
                 with self.write_lock:
