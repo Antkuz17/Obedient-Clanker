@@ -179,32 +179,39 @@ stack; turn it off by running the same without `--demo`. In demo mode (`edge/dem
 - **Windows-only test failures:** test_camera restarted-grabber, test_jitter rate and
   test_supervisor killed-child. They pass on macOS and are not Pi bugs.
 
-## Open items
+## Open items: who does what next (2026-11-21 evening)
 
-**Cloud lead:**
-- Vultr key replaced 2026-11-21 evening: `check_ai` 13/15 PASS (voice to response est. 1.8 s).
-  Still failing: `locate()` (the VLM gave no usable box for door / chair).
-- Demo polish: refusals are spoken as "Safety says no: ..." after the brain's "On it.".
-- The dashboard PIN was removed (`/text` and `/voice` have no auth).
-- `rule_parse` reads cm as m.
-- The cloud VM has not been deployed.
-- Audio out and voice latency are untested.
+The indoor demo: talk to the laptop, Jarvis answers on the JBL, the drone (demo mode) judges
+every command with its real safety gate but never flies. Run it with
+`python -m station --edge 192.168.68.131 --local --mic` (Enter to talk, Enter to send; needs
+`pip install sounddevice`). Verified with typed commands against the real drone.
 
-**Indoor voice demo (laptop mic, JBL Go 4 as the laptop's speaker, drone in demo mode):**
-`python -m station --edge 192.168.68.131 --local --mic`: Enter to talk, Enter to send.
-Needs `pip install sounddevice` on the laptop. Verified with typed commands against the real drone.
+**Drone lead (Anton): the software-heavy and drone-heavy work**
+- [ ] QNX demo on screen against the real drone (with Claude): dashboard on the laptop with the
+      live safety-loop jitter, supervisor restarts (`slay` a process, watch it come back),
+      jitter under a CPU hog with and without real-time priority, slog2 live.
+- [ ] Rehearse the voice demo with your own voice (only typed commands are tested).
+- [ ] Person detector distance: stand at 1, 2 and 3 m in front of the forward camera.
+      Inference on the Pi measured: 50-80 ms, 7.5-8 Hz.
+- [ ] Measure the forward C270's horizontal field of view (45 deg assumed): tape + one photo.
+- [ ] Transmitter on, preflight fully GO.
+- [ ] Wire the forward HC-SR04 (Arduino D11/D12; code ready), then `--require-obstacle-sensor`.
+- [ ] When flying is allowed: hover try 3 (spike filter in), a real move, Wi-Fi pull, braking,
+      `BATT_AMP_PERVLT`. Demo mode off first (`deploy_pi --stations ...` without `--demo`).
+- [ ] Devpost: the QNX / on-board half.
 
-**Drone lead:**
-- Autonomous hover try 3. The rangefinder spike filter is in (both earlier tries logged
-  fake 0.3-1.99 m readings on the floor once the props spun).
-- Person detector distance at 1, 2 and 3 m (needs someone in front of the camera). Inference
-  on the Pi measured: 50-80 ms, 7.5-8 Hz alone.
-- slog2 logging (needs testing on the Pi; don't write it blind).
-- Measure the C270 HFOV (45° assumed).
-- Measure braking.
-- A second (forward) HC-SR04: the code is ready (D11/D12), but the sensor is missing.
-- QNX demo items: latency on screen, slog2 live.
-- The slideshow, after a successful hover.
+**Cloud lead (teammate): station/ and cloud/**
+- [ ] Demo wording: a refused command is spoken as the brain's "On it." and then "Safety says
+      no: I'd love to turn around...". Make it one line: skip the brain's reply when the edge
+      refuses, and drop the "Safety says no:" prefix for demo-mode lines (the edge reason
+      already says it; demo refusals carry `(demo)` in the `safety_reject` event).
+- [ ] `locate()` / "fly to the door": `check_ai` vision fails (no usable box). Test on a real
+      frame from `http://192.168.68.131:8080/forward.jpg` before changing the prompt.
+- [ ] `rule_parse` reads "50 cm" as 50 m (the gate catches it, still a bug).
+- [ ] Dashboard has no auth since the PIN was removed: fine on the laptop, not on a public VM.
+- [ ] Cloud VM deploy (only needed if judges use their own phones).
+- [ ] Vultr demo rehearsal (docs/demo.md) and the Devpost cloud half (docs/devpost-cloud.md).
+- Keys: replaced 2026-11-21 evening, `check_ai` 13/15 PASS, voice to response est. 1.8 s.
 
 ## Rules that bit us
 
