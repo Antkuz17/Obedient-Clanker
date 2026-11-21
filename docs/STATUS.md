@@ -16,10 +16,13 @@ Last updated: 2026-11-21. Update this at the end of every session.
 | MAVLink vehicle (GUIDED, arm, takeoff, position targets, origin, telemetry, `OPTICAL_FLOW` forwarding, GCS heartbeat, FC pre-arm reasons in `done`) | `edge/mav.py` | **ArduPilot SITL** (Copter stable, `tools/sitl_flight.py`): takeoff, fwd/yaw/right moves, gate rejection, return home, watchdog hover → land → disarm all pass with altitude held within 0.15 m. `OPTICAL_FLOW` forwarding is **not** tested (SITL has no flow). Not run on the real FC yet |
 | SITL harness | `tools/sitl/Dockerfile`, `tools/sitl_flight.py` | see above |
 | **USB MAVLink transport** (`--mav usb`): pymavlink `StreamMav` over Anton's pyusb CDC-ACM code | `edge/mavlink_usb.py` | Full SITL flight passes through `StreamMav` (`sitl_flight rawtcp:127.0.0.1:5760`) + regression test. The `UsbCdc` libusb calls are copied from the verified probe but **not yet run inside the edge on the Pi** |
+| **Camera grabber** (C, `libcamapi` → shared memory, seqlock, NV12/YUYV, strips stride padding, `-l` lists units) | `edge/camgrab/camgrab.c` | Compiled with `-Wall -Wextra` and run on the Mac against a stub camera library (`tests/camstub/`) that pads rows: Python sees exact pixels in order. **Not compiled on QNX yet**, and the stub copies the *real* header only as far as camgrab uses it (see below) |
+| Shared-memory frame reader/writer + laptop stand-in | `edge/camera.py`, `tools/fake_camgrab.py` | unit tests; manual: sim video → fake_camgrab → shm → `edge --camera shm:NAME` → `/forward.jpg` |
+| Fail-safe: forward moves refused when the person detector is silent (real drone only; `--no-person-check` to override) | `edge/safety.py`, `edge/server.py` | unit test |
 | Entry point + `SCHED_FIFO` flag | `edge/__main__.py` | manual smoke test with `--sim` |
 | Protocol REPL | `tools/cmd.py` | not run interactively yet |
 
-The test suite has 23 passing tests (`.venv/bin/python -m pytest -q`), plus `tools/sitl_flight.py`, which
+The test suite has 28 passing tests (`.venv/bin/python -m pytest -q`), plus `tools/sitl_flight.py`, which
 must print ALL PASS.
 
 Fixed after SITL: the stream transport handed pymavlink whole chunks, so messages queued up
@@ -43,15 +46,25 @@ position (altitude used to sag about 0.1 m per command).
      `sudo env PYTHONPATH=$HOME/.local/lib/python3.14/site-packages python3 -m edge --mav usb
      --no-video` with the props **off**, connect `tools.cmd` from the laptop and check that
      telemetry and arm/disarm work.
-   - **Camera grabber: required, and blocks B's flow and the real video server.** OpenCV can't
-     open the C270 on QNX; frames come only from QNX's camera API (unit 5, 640×480 @ 30 fps,
-     verified). Write a small C helper on `libcamapi` that streams frames to Python (pipe or
-     shared memory), and use it in `edge/video.py` and `edge/flow/`.
+   - **Camera grabber: written, needs building on the Pi.** `apk add qnx-sf-base-dev`, then
+     `cc -O2 -o camgrab edge/camgrab/camgrab.c -lcamapi`, `./camgrab -l` to list units, and
+     `./camgrab -u 5 -n camgrab_fwd`. Check that `python3 -c "from edge.camera import
+     ShmFrameReader as R; print(R('camgrab_fwd').wait_new().gray().shape)"` prints
+     `(480, 640)`. Then the edge video uses it by default on `--mav`. Two cameras: run two
+     camgrabs (`-u 5 -n camgrab_fwd`, `-u <other unit> -n camgrab_down`); whether QNX gives the
+     second C270 its own unit is still open (flow.md Q3).
    - **No HAM:** write `tools/supervisor.py`, which restarts the vision/flow processes when
      `slay`-ed and logs restart events.
    - Jitter graph from `EdgeServer.loop_stats`.
 
 ## Open questions / known gaps
+
+- **camgrab vs the real `camera_api.h`:** `rpi_cam.cpp` (QNX's workshop) confirms
+  `camera_open`, frame types, `camera_set/get_vf_property`, `camera_start_viewfinder` and
+  `framedesc.nv12.{width,height,uv_offset}` / `framedesc.ycbycr.{width,height}`. From memory
+  and **unconfirmed**: `nv12.stride`, `nv12.uv_stride`, `ycbycr.stride` and
+  `camera_get_supported_cameras()` (only used by `-l`). If the compile fails on those, check
+  `/usr/include/camera/camera_api.h` on the Pi.
 
 - Is `flow_rate_x/y` (vs `flow_x/y` pixels) what ArduPilot 4.7's MAV flow backend reads? The
   docs say rate. Confirm in SITL or in `AP_OpticalFlow_MAV.cpp`.

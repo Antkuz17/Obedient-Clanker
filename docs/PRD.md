@@ -117,6 +117,13 @@ be built against it. `python -m tools.cmd` is a REPL that speaks the protocol.
 to the FC as `OPTICAL_FLOW`. They are separate processes, so `slay`-ing them never stops the
 core.
 
+**Camera frames (A → B, on the Pi):** `edge/camgrab/camgrab.c` (QNX `libcamapi`) publishes the
+latest raw frame to shared memory: `camgrab_fwd` (forward camera) and `camgrab_down` (down
+camera, B's optical flow). Read them with `edge.camera.ShmFrameReader(name)`: `.wait_new(seq)`,
+`.gray()` (cheap, for flow) and `.bgr()`. On a laptop, `python -m tools.fake_camgrab --name
+camgrab_down --webcam 0` publishes the same layout from a webcam, so flow and vision code run
+unchanged before they reach QNX.
+
 **Localization (B → A, on the laptop):** `station/localize.py`:
 `locate(name, jpeg, pose, K) -> {"n", "e", "dist", "bearing", "conf"} | None`. A's planner
 calls it for "fly to the X"; until B's version lands, A uses a stub that reads the sim's
