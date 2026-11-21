@@ -74,8 +74,14 @@ position (altitude used to sag about 0.1 m per command).
      `(480, 640)`. Then the edge video uses it by default on `--mav`. Two cameras: run two
      camgrabs (`-u 5 -n camgrab_fwd`, `-u <other unit> -n camgrab_down`); whether QNX gives the
      second C270 its own unit is still open (flow.md Q3).
-   - **No HAM:** write `tools/supervisor.py`, which restarts the vision/flow processes when
-     `slay`-ed and logs restart events.
+   - **Supervisor: done** (`tools/supervisor.py`, no HAM). `python3 -m tools.supervisor
+     tools/supervisor_pi.json` starts usb_relay (root), edge and camgrab (as qnxuser, SCHED_FIFO
+     prio from the config), restarts any that die, and logs JSON events with `spawn_ms`
+     (death -> respawn) and `ready_ms` (death -> serving again: new shm frame / TCP accepting).
+     Crash loops back off to 5 s. `--events-udp host:port` streams events (dashboard: not wired
+     yet). Laptop demo (`tools/supervisor_laptop.json`): `kill -9` camgrab -> respawn 3.5 ms,
+     new frame 208 ms; kill edge -> 3.9 ms, serving 119 ms. Add flow/vision entries when they
+     exist. On the Pi: replace `LAPTOP_IP`, run as root, then `slay camgrab` for the demo.
    - Jitter graph from `EdgeServer.loop_stats`.
 
 ## Review follow-ups (from [review.md](review.md), 2026-11-21)

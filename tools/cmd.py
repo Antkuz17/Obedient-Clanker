@@ -1,4 +1,4 @@
-"""Interactive protocol REPL.  python -m tools.cmd [host]
+"""Interactive protocol REPL.  python -m tools.cmd [host[:port]]  (default 127.0.0.1:7000)
 
   > takeoff alt=1
   > move_body fwd=1 right=-0.5
@@ -27,10 +27,13 @@ def parse(line: str) -> tuple[str, dict]:
     return op, args
 
 
-async def main(host: str) -> None:
-    edge = await EdgeClient(host, on_event=lambda e: print(f"\n!! {e['kind']}: {e['detail']}")
+async def main(addr: str) -> None:
+    host, _, port = addr.partition(":")
+    port = int(port) if port else P.EDGE_PORT
+    edge = await EdgeClient(host, port,
+                            on_event=lambda e: print(f"\n!! {e['kind']}: {e['detail']}")
                             ).connect()
-    print(f"connected to {host}:{P.EDGE_PORT}. ops: {', '.join(P.OPS)}; 't' = telemetry")
+    print(f"connected to {host}:{port}. ops: {', '.join(P.OPS)}; 't' = telemetry")
     loop = asyncio.get_running_loop()
     while True:
         line = (await loop.run_in_executor(None, sys.stdin.readline)).strip()

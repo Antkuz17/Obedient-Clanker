@@ -31,6 +31,13 @@ docker build -t hope-sitl tools/sitl && docker run --rm -d --name hope-sitl -p 5
 ```
 Restart the SITL container (`docker restart hope-sitl`) between runs.
 
+```sh
+.venv/bin/python -m tools.supervisor tools/supervisor_laptop.json   # sim edge :7100 + fake camgrab, restarts on kill
+.venv/bin/python -m tools.cmd 127.0.0.1:7100
+```
+macOS: AirPlay Receiver listens on :7000, so `edge --sim` on the default port fails with
+"address already in use"; pass `--port 7100` (or turn AirPlay Receiver off).
+
 ## Rules
 
 - `shared/protocol.py` is the frozen A↔B contract. Change it only with both people agreeing,

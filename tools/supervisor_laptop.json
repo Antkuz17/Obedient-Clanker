@@ -1,0 +1,8 @@
+[
+  {"name": "edge", "cmd": ["{python}", "-m", "edge", "--sim", "--allow-any-station",
+                           "--port", "7100", "--video-port", "8180", "--log", ""],
+   "ready": "tcp:127.0.0.1:7100"},
+  {"name": "camgrab_fwd", "cmd": ["{python}", "-m", "tools.fake_camgrab", "--name", "camgrab_fwd",
+                                  "--sim-edge", "127.0.0.1:8180"],
+   "ready": "shm:camgrab_fwd"}
+]

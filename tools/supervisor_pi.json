@@ -1,0 +1,10 @@
+[
+  {"name": "usb_relay", "prio": 50,
+   "cmd": ["python3", "-m", "tools.usb_relay"]},
+  {"name": "edge", "prio": 45, "user": "qnxuser",
+   "cmd": ["python3", "-m", "edge", "--mav", "udpin:127.0.0.1:14555", "--station-ip", "LAPTOP_IP"],
+   "ready": "tcp:127.0.0.1:7000"},
+  {"name": "camgrab_fwd", "prio": 40, "user": "qnxuser",
+   "cmd": ["./edge/camgrab/camgrab", "-u", "5", "-n", "camgrab_fwd"],
+   "ready": "shm:camgrab_fwd"}
+]
