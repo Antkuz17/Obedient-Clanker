@@ -105,7 +105,10 @@ class EdgeClient:
                     m = P.decode(line)
                 except P.ProtocolError:
                     continue
-                self._loop.call_soon_threadsafe(self._dispatch, m)
+                try:
+                    self._loop.call_soon_threadsafe(self._dispatch, m)
+                except RuntimeError:  # event loop closed (caller exited): stop quietly
+                    break
         except (OSError, ValueError):
             pass
         finally:
