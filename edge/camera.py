@@ -69,7 +69,8 @@ class _Region:
             try:
                 if size:
                     os.ftruncate(fd, size)
-                self.buf = mmap.mmap(fd, size or 0)
+                # QNX rejects mmap length 0 ("whole file") with EINVAL; pass the real size.
+                self.buf = mmap.mmap(fd, size or os.fstat(fd).st_size)
             finally:
                 os.close(fd)
             self.path = path
