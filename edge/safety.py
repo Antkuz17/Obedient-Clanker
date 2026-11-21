@@ -16,6 +16,8 @@ class Perception:
     """Latest on-board AI outputs (fed by the vision process). None = unknown / stale."""
     person_m: float | None = None   # nearest person ahead; None = nobody seen
     detector_alive: bool = False     # vision process reported within the stale window
+    obstacle_m: float | None = None  # forward ultrasonic echo; None = nothing within its range
+    obstacle_alive: bool = False     # forward sensor reported within the stale window
 
 
 @dataclass
@@ -57,9 +59,10 @@ class SafetyGate:
             alt = args["alt"]
             if airborne or s.armed:
                 return _reject("already flying")
-            if not c.alt_min <= alt <= c.max_takeoff_alt:
-                return _reject(f"takeoff altitude {alt:.1f} m outside "
-                               f"{c.alt_min}-{c.max_takeoff_alt} m")
+            if alt < c.alt_min:
+                return _reject(f"takeoff altitude {alt:.1f} m below {c.alt_min} m")
+            if c.max_takeoff_alt is not None and alt > c.max_takeoff_alt:
+                return _reject(f"takeoff altitude {alt:.1f} m above {c.max_takeoff_alt} m")
             if s.battery_v < c.batt_reject_v:
                 return _reject(f"battery {s.battery_v:.2f} V below {c.batt_reject_v} V")
             if s.flow_quality < c.flow_quality_min:
@@ -70,7 +73,8 @@ class SafetyGate:
                 return _reject("flight controller speed limits not confirmed")
             # the fence stays where the first takeoff put it (review3 #2): taking off again
             # from outside it would let the next moves start beyond the walls we planned for
-            if home is not None and (abs(s.n - hn) > c.fence_half or abs(s.e - he) > c.fence_half):
+            if (c.fence_half is not None and home is not None
+                    and (abs(s.n - hn) > c.fence_half or abs(s.e - he) > c.fence_half)):
                 return _reject(f"drone is ({s.n - hn:.1f}, {s.e - he:.1f}) m from the first "
                                f"takeoff point, outside the +-{c.fence_half} m flying area; "
                                "carry it back, or restart the edge to reset the area")
@@ -92,8 +96,8 @@ class SafetyGate:
 
         if op == "scan":
             rate = args.get("rate_dps", 20.0)
-            if not 0 < rate <= c.scan_rate_max:
-                return _reject(f"scan rate {rate} deg/s outside 0-{c.scan_rate_max}")
+            if rate <= 0 or (c.scan_rate_max is not None and rate > c.scan_rate_max):
+                return _reject(f"scan rate {rate} deg/s not allowed")
             return Verdict(True, target=(bn, be, balt, byaw), extra={"rate_dps": rate})
 
         if op == "move_body":
@@ -109,17 +113,24 @@ class SafetyGate:
         if s.flow_quality < c.flow_quality_min:
             return _reject(f"optical flow quality {s.flow_quality} too low to move")
         step = math.dist((n, e, alt), (s.n, s.e, s.alt))
-        if step > c.max_step:
+        if c.max_step is not None and step > c.max_step:
             return _reject(f"move of {step:.1f} m exceeds the {c.max_step} m limit")
-        if not c.alt_min <= alt <= c.alt_max:
-            return _reject(f"target altitude {alt:.1f} m outside {c.alt_min}-{c.alt_max} m")
-        if abs(n - hn) > c.fence_half or abs(e - he) > c.fence_half:
+        if alt < c.alt_min:
+            return _reject(f"target altitude {alt:.1f} m below {c.alt_min} m")
+        if c.alt_max is not None and alt > c.alt_max:
+            return _reject(f"target altitude {alt:.1f} m above {c.alt_max} m")
+        if c.fence_half is not None and (abs(n - hn) > c.fence_half or abs(e - he) > c.fence_half):
             return _reject(f"target ({n - hn:.1f}, {e - he:.1f}) from home is outside the "
                            f"+-{c.fence_half} m geofence")
         fwd, _ = ned_to_body(n - s.n, e - s.e, s.yaw)
         if fwd > 0.2:
-            if p.person_m is not None and p.person_m < c.person_close_m:
+            # the move must *end* outside the stop distance, not just start outside it
+            if p.person_m is not None and p.person_m - fwd < c.person_close_m:
                 return _reject(f"person {p.person_m:.1f} m ahead; not moving forward")
             if c.require_person_detector and not p.detector_alive:
                 return _reject("person detector is not running; not moving forward")
+            if p.obstacle_m is not None and p.obstacle_m - fwd < c.obstacle_close_m:
+                return _reject(f"something {p.obstacle_m:.1f} m ahead; not moving forward")
+            if c.require_obstacle_sensor and not p.obstacle_alive:
+                return _reject("forward obstacle sensor is not reporting; not moving forward")
         return Verdict(True, target=(n, e, alt, byaw))

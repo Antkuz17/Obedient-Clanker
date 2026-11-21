@@ -34,6 +34,21 @@ def test_frames():
 # --- safety gate ----------------------------------------------------------------------------
 FLYING = VehicleState(connected=True, armed=True, mode="GUIDED", alt=1.0, battery_v=12.0,
                       flow_quality=200, landed=False)
+# The old indoor limits. Off by default since we fly outdoors; these tests check the mechanism.
+LIMITS = dict(alt_max=1.5, fence_half=3.0, max_step=3.0, max_takeoff_alt=1.5,
+              scan_rate_max=30.0)
+
+
+def test_no_ceiling_fence_or_step_limit_by_default():
+    g = SafetyGate()
+    assert g.check("move_body", {"up": 30.0}, FLYING, True).ok                 # 31 m up
+    assert g.check("goto", {"n": 200.0, "e": -150.0}, FLYING, True).ok         # 250 m away
+    ground = VehicleState(connected=True, battery_v=12.4, flow_quality=200)
+    assert g.check("takeoff", {"alt": 10.0}, ground, False).ok
+    s = VehicleState(**{**FLYING.as_dict(), "n": 50.0})
+    assert g.check("return_home", {}, s, True, home=(0.0, 0.0)).ok
+    # the ground floor stays: a move can't fly it into the ground
+    assert "below" in g.check("move_body", {"up": -0.9}, FLYING, True).reason
 
 
 @pytest.mark.parametrize("op,args,why", [
@@ -45,14 +60,14 @@ FLYING = VehicleState(connected=True, armed=True, mode="GUIDED", alt=1.0, batter
     ("scan", {"rate_dps": 100.0}, "scan rate"),
 ])
 def test_gate_limits(op, args, why):
-    v = SafetyGate().check(op, args, FLYING, airborne=True)
+    v = SafetyGate(SafetyConfig(**LIMITS)).check(op, args, FLYING, airborne=True)
     assert v.ok == (why is None)
     if why:
         assert why in v.reason
 
 
 def test_gate_fence_battery_flow_person():
-    g = SafetyGate()
+    g = SafetyGate(SafetyConfig(**LIMITS))
     s = VehicleState(**{**FLYING.as_dict(), "n": 2.5})
     assert "geofence" in g.check("move_body", {"fwd": 1.0}, s, True).reason
     low = VehicleState(**{**FLYING.as_dict(), "battery_v": 10.4})
@@ -95,7 +110,7 @@ def test_gate_needs_guided_and_position():
 
 
 def test_gate_fence_and_home_follow_takeoff_point():
-    g = SafetyGate()
+    g = SafetyGate(SafetyConfig(**LIMITS))
     s = VehicleState(**{**FLYING.as_dict(), "n": 5.0, "e": 5.0})
     assert g.check("move_body", {"fwd": 1.0}, s, True, home=(5.0, 5.0)).ok
     assert "geofence" in g.check("move_body", {"fwd": 1.0}, s, True).reason   # home (0,0)
@@ -105,7 +120,7 @@ def test_gate_fence_and_home_follow_takeoff_point():
 
 
 def test_gate_takeoff_rules():
-    g = SafetyGate()
+    g = SafetyGate(SafetyConfig(**LIMITS))
     ground = VehicleState(connected=True, battery_v=12.4, flow_quality=200)
     assert g.check("takeoff", {"alt": 1.0}, ground, False).ok
     assert not g.check("takeoff", {"alt": 3.0}, ground, False).ok
@@ -164,8 +179,8 @@ async def test_ack_arriving_before_send_returns(rig):
 async def test_rejection_is_reported_with_reason(rig):
     srv, sim, edge = rig
     await edge.run("takeoff", alt=1.0)
-    with pytest.raises(CommandRejected, match="exceeds"):
-        await edge.run("move_body", up=10.0)
+    with pytest.raises(CommandRejected, match="below"):
+        await edge.run("move_body", up=-2.0)                 # into the ground
     await asyncio.sleep(0.05)
     assert any(e["kind"] == "safety_reject" for e in edge.events)
 
@@ -447,6 +462,50 @@ async def test_brief_flow_dip_does_not_abort_a_move(rig):
     assert d["status"] == P.OK
 
 
+async def test_flow_dip_clock_does_not_leak_into_the_next_move(rig):
+    """A bad-flow streak that started during one move (which then finished) must not stop the
+    next move on its first blurry frame."""
+    srv, sim, edge = rig
+    await edge.run("takeoff", alt=1.0)
+    ex = srv.exec
+    ex._flow_bad_since = time.monotonic() - 10.0  # left over from an earlier move
+    ex.revalidate(sim.state(), srv.safety_cfg)    # idle tick: forgets it
+    assert ex._flow_bad_since is None
+
+
+async def test_failsafe_land_on_the_ground_does_not_block_takeoff(rig):
+    """A failsafe that fires while disarmed has nothing to land and must not latch."""
+    srv, sim, edge = rig
+    srv.exec.trigger_failsafe("land", "watchdog", "edge safety loop is failing: landing")
+    assert srv.exec.failsafe is None
+    d = await edge.run("takeoff", alt=1.0)
+    assert d["status"] == P.OK
+
+
+async def test_failed_arming_is_reported_without_waiting_out_the_climb(rig):
+    srv, sim, edge = rig
+    sim.takeoff = lambda alt: setattr(sim, "takeoff_failed", True)  # FC refuses to arm
+    t0 = time.monotonic()
+    d = await edge.run("takeoff", alt=1.0, timeout=20)
+    assert d["status"] == P.FAILED and time.monotonic() - t0 < 2.0
+
+
+async def test_safety_loop_keeps_its_rate():
+    """Absolute deadlines: 50 Hz on average, not 50 Hz minus the tick's own work."""
+    cfg = SafetyConfig()
+    srv = EdgeServer(SimVehicle(cfg), cfg, host="127.0.0.1", port=0, perception_port=None,
+                     flow_port=None)
+    real_tick = srv.safety_tick
+    srv.safety_tick = lambda now: (real_tick(now), time.sleep(0.005))  # a 5 ms tick
+    await srv.start()
+    try:
+        await asyncio.sleep(1.0)
+    finally:
+        await srv.close()
+    n = len(srv.loop_stats)
+    assert 45 <= n <= 52, n  # a fixed 20 ms sleep after a 5 ms tick gave ~40
+
+
 async def test_pilot_takeover_resets_target_and_cancels(rig):
     """review2 #5: after the pilot flies it elsewhere and hands back, relative moves start
     from where the drone actually is."""
@@ -523,6 +582,7 @@ async def test_short_move_goes_most_of_the_way(rig):
 async def test_fence_stays_at_the_first_takeoff_point(rig):
     """review3 #2: a second takeoff used to re-centre the fence wherever the drone landed."""
     srv, sim, edge = rig
+    srv.safety_cfg.fence_half = 3.0  # off by default (outdoors); the gate shares this config
     await edge.run("takeoff", alt=1.0)
     await edge.run("move_body", fwd=2.5)
     await edge.run("land")
@@ -686,3 +746,26 @@ def test_height_is_measured_from_the_ground_not_the_drifted_baro():
     v.set_target(0.5, 0.0, 0.8, 0.0)            # hold 0.8 m above the ground ...
     z = v.m.mav.sent[-1][7]  # (time, sys, comp, frame, mask, x, y, z, ...)
     assert z == pytest.approx(-1.77)            # ... = 1.77 m above the EKF origin
+
+
+def test_outdoor_speeds_and_gps_mode():
+    """No slowing on purpose: the FC gets ArduPilot's maximum speeds (descent stays at the
+    vortex-ring-safe default). GPS mode never sends the made-up EKF origin."""
+    from edge.mav import MavVehicle
+    cfg = SafetyConfig()
+    v = MavVehicle("udpin:127.0.0.1:0", speed_xy=cfg.speed_xy, speed_z=cfg.speed_z,
+                   speed_dn=cfg.speed_dn, gps=True)
+    assert v.limit_param_sets[0] == {"WP_SPD": 20.0, "WP_SPD_UP": 10.0, "WP_SPD_DN": 1.5}
+    assert v.origin_ok                                   # the FC's GPS sets the origin
+    assert not MavVehicle("udpin:127.0.0.1:0").origin_ok  # indoors we still send one
+    assert SafetyGate().check("scan", {"rate_dps": 120.0}, FLYING, True).ok  # no scan cap
+
+
+def test_timeouts_cover_long_flights_but_never_limit_speed():
+    from edge.config import ExecConfig, flight_time
+    cfg = SafetyConfig()
+    assert flight_time(100.0, 0.0, 0.0, cfg) >= 50          # 100 m: assumes <= 2 m/s
+    assert flight_time(0.0, 30.0, 0.0, cfg) >= 30            # 30 m climb: <= 1 m/s
+    assert flight_time(0.0, -30.0, 0.0, cfg) >= 20           # descent at 1.5 m/s
+    slow = SafetyConfig(speed_xy=0.5)                        # a slow FC setting still fits
+    assert flight_time(10.0, 0.0, 0.0, slow) >= 20

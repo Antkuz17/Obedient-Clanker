@@ -13,6 +13,12 @@ from .vehicle import Vehicle, VehicleState, wrap360, yaw_err
 
 
 class SimVehicle(Vehicle):
+    # How fast the simulated drone moves: a small, slow quad, so tests can catch a move mid-way.
+    # Separate from SafetyConfig's speeds, which are what the edge writes to the real FC.
+    SPEED_XY = 0.5   # m/s
+    SPEED_Z = 0.3    # m/s
+    YAW_RATE = 45.0  # deg/s
+
     def __init__(self, cfg: SafetyConfig | None = None, rate_hz: float = 50.0,
                  speedup: float = 1.0):
         self.cfg = cfg or SafetyConfig()
@@ -72,8 +78,8 @@ class SimVehicle(Vehicle):
         tn, te, talt, tyaw = self._target
         dn, de, dz = tn - s.n, te - s.e, talt - s.alt
         dxy = math.hypot(dn, de)
-        vxy = min(self.cfg.speed_xy, dxy / dt) if dxy > 1e-6 else 0.0
-        vz_max = self.cfg.speed_z * (1.5 if self._landing else 1.0)
+        vxy = min(self.SPEED_XY, dxy / dt) if dxy > 1e-6 else 0.0
+        vz_max = self.SPEED_Z * (1.5 if self._landing else 1.0)
         vz = max(-vz_max, min(vz_max, dz / dt))
         s.vn = vxy * dn / dxy if dxy > 1e-6 else 0.0
         s.ve = vxy * de / dxy if dxy > 1e-6 else 0.0
@@ -82,7 +88,7 @@ class SimVehicle(Vehicle):
         s.e += s.ve * dt
         s.alt = max(0.0, s.alt + vz * dt)
         dy = yaw_err(tyaw, s.yaw)
-        step = max(-self.cfg.yaw_rate * dt, min(self.cfg.yaw_rate * dt, dy))
+        step = max(-self.YAW_RATE * dt, min(self.YAW_RATE * dt, dy))
         s.yaw = wrap360(s.yaw + step)
         s.range_m = s.alt
         if self._landing and s.alt <= 0.02:

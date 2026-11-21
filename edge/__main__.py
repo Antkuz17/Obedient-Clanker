@@ -29,16 +29,20 @@ def set_realtime(prio: int) -> None:
 
 async def main(a) -> None:
     cfg = SafetyConfig()
-    if a.sitl:
-        cfg.flow_quality_min = 0  # SITL has no optical flow; this run only
+    if a.sitl or a.gps:
+        # SITL has no optical flow; with --gps the FC navigates on GPS, so flow isn't needed
+        cfg.flow_quality_min = 0
     if a.mav and not a.sitl and not a.no_person_check:
         cfg.require_person_detector = True  # real drone: no detector -> no forward moves
+    if a.require_obstacle_sensor:
+        cfg.require_obstacle_sensor = True  # forward HC-SR04 mounted: silent sensor = no fwd
     if a.sim:
         from .sim import SimVehicle
         vehicle = SimVehicle(cfg, speedup=a.speedup)
     else:
         from .mav import MavVehicle
-        vehicle = MavVehicle(a.mav, baud=a.baud, speed_xy=cfg.speed_xy, speed_z=cfg.speed_z)
+        vehicle = MavVehicle(a.mav, baud=a.baud, speed_xy=cfg.speed_xy, speed_z=cfg.speed_z,
+                             speed_dn=cfg.speed_dn, gps=a.gps)
 
     srv = EdgeServer(vehicle, cfg, port=a.port, perception_port=a.perception_port,
                      flow_port=a.flow_port, log_path=Path(a.log) if a.log else None,
@@ -73,6 +77,12 @@ if __name__ == "__main__":
                     help="with --mav: ArduPilot SITL, skip the optical-flow quality check")
     ap.add_argument("--no-person-check", action="store_true",
                     help="real drone only: allow forward moves with no person detector running")
+    ap.add_argument("--gps", action="store_true",
+                    help="outdoors: the FC navigates on GPS (tools/fc_profile.py --outdoor). No "
+                         "fake EKF origin, no optical-flow requirement, no 2 m height cap")
+    ap.add_argument("--require-obstacle-sensor", action="store_true",
+                    help="refuse forward moves while the forward ultrasonic sensor is silent "
+                         "(turn on once it is mounted)")
     ap.add_argument("--baud", type=int, default=115200)
     ap.add_argument("--port", type=int, default=P.EDGE_PORT)
     ap.add_argument("--video-port", type=int, default=P.VIDEO_PORT)

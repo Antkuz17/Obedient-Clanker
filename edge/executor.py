@@ -8,7 +8,7 @@ from typing import Callable
 
 from shared import protocol as P
 
-from .config import ExecConfig
+from .config import ExecConfig, flight_time
 from .safety import Perception, SafetyGate
 from .vehicle import Vehicle, ned_to_body, wrap360, yaw_err
 
@@ -126,6 +126,9 @@ class Executor:
         """Re-check the *running* command every safety tick (review2 #4, #6). Returns a reason
         to stop it, or None. Forward-only checks let the drone back away from a person."""
         if not (self._task and not self._task.done() and self._active_moves):
+            # no move running: forget any bad-flow streak, or the next move could be stopped by
+            # a single blurry frame because the clock started during an earlier one
+            self._flow_bad_since = None
             return None
         p = self.perception
         if self._active_fwd:
@@ -133,6 +136,10 @@ class Executor:
                 return f"person {p.person_m:.1f} m ahead"
             if cfg.require_person_detector and not p.detector_alive:
                 return "person detector stopped"
+            if p.obstacle_m is not None and p.obstacle_m < cfg.obstacle_close_m:
+                return f"something {p.obstacle_m:.1f} m ahead"
+            if cfg.require_obstacle_sensor and not p.obstacle_alive:
+                return "forward obstacle sensor stopped"
         # one blurry frame shouldn't abort a move (and the whole plan): flow must stay bad for
         # FLOW_BAD_S before the move is stopped (review3, smaller items)
         if s.flow_quality < cfg.flow_quality_min:
@@ -174,6 +181,10 @@ class Executor:
                 self._phase = "LANDING"
                 self.v.land()
                 self._task = asyncio.create_task(self._watch_landing())
+            else:
+                # already on the ground and disarmed: nothing to land. Leaving failsafe="land"
+                # set here refused every takeoff until the edge restarted.
+                self.failsafe = None
         elif self.airborne:
             self._hold()
 
@@ -250,8 +261,12 @@ class Executor:
             self._phase = "TAKING_OFF"
             self.v.takeoff(alt)
             tol = self.move_tolerance(alt)  # 0.8 m takeoff: done at 0.56, not 0.5 (flow SITL)
-            ok = await self._wait(lambda s: s.alt >= alt - tol,
-                                  timeout=alt / sc.speed_z + c.cmd_timeout_pad_s)
+            # takeoff_failed: the vehicle gave up (FC refused to arm) - report it now instead of
+            # waiting out the whole climb timeout
+            gave_up = lambda: bool(getattr(self.v, "takeoff_failed", False))
+            ok = await self._wait(lambda s: s.alt >= alt - tol or gave_up(),
+                                  timeout=flight_time(0.0, alt, 0.0, sc, c) + c.cmd_timeout_pad_s)
+            ok = ok and not gave_up()
             self._phase = ""
             if not ok:
                 why = getattr(self.v, "last_error", "")
@@ -288,8 +303,8 @@ class Executor:
         n, e, alt, yaw = verdict.target
         s = self.v.state()
         dist = math.dist((n, e, alt), (s.n, s.e, s.alt))
-        timeout = (dist / min(sc.speed_xy, sc.speed_z) + abs(yaw_err(yaw, s.yaw)) / sc.yaw_rate
-                   + c.cmd_timeout_pad_s)
+        timeout = flight_time(math.hypot(n - s.n, e - s.e), alt - s.alt,
+                              yaw_err(yaw, s.yaw), sc, c) + c.cmd_timeout_pad_s
         tol = self.move_tolerance(dist)
         self._set(n, e, alt, yaw)
         ok = await self._wait(

@@ -29,6 +29,7 @@ log = logging.getLogger("edge")
 PERCEPTION_PORT = 7001
 FLOW_PORT = 7002
 PERCEPTION_STALE_S = 1.0
+OBSTACLE_STALE_S = 0.5   # the forward HC-SR04 reports at ~20 Hz
 
 
 class FlightLog:
@@ -75,6 +76,7 @@ class EdgeServer:
         self._writer: asyncio.StreamWriter | None = None
         self._last_hb: float | None = None
         self._perception_t = 0.0
+        self._obstacle_t = 0.0
         self._palm_latched = False
         self._pos_bad_since: float | None = None
         self._batt_low_since: float | None = None
@@ -194,9 +196,15 @@ class EdgeServer:
     async def _safety_loop(self, hz: float = 50.0) -> None:
         period = 1.0 / hz
         last = time.monotonic()
+        deadline = last + period
         while True:
-            await asyncio.sleep(period)
+            # absolute deadlines: sleeping a fixed period *after* each tick ran the loop below
+            # 50 Hz and counted the tick's own work as scheduler lateness in the jitter graph
+            await asyncio.sleep(max(0.0, deadline - time.monotonic()))
             now = time.monotonic()
+            deadline += period
+            if now - deadline > period:  # fell more than a tick behind: don't burst to catch up
+                deadline = now + period
             self.loop_stats.append(now - last)
             if len(self.loop_stats) > 5000:
                 del self.loop_stats[:1000]
@@ -209,6 +217,7 @@ class EdgeServer:
             try:
                 self.safety_tick(now)
                 self._tick_fail_since = None
+                self._tick_fail_landed = False  # recovered: a later failure streak lands again
             except Exception:
                 if self._tick_fail_since is None:
                     self._tick_fail_since = now
@@ -291,6 +300,9 @@ class EdgeServer:
         if now - self._perception_t > PERCEPTION_STALE_S:
             ex.perception.person_m = None
             ex.perception.detector_alive = False
+        if now - self._obstacle_t > OBSTACLE_STALE_S:
+            ex.perception.obstacle_m = None
+            ex.perception.obstacle_alive = False
 
     # --- QNX demo stats (opt-in) ------------------------------------------------------------
     def _send_stats(self, msg: dict) -> None:
@@ -352,6 +364,18 @@ class EdgeServer:
             self._stop_latency("palm", msg, t_rx)
         self._palm_latched = palm
 
+    def on_obstacle(self, fwd_m: float) -> None:
+        """Forward ultrasonic reading in metres (< 0 = no echo within range = clear)."""
+        t_rx = time.time()
+        self._obstacle_t = time.monotonic()
+        ex = self.exec
+        ex.perception.obstacle_alive = True
+        ex.perception.obstacle_m = None if fwd_m < 0 else fwd_m
+        if (why := ex.revalidate(self.v.state(), self.safety_cfg)) is not None:
+            ex.stop(why)
+            self._emit(P.event("safety_reject", f"{why}: stopped and holding"))
+            self._stop_latency("obstacle", {}, t_rx)
+
     def _on_perception(self, data: bytes) -> None:
         try:
             self.on_perception(json.loads(data))
@@ -361,6 +385,9 @@ class EdgeServer:
     def _on_flow(self, data: bytes) -> None:
         try:
             m = json.loads(data)
+            if "fwd_m" in m:  # tools/rangefinder.py: the forward HC-SR04 (obstacles)
+                self.on_obstacle(float(m["fwd_m"]))
+                return
             if "range_m" in m:  # tools/rangefinder.py (HC-SR04 via Arduino): height above floor
                 if not m.get("direct"):  # direct: it already went to the FC (edge.fcdirect)
                     self.v.send_distance_sensor(float(m["range_m"]))

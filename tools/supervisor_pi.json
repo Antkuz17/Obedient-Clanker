@@ -45,6 +45,7 @@
       "edge",
       "--mav",
       "udpin:127.0.0.1:14555",
+      "--gps",
       "--station-ip",
       "LAPTOP_IP",
       "--stats-udp",
@@ -100,6 +101,22 @@
       "127.0.0.1:14556",
       "--flip-x",
       "--flip-y"
+    ]
+  },
+  {
+    "name": "vision",
+    "prio": 41,
+    "user": "qnxuser",
+    "cmd": [
+      "python3",
+      "-m",
+      "edge.vision",
+      "--shm",
+      "camgrab_fwd",
+      "--hz",
+      "10",
+      "--threads",
+      "2"
     ]
   },
   {

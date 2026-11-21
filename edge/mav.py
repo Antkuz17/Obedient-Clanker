@@ -59,17 +59,20 @@ HEARTBEAT_PERIOD_S = 0.5   # 2 Hz: 4 beats inside FS_GCS_TIMEOUT=2 (review2 #10)
 
 
 class MavVehicle(Vehicle):
-    def __init__(self, device: str, baud: int = 115200, speed_xy: float = 0.5,
-                 speed_z: float = 0.3):
+    def __init__(self, device: str, baud: int = 115200, speed_xy: float = 20.0,
+                 speed_z: float = 10.0, speed_dn: float = 1.5, gps: bool = False):
         self.device, self.baud, self.speed_xy, self.speed_z = device, baud, speed_xy, speed_z
+        # gps: outdoors, the FC navigates on its GPS (tools/fc_profile.py --outdoor). Its EKF
+        # origin comes from the first GPS fix, so we must not set a made-up one.
+        self.gps = gps
         # GUIDED position targets and takeoff fly at these FC params, not at anything we send
         # per command, so the edge sets them on every connect and reads them back (review2 #2)
         # ArduPilot 4.7 renamed these and switched to m/s (WPNAV_SPEED cm/s -> WP_SPD m/s);
         # SITL 4.7 defaults are WP_SPD=10 m/s, WP_SPD_UP=2.5. Older firmware: the cm/s names.
         self.limit_param_sets = [
-            {"WP_SPD": speed_xy, "WP_SPD_UP": speed_z, "WP_SPD_DN": speed_z},
+            {"WP_SPD": speed_xy, "WP_SPD_UP": speed_z, "WP_SPD_DN": speed_dn},
             {"WPNAV_SPEED": speed_xy * 100, "WPNAV_SPEED_UP": speed_z * 100,
-             "WPNAV_SPEED_DN": speed_z * 100},
+             "WPNAV_SPEED_DN": speed_dn * 100},
         ]
         self.limit_params: dict[str, float] = {}  # the set the FC confirmed
         self.params: dict[str, float] = {}
@@ -79,6 +82,7 @@ class MavVehicle(Vehicle):
         self._tx = threading.Lock()        # all MAVLink sends (A11)
         self._stop = threading.Event()
         self._abort_takeoff = threading.Event()
+        self.takeoff_failed = False
         self._land_req = False
         self._last_land_send = 0.0
         self._last_hb_sent = 0.0
@@ -91,7 +95,7 @@ class MavVehicle(Vehicle):
         self._t0 = time.monotonic()
         self.reconnects = 0
         self._last_setup = 0.0
-        self.origin_ok = False         # FC confirmed the EKF origin
+        self.origin_ok = gps           # FC confirmed the EKF origin (GPS mode: the FC's own)
         self._last_origin_send = 0.0
         # Height reference (review3 #1). LOCAL_POSITION_NED z is measured from the EKF origin,
         # i.e. wherever the baro read zero at boot, and the baro drifts (warm-up, room pressure,
@@ -124,10 +128,11 @@ class MavVehicle(Vehicle):
         time.sleep(0.05)  # let _handle finish recording the heartbeat
         self._last_setup = time.monotonic()
         log.info("FC link up: sys %d comp %d", self.m.target_system, self.m.target_component)
-        self.origin_ok = False  # a rebooted FC forgot it; tick() re-sends until confirmed
+        self.origin_ok = self.gps  # a rebooted FC forgot it; tick() re-sends until confirmed
         for msg_id, hz in STREAMS.items():
             self._cmd(M.MAV_CMD_SET_MESSAGE_INTERVAL, msg_id, int(1e6 / hz))
-        self.set_origin()
+        if not self.gps:
+            self.set_origin()
         self._apply_limits()
 
     def _apply_limits(self) -> None:
@@ -319,6 +324,7 @@ class MavVehicle(Vehicle):
 
     # --- primitives --------------------------------------------------------------------------
     def takeoff(self, alt: float) -> None:
+        self.takeoff_failed = False  # set when arming fails; the executor stops waiting
         self._abort_takeoff.clear()
         self._land_req = False
         threading.Thread(target=self._takeoff, args=(alt,), daemon=True,
@@ -331,7 +337,8 @@ class MavVehicle(Vehicle):
         ab = self._abort_takeoff
         if ab.is_set():
             return
-        self.set_origin()
+        if not self.gps:
+            self.set_origin()
         self._set_mode(COPTER_GUIDED)
         self._cmd(M.MAV_CMD_DO_CHANGE_SPEED, 1, self.speed_xy, -1)
         if ab.is_set():
@@ -347,6 +354,7 @@ class MavVehicle(Vehicle):
             return
         if not self.state().armed:
             log.error("arming failed: %s", self.last_error or "no reason from FC")
+            self.takeoff_failed = True
             return
         self._cmd(M.MAV_CMD_NAV_TAKEOFF, 0, 0, 0, 0, 0, 0, alt)
 

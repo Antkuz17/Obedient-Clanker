@@ -9,3 +9,4 @@ flight_log.jsonl
 data/
 edge/hbwd/hbwd
 edge/camgrab/camgrab
+edge/vision/models/

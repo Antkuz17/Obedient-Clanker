@@ -1,9 +1,12 @@
-"""HC-SR04 (on an Arduino, tools/hcsr04/hcsr04.ino) -> edge -> FC as MAVLink DISTANCE_SENSOR.
+"""Two HC-SR04s (on an Arduino, tools/hcsr04/hcsr04.ino) -> edge (and the FC).
 
-The Arduino prints "d <mm>" lines over USB. This process reads them and sends
-{"range_m": m} (or -1 for no echo) to the edge's local UDP port 7002; the edge forwards it to
-the flight controller (FC params: RNGFND1_TYPE=10, RNGFND1_ORIENT=25, low RNGFND1_MIN).
-SITL showed a rangefinder is required for flow navigation and must read valid on the ground.
+The Arduino prints "d <mm>" (down) and "f <mm>" (forward) lines over USB, -1 = no echo.
+- down: {"range_m": m} to the edge's local UDP port 7002; the edge (or --fc directly) sends it to
+  the flight controller as DISTANCE_SENSOR (FC params: RNGFND1_TYPE=10, RNGFND1_ORIENT=25, low
+  RNGFND1_MIN). SITL showed a rangefinder is required for flow navigation and must read valid
+  on the ground.
+- forward: {"fwd_m": m} to the same port; the edge's safety gate refuses forward moves that
+  would end within obstacle_close_m of the echo and stops a running one. Never sent to the FC.
 
 On the QNX Pi (no USB-serial driver: raw CDC-ACM via pyusb, so run as root):
   sudo env PYTHONPATH=$HOME/hope:$HOME/.local/lib/python3.14/site-packages \\
@@ -52,6 +55,18 @@ def lines_serial(port: str):
             yield s.readline()
 
 
+def parse_line(raw: bytes) -> tuple[str, float] | None:
+    """b"d 412" -> ("d", 0.412); b"f -1" -> ("f", -1.0); anything else -> None."""
+    parts = raw.decode(errors="replace").split()
+    if len(parts) != 2 or parts[0] not in ("d", "f"):
+        return None
+    try:
+        mm = int(parts[1])
+    except ValueError:
+        return None
+    return parts[0], (-1.0 if mm < 0 else mm / 1000.0)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     src = ap.add_mutually_exclusive_group(required=True)
@@ -71,14 +86,15 @@ def main() -> None:
         fc = FcDirect(a.fc, RANGE_COMPONENT)
     n, t0 = 0, time.monotonic()
     for raw in (lines_usb() if a.usb else lines_serial(a.serial)):
-        parts = raw.decode(errors="replace").split()
-        if len(parts) != 2 or parts[0] != "d":
+        parsed = parse_line(raw)
+        if parsed is None:
             continue
-        try:
-            mm = int(parts[1])
-        except ValueError:
+        tag, m = parsed
+        if tag == "f":
+            sock.sendto(json.dumps({"fwd_m": m}).encode(), (host, int(port)))
+            if a.print:
+                print(f"forward {m:.3f} m", flush=True)
             continue
-        m = -1.0 if mm < 0 else mm / 1000.0
         if fc:
             fc.distance(m)
         sock.sendto(json.dumps({"range_m": m, "direct": fc is not None}).encode(),

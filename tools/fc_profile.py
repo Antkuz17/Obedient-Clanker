@@ -1,6 +1,7 @@
-"""Indoor flight parameter profile for the flight controller: check, back up, apply.
+"""Flight parameter profile for the flight controller: check, back up, apply.
 
   python3 -m tools.fc_profile              # check only: prints OK / DIFF per parameter
+  python3 -m tools.fc_profile --outdoor    # outdoors: GPS navigation instead of flow (no 2 m cap)
   python3 -m tools.fc_profile --apply      # back up current values, write the diffs, verify
   python3 -m tools.fc_profile --apply --reboot   # also reboot the FC if a reboot-only param changed
   python3 -m tools.fc_profile --addr tcp:127.0.0.1:5761   # SITL instead of the relay tap
@@ -49,18 +50,32 @@ PROFILE: dict[str, tuple[float, bool, str]] = {
     "RNGFND1_MAX": (2.0, False, "m; HC-SR04 is reliable to about 2 m"),
 }
 
+# Outdoors (2026-11-21): navigate on the HGLRC M100-PRO GPS. These are ArduPilot's own
+# defaults for a GPS copter. Indoors, flow + a 2 m ultrasonic capped the height at ~2 m (above
+# it the EKF lost position and the edge landed). Run the edge with --gps to match.
+OUTDOOR: dict[str, tuple[float, bool, str]] = {
+    "GPS1_TYPE": (1, True, "GPS on (auto-detect)"),
+    "EK3_SRC1_POSXY": (3, False, "GPS horizontal position"),
+    "EK3_SRC1_VELXY": (3, False, "GPS horizontal velocity"),
+    "EK3_SRC1_POSZ": (1, False, "baro height (works at any height; the HC-SR04 only to 2 m)"),
+    "EK3_SRC1_VELZ": (3, False, "GPS vertical velocity"),
+    "EK3_SRC1_YAW": (1, False, "compass"),
+}
+
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--addr", default=fclink.TAP)
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--reboot", action="store_true", help="reboot the FC if needed after apply")
+    ap.add_argument("--outdoor", action="store_true", help="GPS navigation (see OUTDOOR)")
     a = ap.parse_args()
+    profile = {**PROFILE, **OUTDOOR} if a.outdoor else PROFILE
     m = fclink.connect(a.addr)
 
-    current = {k: fclink.get_param(m, k) for k in PROFILE}
+    current = {k: fclink.get_param(m, k) for k in profile}
     diffs = []
-    for k, (want, rb, why) in PROFILE.items():
+    for k, (want, rb, why) in profile.items():
         cur = current[k]
         ok = cur is not None and abs(cur - want) < 1e-3 * max(1.0, abs(want))
         if not ok:
@@ -78,7 +93,7 @@ def main() -> int:
     print(f"backed up current values to {backup}")
     need_reboot = False
     for k in diffs:
-        want, rb, _ = PROFILE[k]
+        want, rb, _ = profile[k]
         got = fclink.set_param(m, k, want)
         ok = got is not None and abs(got - want) < 1e-3 * max(1.0, abs(want))
         need_reboot |= rb and ok
