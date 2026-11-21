@@ -17,6 +17,7 @@ import argparse
 import json
 import logging
 import socket
+import struct
 import time
 
 log = logging.getLogger("rangefinder")
@@ -28,6 +29,10 @@ def lines_usb():
     while True:
         try:
             cdc = UsbCdc(ARDUINO_VID, UNO_PID)
+            # The Uno's USB-serial chip sends nothing until it's told the baud rate
+            # (SET_LINE_CODING: 115200 8N1 on comm interface 0). Verified on the QNX Pi.
+            cdc.dev.ctrl_transfer(0x21, 0x20, 0, 0, struct.pack("<IBBB", 115200, 0, 0, 8))
+            time.sleep(2.0)  # the Uno resets when the port opens
             log.info("Arduino open over USB")
             buf = b""
             while True:
