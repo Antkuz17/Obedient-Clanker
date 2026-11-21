@@ -81,14 +81,14 @@ position (altitude used to sag about 0.1 m per command).
 ## Review follow-ups (from [review.md](review.md), 2026-11-21)
 
 Before any real flight:
-- [ ] A1: `land`/`stop` abort an in-progress takeoff (an abort flag in the takeoff thread)
-- [ ] A2: LAND resent until the mode reads LAND; FAILED on timeout
-- [ ] A3: FC heartbeat sent from `safety_tick`; thread exceptions → `connected=False`
-- [ ] A4: FC params `FS_GCS_ENABLE=5`, `FS_GCS_TIMEOUT=2`, `FS_EKF_ACTION=1`; pilot switch AltHold / Land / GUIDED
-- [ ] A5–A7: USB reconnect; EKF health + GUIDED check in the gate; airborne from armed + alt when `EXTENDED_SYS_STATE` is stale
+- [x] A1: `land`/`stop` abort an in-progress takeoff (an abort flag in the takeoff thread)
+- [x] A2: LAND resent until the mode reads LAND; FAILED on timeout
+- [x] A3 (SITL: hung loop → FC lands): FC heartbeat sent from `safety_tick`; thread exceptions → `connected=False`
+- [ ] A4 (**board params + transmitter, by hand**): FC params `FS_GCS_ENABLE=5`, `FS_GCS_TIMEOUT=2`, `FS_EKF_ACTION=1`; pilot switch AltHold / Land / GUIDED
+- [x] A5–A7 (A5 SITL reboot test): USB reconnect; EKF health + GUIDED check in the gate; airborne from armed + alt when `EXTENDED_SYS_STATE` is stale
 - [x] A8: forward moves refused when the person detector is dead (`40f6f54`)
-- [ ] A9: root USB relay → UDP `127.0.0.1:14555`, core unprivileged, station-only connections
-- [ ] A10–A13: station heartbeat thread; one MAVLink writer; home = takeoff point; `pos_tolerance` 0.3
+- [x] A9 (`tools/usb_relay.py`, `--station-ip`; SITL flight through it): root USB relay → UDP `127.0.0.1:14555`, core unprivileged, station-only connections
+- [x] A10–A13: station heartbeat thread; one MAVLink writer; home = takeoff point; `pos_tolerance` 0.3
 - [ ] Flow-only SITL test (no GPS, no rangefinder) before relying on baro height
 - [ ] Decide models and the LLM command schema (PRD "Still to decide")
 
