@@ -6,7 +6,7 @@ Last updated: 2026-11-21. Update this at the end of every session.
 edge accepts the first flight step; demo sarcastic lines lose the "Safety says no:" prefix;
 dashboard parses `op (demo):`); `locate()` fixed (VLM reasoning off: it used all 120 tokens and
 returned nothing); `rule_parse` reads cm. `check_ai` 15/15 with the live keys, 207 tests pass.
-Open: dashboard auth + VM deploy (decide together), rehearsal with the real drone.
+Decided: no dashboard PIN, no public VM deploy (laptop only). Open: rehearsal with the real drone.
 
 **2026-11-21: pilot PIN removed.** `CONTROL_PIN`, the PIN check and lockout (`cloud/app.py`), the
 dashboard PIN dialog, and the `deploy.sh` PIN generation are gone. Any dashboard viewer (local or

@@ -227,8 +227,8 @@ every command with its real safety gate but never flies. Run it with
       bottom of anything closer than ~3 m, so close objects come back as an upper bound and
       the planner won't fly to them (by design).
 - [x] `rule_parse` reads centimetres.
-- [ ] Dashboard has no auth since the PIN was removed: fine on the laptop, not on a public VM.
-- [ ] Cloud VM deploy (only needed if judges use their own phones).
+- [x] Dashboard auth: decided (cloud lead, 2026-11-21): no PIN. It only runs on the laptop.
+- [x] Cloud VM deploy: decided (cloud lead, 2026-11-21): not deploying to the public internet.
 - [ ] Vultr demo rehearsal (docs/demo.md) and the Devpost cloud half (docs/devpost-cloud.md).
 - Keys: replaced 2026-11-21 evening, `check_ai` 15/15 PASS (night), voice to response est. 1.7 s.
 
