@@ -85,8 +85,9 @@ black box.
 
 | Child | What it does |
 |---|---|
+| `sensor_keeper` (root) | Restarts QNX's camera service (`sensor`) if it dies (its `/dev/sensor/camera5` vanishes) |
 | `usb_relay` (root) | Owns the FC's USB. UDP `:14555` goes to the core; `--aux :14556` is a write-only inlet for hbwd, flow and rangefinder; `--tap :14557` is a two-way port for tools |
-| `rangefinder` (root) | Arduino over USB → `DISTANCE_SENSOR` to the FC (direct) and to the edge |
+| `rangefinder` (root) | Arduino over USB → `DISTANCE_SENSOR` to the FC (direct) and to the edge. Holds prop-noise spikes (`SpikeFilter`; `--no-filter` turns it off) |
 | `hbwd` (root, C) | 50 Hz FIFO watchdog: lands the drone if the core hangs |
 | `edge` | Protocol v1 on TCP `:7000`, safety gate, executor, watchdog |
 | `camgrab_fwd`, `camgrab_down` (C, libcamapi) | Write frames to shared memory |
@@ -95,6 +96,11 @@ black box.
 | `video` | MJPEG on `:8080` (`/forward.jpg` carries an `X-Pose` header) |
 | `blackbox` | Records flights to `logs/blackbox/` through the tap |
 
+**Priorities (SCHED_FIFO):** hbwd 60, relay 50, edge 45, rangefinder 42 (light I/O) stay above
+the USB and Wi-Fi drivers (21-24); flow 20, camgrab 19/18, vision 11, video 10, blackbox 5 sit
+below them. With flow/vision/camgrab at 40-44 they starved the drivers: USB `RING_OVERRUN` on a
+camera, Wi-Fi SDIO timeouts and the camera service dying (2026-11-21). Keep heavy compute below 21.
+
 **Restart everything:**
 
 ```
@@ -102,7 +108,9 @@ sudo sh -c 'slay -f camgrab; slay -f hbwd; slay -f python3; nohup ~/hope/start_s
 ```
 
 - Each child's log is in `~/hope/logs/<name>.log`; supervisor events are in `logs/supervisor.out`.
-- The stack does **not** start at boot yet. `deploy_pi --autostart on` is written but untested.
+- **The stack starts at boot** (`/boot/onboot`, installed by `deploy_pi --autostart on`): edge up
+  about 55 s after power-on. Log: `/boot/onboot.log`. Off: `touch ~/hope/NO_AUTOSTART`.
+  The script relaunches itself with `on -d`: a plain `&` job is killed when mount_fs.sh exits.
 
 ## Tools (laptop unless noted)
 
@@ -135,11 +143,15 @@ sudo sh -c 'slay -f camgrab; slay -f hbwd; slay -f python3; nohup ~/hope/start_s
 
 ## Known problems / gotchas (all found on the real hardware)
 
-- **Camera stalls ("Timeout waiting for USB buffer", both at once):** most likely the Pi's
-  600 mA total USB limit without a 5 V/5 A supply.
-  - Fix: a 5V/5A PD power bank and `usb_max_current_enable=1` in `/boot/config.txt`.
-  - Meanwhile, restart the stack; camgrab exits on a stall and the supervisor retries.
-- **QNX's camera service died once** for an unknown reason. Restarting the stack brings it back.
+- **Verified 2026-11-21 (no flying):** boot auto-start; full `system_check` PASS on the drone
+  side; with the edge core frozen, the FC still gets flow (21 Hz, q 251) and the rangefinder
+  (10 Hz) directly, and hbwd sees the gap without landing a disarmed drone.
+
+- **Camera stalls / camera service dying:** root cause found 2026-11-21: our real-time
+  children starved the USB driver (see Priorities above). Fixed by the new priorities; the
+  first start after a reboot now usually has no stall, and `sensor_keeper` restarts the
+  service if it ever dies. If stalls come back, suspect power next (the Pi's 600 mA USB limit:
+  a 5 V/5 A PD bank and `usb_max_current_enable=1` in `/boot/config.txt`).
 - **The battery "low capacity failsafe" latches** whenever the FC stays powered over USB during a
   pack swap. Fix: reboot the FC.
 - **The relay goes stale after an FC reboot.** It now exits after 5 s of silence and the
@@ -161,12 +173,12 @@ sudo sh -c 'slay -f camgrab; slay -f hbwd; slay -f python3; nohup ~/hope/start_s
 - Audio out and voice latency are untested.
 
 **Drone lead:**
-- Autonomous hover try 3.
-- Verify the person detector's inference time and distance on the Pi.
+- Autonomous hover try 3. The rangefinder spike filter is in (both earlier tries logged
+  fake 0.3-1.99 m readings on the floor once the props spun).
+- Person detector distance at 1, 2 and 3 m (needs someone in front of the camera). Inference
+  on the Pi measured: 50-80 ms, 7.5-8 Hz alone.
 - slog2 logging (needs testing on the Pi; don't write it blind).
-- Test the boot auto-start.
 - Measure the C270 HFOV (45° assumed).
-- Check the direct sensor path with the edge killed (review3 #8).
 - Measure braking.
 - A second (forward) HC-SR04: the code is ready (D11/D12), but the sensor is missing.
 - QNX demo items: latency on screen, slog2 live.
