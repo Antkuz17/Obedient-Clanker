@@ -223,6 +223,14 @@ class EdgeServer:
                     self._tick_fail_since = now
                     log.exception("safety tick failed")
                 elif now - self._tick_fail_since > 1.0 and not self._tick_fail_landed:
+                    try:
+                        mode = self.v.state().mode
+                    except Exception:
+                        mode = "UNKNOWN"
+                    if mode not in ("GUIDED", "LAND", "UNKNOWN"):
+                        # pilot has AltHold/Stabilize: never take it away (safety review); if
+                        # they hand back to GUIDED while it's still failing, the next tick lands
+                        continue
                     self._tick_fail_landed = True
                     log.error("safety tick failing for 1 s: landing")
                     try:
@@ -264,8 +272,13 @@ class EdgeServer:
             kind = "person_close" if "person" in why else "safety_reject"
             self._emit(P.event(kind, f"{why}: stopped and holding"))
         # Only act while we're in control. If the pilot switched to AltHold/Land/Stabilize,
-        # the edge must not override them; ArduPilot's own failsafes still apply.
-        flying = ex.airborne and s.mode in ("GUIDED", "LAND")
+        # the edge must not override them; ArduPilot's own failsafes still apply. A LAND the
+        # pilot chose is the pilot's (it used to count as ours and fired a stale watchdog).
+        flying = ex.airborne and ours
+        if not s.armed:
+            # a station gap from before this flight must never fire mid-flight (safety review:
+            # "no station heartbeat for 722.6 s" right as the pilot flipped to Land)
+            self._last_hb = None
         # watchdog
         if flying and self._last_hb is not None:
             gap = now - self._last_hb

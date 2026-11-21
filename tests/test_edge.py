@@ -848,3 +848,19 @@ async def test_person_in_the_new_path_after_turning_stops_it(rig):
     d = await edge.wait_done(cid, 10)
     t.cancel()
     assert d["status"] in (P.FAILED, P.ABORTED) and "person" in d["reason"]
+
+
+def test_stale_station_gap_never_fires_when_disarmed_or_in_pilot_land():
+    """Real drone, manual flight, no laptop: a heartbeat gap from minutes earlier fired
+    "no station heartbeat for 722.6 s: landing" the moment the pilot flipped to Land."""
+    sim = SimVehicle(SafetyConfig())
+    srv = EdgeServer(sim, SafetyConfig(), WatchdogConfig(), host="127.0.0.1", port=0,
+                     perception_port=None, flow_port=None)
+    srv._last_hb = time.monotonic() - 722.6          # stale: from long before this flight
+    srv.safety_tick(time.monotonic())                 # disarmed on the ground
+    assert srv._last_hb is None                       # disarmed resets the station clock
+    # pilot's own LAND in flight is not "ours": no watchdog clock, no failsafe
+    sim.s.armed, sim.s.landed, sim.s.mode, sim.s.alt = True, False, "LAND", 0.6
+    srv._last_hb = time.monotonic() - 722.6
+    srv.safety_tick(time.monotonic())
+    assert srv.exec.failsafe is None
