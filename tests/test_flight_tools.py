@@ -22,3 +22,21 @@ def test_profile_matches_verified_board_values():
     assert PROFILE["FS_GCS_ENABLE"][0] == 5 and PROFILE["FLTMODE6"][0] == 9
     assert PROFILE["RNGFND1_TYPE"][0] == 10 and PROFILE["FLOW_TYPE"][0] == 5
     assert PROFILE["RNGFND1_MIN"][0] <= 0.05  # must read valid on the ground (SITL)
+
+
+def test_flight_report_on_synthetic_flight():
+    from tools.flight_report import report
+    recs = []
+    for i in range(20):
+        t = 100 + i * 0.5
+        armed = 2 <= i <= 17
+        recs.append({"mavpackettype": "HEARTBEAT", "type": 2, "base_mode": 129 if armed else 1,
+                     "custom_mode": 4 if armed else 2, "_t": t})
+        recs.append({"mavpackettype": "LOCAL_POSITION_NED", "x": 0.01 * i, "y": 0.0,
+                     "z": -0.5, "_t": t})
+        recs.append({"mavpackettype": "OPTICAL_FLOW", "quality": 200, "_t": t})
+        recs.append({"mavpackettype": "SYS_STATUS", "voltage_battery": 12000 - 20 * i, "_t": t})
+    out = report(recs)
+    assert "armed for 8 s" in out and "GUIDED" in out
+    assert "optical flow quality mean 200" in out and "battery" in out
+    assert report(recs[:1]) == "no armed period in this file"

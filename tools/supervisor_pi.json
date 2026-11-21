@@ -133,5 +133,15 @@
       "shm:camgrab_fwd"
     ],
     "ready": "tcp:127.0.0.1:8080"
+  },
+  {
+    "name": "blackbox",
+    "prio": 5,
+    "user": "qnxuser",
+    "cmd": [
+      "python3",
+      "-m",
+      "tools.blackbox"
+    ]
   }
 ]
