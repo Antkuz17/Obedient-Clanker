@@ -33,5 +33,9 @@ class WatchdogConfig:
 @dataclass
 class ExecConfig:
     pos_tolerance: float = 0.3    # m; optical flow can't do better (review A13)
+    # short moves: done within frac x distance, floored at tol_min, capped at pos_tolerance.
+    # fwd=0.5 used to finish at +0.24 m (flow-only SITL); now it must get within 0.15 m
+    pos_tolerance_frac: float = 0.3
+    pos_tolerance_min: float = 0.1
     yaw_tolerance: float = 5.0    # deg
     cmd_timeout_pad_s: float = 8.0

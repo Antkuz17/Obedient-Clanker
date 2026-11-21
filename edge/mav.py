@@ -54,6 +54,7 @@ EKF_NEEDED = M.EKF_VELOCITY_HORIZ | M.EKF_POS_HORIZ_REL
 STALE_S = 1.0          # EKF / EXTENDED_SYS_STATE older than this = unknown
 FC_LINK_TIMEOUT_S = 3.0
 LAND_RETRY_S = 0.5
+ORIGIN_RETRY_S = 1.0
 HEARTBEAT_PERIOD_S = 0.5   # 2 Hz: 4 beats inside FS_GCS_TIMEOUT=2 (review2 #10)
 
 
@@ -90,6 +91,8 @@ class MavVehicle(Vehicle):
         self._t0 = time.monotonic()
         self.reconnects = 0
         self._last_setup = 0.0
+        self.origin_ok = False         # FC confirmed the EKF origin
+        self._last_origin_send = 0.0
 
     # --- lifecycle ---------------------------------------------------------------------------
     def _open(self) -> None:
@@ -114,6 +117,7 @@ class MavVehicle(Vehicle):
         time.sleep(0.05)  # let _handle finish recording the heartbeat
         self._last_setup = time.monotonic()
         log.info("FC link up: sys %d comp %d", self.m.target_system, self.m.target_component)
+        self.origin_ok = False  # a rebooted FC forgot it; tick() re-sends until confirmed
         for msg_id, hz in STREAMS.items():
             self._cmd(M.MAV_CMD_SET_MESSAGE_INTERVAL, msg_id, int(1e6 / hz))
         self.set_origin()
@@ -153,6 +157,7 @@ class MavVehicle(Vehicle):
         log.error(self.last_error)
 
     def set_origin(self) -> None:
+        self._last_origin_send = time.monotonic()
         self._send(self.m.mav.set_gps_global_origin_send, self.m.target_system, ORIGIN_LAT,
                    ORIGIN_LON, ORIGIN_ALT_MM)
 
@@ -187,6 +192,16 @@ class MavVehicle(Vehicle):
             self.reconnects += self._ekf_t > 0
             log.warning("FC telemetry silent; re-sending stream rates and origin")
             threading.Thread(target=self._setup, daemon=True, name="mav-setup").start()
+        # the EKF ignores an origin sent before it initialised (flow-only SITL): re-send at 1 Hz
+        # until the FC confirms it (GPS_GLOBAL_ORIGIN / "origin set") or has a position anyway
+        if not self.origin_ok and self.s.connected:
+            if self.state().pos_ok:
+                self.origin_ok = True
+            elif now - self._last_origin_send >= ORIGIN_RETRY_S:
+                try:
+                    self.set_origin()
+                except Exception as e:
+                    log.warning("origin send failed: %s", e)
         if self._land_req:  # A2: keep asking for LAND until the FC is in it (or disarmed)
             if not armed or mode not in ("GUIDED", "LAND"):
                 # disarmed, or the pilot chose another mode: the pilot always wins (review2 #1)
@@ -261,8 +276,12 @@ class MavVehicle(Vehicle):
                 self.params[msg.param_id] = msg.param_value
             elif t == "EKF_STATUS_REPORT":
                 self._ekf_t, self._ekf_flags = now, msg.flags
+            elif t == "GPS_GLOBAL_ORIGIN":
+                self.origin_ok = True
             elif t == "STATUSTEXT":
                 log.info("FC: %s", msg.text)
+                if "origin set" in msg.text:
+                    self.origin_ok = True
                 if msg.text.startswith(("PreArm", "Arm", "Takeoff", "EKF")):
                     self.last_error = msg.text
 

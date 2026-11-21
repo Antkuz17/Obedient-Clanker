@@ -47,8 +47,8 @@ Check with `curl https://<cloud>/health` → `"keys": {"vultr": true, "elevenlab
   - [ ] Upload the sketch (needs arduino-cli / Arduino IDE on the laptop), check readings, then move the Arduino to the Pi
   - [ ] FC params: `RNGFND1_TYPE=10`, `RNGFND1_ORIENT=25`, `RNGFND1_MIN=0.02`, `RNGFND1_MAX=2`
 - Note for B: on Windows, `test_camera::test_reader_follows_a_restarted_grabber`, `test_jitter::test_measure_runs_at_rate` and `test_supervisor::test_killed_child_is_restarted_and_timed` fail (shared memory, timing and process-kill differences); they pass on macOS. Not Pi bugs
-- [ ] **A/B: edge re-sends the EKF origin until the FC confirms it** (SITL: the one-shot origin at link-up was ignored before the EKF initialised; watch for "EKF3 IMU0 origin set" or `GPS_GLOBAL_ORIGIN`)
-- [ ] **A/B: short moves finish early**: `move_body fwd=0.5` reported done at +0.24 m with `pos_tolerance=0.3`; use a tolerance relative to the move (e.g. min(0.3, 0.3 × distance)) or 0.15 m with flow
+- [x] **A/B: edge re-sends the EKF origin until the FC confirms it** (done: 1 Hz until `GPS_GLOBAL_ORIGIN`, "origin set" or a position) (SITL: the one-shot origin at link-up was ignored before the EKF initialised; watch for "EKF3 IMU0 origin set" or `GPS_GLOBAL_ORIGIN`)
+- [x] **A/B: short moves finish early** (done: tolerance min(0.3, max(0.1, 0.3 × distance)), takeoff too; flow-only SITL ALL PASS: fwd 0.5 → +0.34 m, takeoff 0.8 → 0.56 m): `move_body fwd=0.5` reported done at +0.24 m with `pos_tolerance=0.3`; use a tolerance relative to the move (e.g. min(0.3, 0.3 × distance)) or 0.15 m with flow
 - [ ] **B: optical flow process** (`edge/flow/`): `ShmFrameReader("camgrab_down").gray()` → LK → rad/s → UDP :7002. Develop now with `python -m tools.fake_camgrab --name camgrab_down --webcam 0`
 - [ ] **B: hand-roll sign check** on the real drone: `OF.flowX` tracks `OF.bodyX`
 - [ ] **A + B: manual tethered AltHold hover** with the pilot

@@ -133,7 +133,10 @@ with the edge in its own process); `tools.sitl_flight` ALL PASS 8 of 9 runs.
 - **Open: intermittent SITL failure** (1 of 9): re-takeoff after the watchdog landing aborted with
   "position estimate lost". The failsafe now logs the EKF report age and flags; next failure tells
   us stale telemetry (our side) vs bad EKF flags (may be the same root as #9).
-- **Open: #9** flow-only takeoff on the predicted-position flag; check with `tools.sitl_flowonly`.
+- **#9: not a problem in SITL.** `tools.sitl_flowonly` (flow + rangefinder, no GPS) ALL PASS with the
+  edge's normal position check, after the origin retry and scaled move tolerance (both from
+  Anton's flow-only run). Recheck on the real board.
+- SITL tally tonight: `tools.sitl_flight` ALL PASS 14 of 15 runs; the one failure is the open item above.
 
 ## Open questions / known gaps
 

@@ -227,7 +227,8 @@ class Executor:
             alt = verdict.target[2]
             self._phase = "TAKING_OFF"
             self.v.takeoff(alt)
-            ok = await self._wait(lambda s: s.alt >= alt - c.pos_tolerance,
+            tol = self.move_tolerance(alt)  # 0.8 m takeoff: done at 0.56, not 0.5 (flow SITL)
+            ok = await self._wait(lambda s: s.alt >= alt - tol,
                                   timeout=alt / sc.speed_z + c.cmd_timeout_pad_s)
             self._phase = ""
             if not ok:
@@ -267,15 +268,20 @@ class Executor:
         dist = math.dist((n, e, alt), (s.n, s.e, s.alt))
         timeout = (dist / min(sc.speed_xy, sc.speed_z) + abs(yaw_err(yaw, s.yaw)) / sc.yaw_rate
                    + c.cmd_timeout_pad_s)
+        tol = self.move_tolerance(dist)
         self._set(n, e, alt, yaw)
         ok = await self._wait(
-            lambda s: math.dist((n, e, alt), (s.n, s.e, s.alt)) <= c.pos_tolerance
+            lambda s: math.dist((n, e, alt), (s.n, s.e, s.alt)) <= tol
             and abs(yaw_err(yaw, s.yaw)) <= c.yaw_tolerance,
             timeout=timeout)
         if not ok:
             self._hold()
             return P.FAILED, "did not reach target in time"
         return P.OK, ""
+
+    def move_tolerance(self, dist: float) -> float:
+        c = self.cfg
+        return min(c.pos_tolerance, max(c.pos_tolerance_min, c.pos_tolerance_frac * dist))
 
     async def _wait(self, pred, timeout: float) -> bool:
         deadline = time.monotonic() + timeout

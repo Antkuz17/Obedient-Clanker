@@ -483,3 +483,23 @@ async def test_bad_message_gets_error_ack(rig):
     edge._acks["x1"] = fut
     ack = await asyncio.wait_for(fut, 2)
     assert not ack["ok"] and "unknown op" in ack["reason"]
+
+
+def test_move_tolerance_scales_for_short_moves():
+    from edge.config import ExecConfig
+    from edge.executor import Executor
+    ex = Executor.__new__(Executor)
+    ex.cfg = ExecConfig()
+    assert ex.move_tolerance(0.5) == pytest.approx(0.15)   # was 0.3: done at +0.24 m
+    assert ex.move_tolerance(0.1) == pytest.approx(0.1)    # floor
+    assert ex.move_tolerance(1.0) == pytest.approx(0.3)    # >= 1 m: unchanged
+    assert ex.move_tolerance(3.0) == pytest.approx(0.3)
+
+
+async def test_short_move_goes_most_of_the_way(rig):
+    srv, sim, edge = rig
+    await edge.run("takeoff", alt=1.0)
+    await asyncio.sleep(0.5)
+    n0 = sim.s.n
+    assert (await edge.run("move_body", fwd=0.5))["status"] == P.OK
+    assert sim.s.n - n0 >= 0.35
