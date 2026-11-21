@@ -114,10 +114,12 @@ class EdgeClient:
         """Send a command and wait for its ack. Returns (id, ack). Doesn't wait for done."""
         cid = f"c{next(self._ids)}"
         loop = asyncio.get_running_loop()
-        self._acks[cid] = loop.create_future()
+        # Keep a local reference: _dispatch pops the ack future, and the ack can arrive before
+        # we get to wait on it (fast link), which used to raise KeyError here.
+        ack_fut = self._acks[cid] = loop.create_future()
         self._dones[cid] = loop.create_future()
         await loop.run_in_executor(None, self._send, P.cmd(cid, op, **args))
-        ack = await asyncio.wait_for(self._acks[cid], 5.0)
+        ack = await asyncio.wait_for(ack_fut, 5.0)
         if not ack["ok"]:
             self._dones.pop(cid, None)
         return cid, ack
