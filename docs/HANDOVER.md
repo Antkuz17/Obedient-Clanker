@@ -128,6 +128,22 @@ stack; turn it off by running the same without `--demo`. In demo mode (`edge/dem
   "move right 3 m" (real gate refusal) / land; the FC never left STABILIZE.
 - `auto_hover` and every takeoff are refused while it's on: turn it off for flight tests.
 
+## QNX demo (on the laptop, against the real drone)
+
+1. `python -m tools.demo_laptop` on Anton's laptop (.130), then open http://127.0.0.1:8100.
+   Dashboard: drone video, telemetry, the QNX card, typed or push-to-talk commands; replies
+   play in the browser (the JBL is the laptop's speaker).
+2. **Live safety-loop timing:** the edge streams its 50 Hz loop stats (p99 about 2 ms).
+3. **Kill a process:** on the Pi, `kill -9` the vision process (or `slay`): the card shows it
+   die and the supervisor respawn it in about 30-55 ms (verified).
+4. **slog2:** on the Pi, `slog2info -w -b hope` shows every start, crash, restart and safety
+   refusal live (edge/slog2d; verified).
+5. **Real-time vs normal priority** (`tools/jitter.py --compare --udp <laptop>:7010`, as root).
+   Measured on the Pi with no load: normal priority p99 14.0 ms / max 19.0 ms; SCHED_FIFO 50
+   p99 1.2 ms / max 2.2 ms. **Warning:** the CPU-hog cases (all 4 cores pegged) took the Pi off
+   the network on 2026-11-21 with the whole stack running on the USB power bank (likely power;
+   not confirmed). Don't run them on the flying stack: wall power, stack stopped, or fewer hogs.
+
 ## Tools (laptop unless noted)
 
 | Tool | Purpose |
