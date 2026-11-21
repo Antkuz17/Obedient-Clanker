@@ -1,13 +1,76 @@
 [
-  {"name": "usb_relay", "prio": 50,
-   "cmd": ["python3", "-m", "tools.usb_relay", "--aux", "127.0.0.1:14556"]},
-  {"name": "hbwd", "prio": 60,
-   "cmd": ["./edge/hbwd/hbwd", "-p", "60", "-c", "3"]},
-  {"name": "edge", "prio": 45, "user": "qnxuser",
-   "cmd": ["python3", "-m", "edge", "--mav", "udpin:127.0.0.1:14555", "--station-ip", "LAPTOP_IP",
-           "--hbwd", "127.0.0.1:14560"],
-   "ready": "tcp:127.0.0.1:7000"},
-  {"name": "camgrab_fwd", "prio": 40, "user": "qnxuser",
-   "cmd": ["./edge/camgrab/camgrab", "-u", "5", "-n", "camgrab_fwd"],
-   "ready": "shm:camgrab_fwd"}
+  {
+    "name": "usb_relay",
+    "prio": 50,
+    "cmd": [
+      "python3",
+      "-m",
+      "tools.usb_relay",
+      "--aux",
+      "127.0.0.1:14556"
+    ]
+  },
+  {
+    "name": "rangefinder",
+    "prio": 42,
+    "cmd": [
+      "python3",
+      "-m",
+      "tools.rangefinder",
+      "--usb"
+    ]
+  },
+  {
+    "name": "hbwd",
+    "prio": 60,
+    "cmd": [
+      "./edge/hbwd/hbwd",
+      "-p",
+      "60",
+      "-c",
+      "3"
+    ]
+  },
+  {
+    "name": "edge",
+    "prio": 45,
+    "user": "qnxuser",
+    "cmd": [
+      "python3",
+      "-m",
+      "edge",
+      "--mav",
+      "udpin:127.0.0.1:14555",
+      "--station-ip",
+      "LAPTOP_IP",
+      "--hbwd",
+      "127.0.0.1:14560"
+    ],
+    "ready": "tcp:127.0.0.1:7000"
+  },
+  {
+    "name": "camgrab_fwd",
+    "prio": 40,
+    "user": "qnxuser",
+    "cmd": [
+      "./edge/camgrab/camgrab",
+      "-u",
+      "5",
+      "-n",
+      "camgrab_fwd"
+    ],
+    "ready": "shm:camgrab_fwd"
+  },
+  {
+    "name": "flow",
+    "prio": 44,
+    "user": "qnxuser",
+    "cmd": [
+      "python3",
+      "-m",
+      "edge.flow",
+      "--shm",
+      "camgrab_fwd"
+    ]
+  }
 ]
