@@ -51,7 +51,10 @@ Check with `curl https://<cloud>/health` → `"keys": {"vultr": true, "elevenlab
 - Note for B: on Windows, `test_camera::test_reader_follows_a_restarted_grabber`, `test_jitter::test_measure_runs_at_rate` and `test_supervisor::test_killed_child_is_restarted_and_timed` fail (shared memory, timing and process-kill differences); they pass on macOS. Not Pi bugs
 - [x] **A/B: edge re-sends the EKF origin until the FC confirms it** (done: 1 Hz until `GPS_GLOBAL_ORIGIN`, "origin set" or a position) (SITL: the one-shot origin at link-up was ignored before the EKF initialised; watch for "EKF3 IMU0 origin set" or `GPS_GLOBAL_ORIGIN`)
 - [x] **A/B: short moves finish early** (done: tolerance min(0.3, max(0.1, 0.3 × distance)), takeoff too; flow-only SITL ALL PASS: fwd 0.5 → +0.34 m, takeoff 0.8 → 0.56 m): `move_body fwd=0.5` reported done at +0.24 m with `pos_tolerance=0.3`; use a tolerance relative to the move (e.g. min(0.3, 0.3 × distance)) or 0.15 m with flow
-- [ ] **B: optical flow process** (`edge/flow/`): `ShmFrameReader("camgrab_down").gray()` → LK → rad/s → UDP :7002. Develop now with `python -m tools.fake_camgrab --name camgrab_down --webcam 0`
+- [x] **Drone lead: optical flow process** (`edge/flow/`, `python3 -m edge.flow --shm <name> --print`): LK at 320×240, forward-backward check, median shift → rad/s (f = 277 px for a 60° HFOV), quality from inliers + agreement → UDP :7002. Unit tests on synthetic shifts. **On the Pi with the C270: q≈207, ~135 tracks, 10 ms/frame, 15 Hz** (camera at 15 fps in dim light)
+  - [ ] FC flow params: `FLOW_TYPE=5`, `EK3_SRC1_POSXY=0`, `EK3_SRC1_VELXY=5`, `EK3_SRC1_POSZ=1`, `EK3_SRC1_VELZ=0`, `GPS1_TYPE=0`, `EK3_FLOW_DELAY` ≈ 60 ms (tune), `FLOW_OPTIONS=0`; reboot
+  - [ ] **Hand-roll sign check** (camera mounted pointing down, props off): roll right → FC `OPTICAL_FLOW.flow_rate_x` has the same sign as `ATTITUDE.rollspeed`; pitch → `flow_rate_y` vs `pitchspeed`. Fix with `--flip-x/--flip-y/--swap-xy`
+  - [ ] Measure the real C270 HFOV (or tune `FLOW_FXSCALER`) and set `edge/flow` `--hfov`
 - [ ] **B: hand-roll sign check** on the real drone: `OF.flowX` tracks `OF.bodyX`
 - [ ] **A + B: manual tethered AltHold hover** with the pilot
 - [ ] **A + B: tethered GUIDED hover** via `tools.cmd`: takeoff 0.8 m, hold 30 s, land
