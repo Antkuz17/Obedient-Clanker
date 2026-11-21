@@ -29,11 +29,20 @@ for each item once it's checked in person.
 | Part | Details | Confirmed |
 |---|---|---|
 | iPhone XR | Drone's forward camera, streaming video to the laptop | ☐ |
-| Webcam | ArUco tracking camera (model: ?) | ☐ |
+| Webcam 1 (MLH) | Logitech C270: 720p @ 30 fps, fixed focus, ~55° diagonal FOV, USB 2.0, built-in mono mic | ☑ |
+| Webcam 2 (personal) | Logitech HD 720p, model TBD; assume close to the C270 | ☑ |
 | GPU laptop | RTX PRO 2000 Blackwell (8 GB VRAM), Core Ultra 9 285H, 30 GB RAM | ☐ |
 | Second laptop | Ground station and dev | ☐ |
-| QNX Raspberry Pi 5 | **Borrowed from the QNX booth.** Get it on day 1 | ☐ |
-| Arduino kit | Contents: ? (list what's in it) | ☐ |
+| QNX Raspberry Pi | QNX-provided board + SD card (black box). Confirm it's a Pi 5 | ☑ |
+| Raspberry Pi 4 (MLH) | With SD cards. Runs normal Linux | ☑ |
+| Arduino kit | Nearly complete starter kit | ☑ |
+
+## Audio and sensors
+
+| Part | Details | Confirmed |
+|---|---|---|
+| Google Nest Mini | Jarvis's voice. Use it as a Bluetooth speaker (set up in the Google Home app) or play audio to it over Cast | ☑ |
+| Grove barometer | Spare. The flight controller already has a barometer | ☑ |
 
 ## Power and tools
 
