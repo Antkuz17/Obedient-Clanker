@@ -3,609 +3,907 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#000000">
-<title>Hope Drone</title>
+<meta name="theme-color" content="#0E1012">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%23E0352B'/%3E%3C/svg%3E">
+<title>Hope</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400..800&family=Fragment+Mono&display=swap" rel="stylesheet">
 <style>
-  /* Design rule (Fuselab, Lattice): a number earns screen space only when it drives a decision.
-     Always visible: live view, state + height, battery, STOP / talk / LAND, the conversation.
-     Everything else appears as an alert when it matters. */
-  :root {
-    --ink: #f4f4f5; --ink2: rgba(244,244,245,.62); --ink3: rgba(244,244,245,.36); --hair: rgba(255,255,255,.09);
-    --rail: #0b0b0c; --accent: #ff8a3d; --ok: #4ade80; --warn: #fbbf24; --bad: #ff453a; --qnx: #a78bfa;
-    --sans: Geist, Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
-    --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
-  }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; background: #000; color: var(--ink); font: 14px/1.45 var(--sans);
-    -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent; }
-  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; touch-action: manipulation; }
-  .app { display: grid; grid-template-columns: minmax(0, 1fr) 420px; height: 100vh; }
-  @media (max-width: 960px) { .app { grid-template-columns: minmax(0, 1fr); height: auto; } }
+/* ---------- tokens ---------- */
+:root{
+  --bg:#0E1012; --cloud:#171A1E; --raise:#1B1E21;
+  --text:#F1F2EF; --t2:#A9AEB3; --t3:#868C92; --t4:#4A5056;
+  --line:#262A2E; --line2:#33383D;
+  --ok:#7FD3A8; --no:#F5B53D; --stop:#E0352B; --crit:#E0594A;
+  --sans:'Schibsted Grotesk',system-ui,sans-serif; --mono:'Fragment Mono',ui-monospace,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:var(--sans);-webkit-font-smoothing:antialiased}
+.big,td.r,#stopMs{font-variant-numeric:tabular-nums}
+button,input{font:inherit;color:inherit}
+button{cursor:pointer}
+a{color:var(--text)}
+[hidden]{display:none!important}
+.mono{font-family:var(--mono)}
+.label{font-size:12px;color:var(--t3)}
+.muted{color:var(--t2)}
 
-  /* ================= live view ================= */
-  .view { position: relative; overflow: hidden; background: #050505; }
-  @media (max-width: 960px) { .view { height: 72svh; min-height: 420px; } }
-  #video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-  .vignette { position: absolute; inset: 0; pointer-events: none;
-    background: linear-gradient(180deg, rgba(0,0,0,.62) 0%, rgba(0,0,0,0) 26%, rgba(0,0,0,0) 58%, rgba(0,0,0,.78) 100%); }
-  .nosig { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; color: var(--ink3);
-    background: radial-gradient(ellipse at center, #141416 0%, #050505 70%); }
-  .nosig b { display: block; font-weight: 500; color: var(--ink2); font-size: 15px; margin-bottom: 4px; }
-  .nosig.hide { display: none; }
+/* ---------- app grid: phone first ---------- */
+.app{min-height:100dvh;display:grid;grid-template-columns:1fr;
+  grid-template-areas:"head" "cam" "trace" "dock";grid-template-rows:auto auto 1fr auto}
+header{grid-area:head;display:flex;align-items:center;gap:4px;padding:0 8px 0 20px;min-height:52px}
+.brand{font-size:18.75px;font-weight:750;letter-spacing:-.02em;margin-right:auto}
+.nav button{height:44px;padding:0 10px;border:0;background:none;color:var(--t2);font-size:15px}
+.nav button[aria-current="page"]{color:var(--text);text-decoration:underline;text-underline-offset:7px;text-decoration-thickness:1.5px}
+.who{display:none;font-size:15px;color:var(--t2);background:none;border:0;height:44px;padding:0 10px}
+.voice{display:none;height:36px;padding:0 14px;border-radius:18px;border:1px solid var(--line2);background:none;color:var(--t2);font-size:13px}
 
-  .hud-top { position: absolute; top: 0; left: 0; right: 0; padding: 22px 26px; display: flex; align-items: flex-start; gap: 16px; }
-  .word { font: 600 11px var(--mono); letter-spacing: .32em; color: var(--ink2); display: flex; align-items: center; gap: 10px; }
-  .live { display: inline-flex; align-items: center; gap: 6px; font: 500 11px var(--mono); letter-spacing: .08em; color: var(--ink2); }
-  .live i { width: 6px; height: 6px; border-radius: 50%; background: var(--ink3); }
-  .live.on i { background: var(--bad); box-shadow: 0 0 0 3px rgba(255,69,58,.22); animation: breathe 1.6s infinite; }
-  @keyframes breathe { 50% { opacity: .35; } }
-  .headline { margin-top: 10px; font-size: clamp(26px, 3.2vw, 40px); font-weight: 500; letter-spacing: -.03em; line-height: 1.05;
-    text-shadow: 0 2px 18px rgba(0,0,0,.45); }
-  .headline .alt { font-family: var(--mono); font-weight: 400; letter-spacing: -.04em; }
-  .headline .alt small { font-size: .5em; color: var(--ink2); margin-left: 2px; letter-spacing: 0; }
-  .sub { margin-top: 8px; color: var(--ink2); font-size: 13px; display: flex; gap: 14px; flex-wrap: wrap; }
-  .sub span { display: inline-flex; align-items: center; gap: 6px; }
-  .sub .bad { color: var(--bad); } .sub .warn { color: var(--warn); }
-  .batt { width: 20px; height: 9px; border: 1.2px solid currentColor; border-radius: 2.5px; position: relative; opacity: .9; }
-  .batt::after { content: ""; position: absolute; right: -3.5px; top: 2px; width: 1.6px; height: 3px; border-radius: 1px; background: currentColor; }
-  .batt b { position: absolute; left: 1.2px; top: 1.2px; bottom: 1.2px; border-radius: 1px; background: currentColor; }
-  .who { margin-left: auto; text-align: right; font-size: 12.5px; color: var(--ink2); }
-  .who b { display: block; color: var(--ink); font-weight: 500; }
-  .who .mine { color: var(--ok); }
+/* ---------- camera ---------- */
+.cam{grid-area:cam;position:relative;overflow:hidden;background:#1B1E21;aspect-ratio:4/3;max-height:42dvh;width:100%}
+.cam img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
+.cam .empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--t3);font-size:15px}
+.cam .live{position:absolute;left:20px;top:14px;display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;letter-spacing:.04em;color:#E4E6E3}
+.cam .live i{width:6px;height:6px;border-radius:50%;background:var(--stop);animation:blink 2s ease-in-out infinite}
+.cam .live.off i{background:var(--t4);animation:none}
+.cam .foot{position:absolute;left:0;right:0;bottom:0;padding:34px 20px 12px;background:linear-gradient(rgba(14,16,18,0),rgba(14,16,18,.86));display:flex;align-items:flex-end;gap:12px}
+.cam .state{font-size:15px;font-weight:600}
+.cam .alt{font-size:15px;color:#C9CDD1;margin-left:auto}
+.latency{font-size:12px;color:var(--t3)}
+.cam svg.fence{width:40px;height:40px;flex-shrink:0}
+.cam::after{content:"";position:absolute;inset:0;pointer-events:none;border-radius:inherit;transition:box-shadow .2s}
+.cam.refused::after{box-shadow:inset 0 0 0 2px var(--no)}
+.banner{position:absolute;left:12px;right:12px;top:40px;padding:10px 14px;border-radius:12px;font-size:14px;line-height:1.35}
+.banner b{display:block;font-size:15px;font-weight:650}
+.banner.crit{background:rgba(224,53,43,.88);border:1px solid #F08A80}
+.banner.warn{background:rgba(23,26,30,.9);border:1px solid var(--line2)}
+.banner.qnx{background:rgba(40,30,10,.9);border:1px solid rgba(245,181,61,.6);color:var(--no)}
 
-  .alerts { position: absolute; top: 22px; left: 50%; transform: translateX(-50%); display: grid; gap: 8px; justify-items: center; z-index: 5; width: max-content; max-width: 46%; }
-  @media (max-width: 960px) { .alerts { top: auto; bottom: 104px; max-width: 92%; } .alert { border-radius: 14px; flex-wrap: wrap; row-gap: 0; }
-    .alert small { flex-basis: 100%; padding-left: 17px; } .alert:nth-last-child(n+3) { display: none; } #w-sub { display: none; } }
-  .alert { display: flex; align-items: center; gap: 10px; padding: 9px 14px 9px 12px; border-radius: 999px; font-size: 13px; font-weight: 500;
-    background: rgba(12,12,14,.72); backdrop-filter: blur(16px) saturate(1.4); -webkit-backdrop-filter: blur(16px) saturate(1.4);
-    border: 1px solid var(--hair); animation: drop .28s cubic-bezier(.2,.9,.3,1.2); }
-  .alert i { width: 7px; height: 7px; border-radius: 50%; flex: none; }
-  .alert.bad i { background: var(--bad); box-shadow: 0 0 10px var(--bad); } .alert.warn i { background: var(--warn); } .alert.qnx i { background: var(--qnx); box-shadow: 0 0 10px var(--qnx); }
-  .alert small { color: var(--ink2); font-weight: 400; }
-  @keyframes drop { from { opacity: 0; transform: translateY(-8px) scale(.97); } }
+/* ---------- the trace: cloud -> drone ---------- */
+.trace{grid-area:trace;display:flex;flex-direction:column;min-height:0}
+.zone{padding:14px 20px 16px;display:flex;flex-direction:column;gap:12px}
+.zone .zhead{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.zone .ztitle{font-size:13px;font-weight:650;color:#C9CDD1}
+.cloudz{background:var(--cloud);position:relative}
+.cloudz::after{content:"";position:absolute;left:20px;bottom:-14px;border:14px solid transparent;border-top-color:var(--cloud);border-bottom:0}
+.dronez{padding-top:24px}
+.heard{font-size:23.4px;font-weight:500;letter-spacing:-.015em;line-height:1.2;min-height:28px}
+.heard.empty{color:var(--t4)}
+.plan{font-family:var(--mono);font-size:14px;color:#D9DCD8;line-height:1.6}
+.plan .bad{color:var(--no)}
+.plan .sep{color:var(--t4);padding:0 6px}
+.reply{font-size:15px;color:var(--t2);line-height:1.4}
+.verdict{font-size:45.8px;font-weight:750;letter-spacing:-.035em;line-height:1}
+.verdict.approved{color:var(--ok)} .verdict.refused{color:var(--no)} .verdict.waiting,.verdict.checking,.verdict.sent{color:var(--t4);font-size:29px;font-weight:600;letter-spacing:-.02em}
+.reason{font-size:17px;line-height:1.35}
+.result{font-size:15px;color:var(--t2);line-height:1.4;display:flex;gap:12px;align-items:center}
+.result img{width:56px;height:42px;object-fit:cover;border-radius:3px;flex-shrink:0}
+.arrive{animation:arrive .24s ease-out both}
+.lv{display:inline-flex;align-items:center;gap:3px;height:22px;color:var(--text);margin-right:10px;vertical-align:-3px}
+.lv span{width:3px;border-radius:1.5px;background:currentColor;height:calc(4px + var(--lvl,0) * 18px);transition:height .06s linear}
+.lv span:nth-child(2),.lv span:nth-child(4){height:calc(4px + var(--lvl,0) * 12px)}
+.dots span{display:inline-block;width:5px;height:5px;border-radius:50%;background:#C9CDD1;margin-right:4px;animation:blink 1.2s ease-in-out infinite}
+.dots span:nth-child(2){animation-delay:.2s}.dots span:nth-child(3){animation-delay:.4s}
+.typebox{display:flex;gap:8px}
+.typebox input{flex:1;min-width:0;height:44px;padding:0 14px;border-radius:22px;border:1px solid var(--line2);background:transparent;font-size:15px}
+.typebox button{height:44px;padding:0 16px;border-radius:22px;border:1px solid var(--line2);background:none;font-size:15px;font-weight:600}
+.typetoggle{align-self:flex-start;border:0;background:none;color:var(--t3);font-size:13px;padding:6px 0;text-decoration:underline;text-underline-offset:4px}
 
-  .reticle { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); opacity: .55; pointer-events: none; }
+/* ---------- history (laptop) ---------- */
+.hist{grid-area:hist;display:none;flex-direction:column;min-height:0;overflow:auto}
+.hist h2{margin:0 0 6px;font-size:15px;font-weight:650;color:#C9CDD1}
+.hist .row{padding:14px 0;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:3px}
+.hist .row .t{font-size:17px}
+.hist .row .m{font-size:13px;color:var(--t3)}
+.ok{color:var(--ok)} .no{color:var(--no)}
 
-  #fence { position: absolute; left: 26px; bottom: 30px; width: 150px; height: 150px; pointer-events: none; }
-  .fence-cap { position: absolute; left: 26px; bottom: 14px; font: 500 10px var(--mono); letter-spacing: .12em; color: var(--ink3); }
-  @media (max-width: 960px) { #fence { width: 96px; height: 96px; left: 16px; bottom: 132px; } .fence-cap { display: none; } }
+/* ---------- dock ---------- */
+.dock{grid-area:dock;position:sticky;bottom:0;background:var(--bg);padding:10px 16px calc(20px + env(safe-area-inset-bottom)) 8px;display:flex;align-items:center;gap:10px;z-index:5}
+.land{min-width:64px;height:48px;border:0;background:none;font-size:15px;font-weight:600;text-decoration:underline;text-underline-offset:5px;text-decoration-color:var(--t4)}
+.talk{flex:1;height:60px;border-radius:30px;border:0;background:var(--text);color:var(--bg);font-size:16px;font-weight:650;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.talk[data-phase="listening"]{background:#fff}
+.talk:not([data-phase="idle"]) .hint{display:none!important}
+.talk[data-phase="thinking"],.talk[data-phase="sending"]{background:#24282C;color:var(--t2)}
+.talk .hint{font-weight:450;color:#5A6066;display:none}
+.stop{width:84px;height:84px;flex-shrink:0;border-radius:50%;border:0;background:var(--stop);color:#fff;font-size:16px;font-weight:800;letter-spacing:.06em;box-shadow:0 0 0 4px var(--bg),0 0 0 5px rgba(224,53,43,.5);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px}
+.stop:active{transform:scale(.97)}
+.stop small{display:none;font-size:12px;font-weight:500;letter-spacing:0;color:#FFD6D2}
+.dock .note{display:none}
 
-  /* dock: STOP · hold to talk · LAND */
-  .dock { position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%); display: flex; align-items: center; gap: 14px; z-index: 4; }
-  @media (max-width: 960px) { .dock { bottom: 22px; gap: 10px; } }
-  .round { width: 62px; height: 62px; border-radius: 50%; display: grid; place-items: center; font: 600 11px var(--mono); letter-spacing: .12em;
-    transition: transform .12s; }
-  .round:active { transform: scale(.94); }
-  #b-stop { background: var(--bad); color: #fff; box-shadow: 0 10px 30px -6px rgba(255,69,58,.65), inset 0 1px 0 rgba(255,255,255,.25); }
-  #b-land { background: rgba(20,20,22,.6); border: 1px solid rgba(255,255,255,.22); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
-  #talk { height: 62px; min-width: 260px; padding: 0 26px 0 8px; border-radius: 999px; display: flex; align-items: center; gap: 14px;
-    background: rgba(250,250,250,.94); color: #0a0a0a; font-weight: 600; font-size: 15px; letter-spacing: -.01em;
-    box-shadow: 0 18px 40px -12px rgba(0,0,0,.7); user-select: none; -webkit-user-select: none; transition: background .2s, transform .12s; }
-  #talk:active { transform: scale(.98); }
-  #talk .mic { width: 46px; height: 46px; border-radius: 50%; background: #0a0a0a; color: #fff; display: grid; place-items: center; flex: none; }
-  #talk .mic svg { width: 20px; height: 20px; }
-  #talk .lbl { display: grid; text-align: left; line-height: 1.15; }
-  #talk .lbl small { font: 500 10.5px var(--mono); color: rgba(10,10,10,.5); letter-spacing: .04em; }
-  #wave { display: none; height: 26px; width: 120px; }
-  #talk.rec { background: var(--accent); color: #1a0d03; }
-  #talk.rec #wave { display: block; } #talk.rec .lbl small { color: rgba(26,13,3,.6); }
-  #talk.busy .mic { animation: spin 1s linear infinite; background: conic-gradient(var(--accent), #0a0a0a 70%); }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  @media (max-width: 960px) { #talk { min-width: 0; flex: 1; padding-right: 16px; } .dock { left: 14px; right: 14px; transform: none; } #talk .lbl small { display: none; } }
+/* ---------- secondary views ---------- */
+.view{grid-area:cam / 1 / trace / -1;padding:20px 20px 24px;display:flex;flex-direction:column;gap:22px;overflow:auto;max-width:760px}
+.view h1{margin:0;font-size:39px;font-weight:650;letter-spacing:-.03em;line-height:1}
+.view h2{margin:0;font-size:15.5px;font-weight:650}
+.view p{margin:0;font-size:15.5px;line-height:1.45;color:var(--t2)}
+.view p b{color:var(--text);font-weight:500}
+.rule{height:1px;background:var(--line)}
+.split{display:flex;justify-content:space-between;align-items:baseline;gap:16px}
+.big{font-size:27px;font-weight:600}
+table{border-collapse:collapse;width:100%;font-size:15px}
+th{font-weight:400;font-size:13px;color:var(--t3);text-align:left;padding:4px 0}
+td{padding:8px 0;border-top:1px solid var(--line)}
+td.r,th.r{text-align:right}
+tr.flash td{animation:flash 2.4s ease-out}
+.search input{width:100%;height:52px;padding:0 16px;border-radius:12px;border:1px solid var(--line2);background:var(--cloud);font-size:16px}
+.hit{display:flex;flex-direction:column;gap:10px}
+.hit img{width:100%;border-radius:6px;display:block;aspect-ratio:4/3;object-fit:cover;background:var(--raise)}
+.hit .cap{font-size:22.5px;font-weight:600;letter-spacing:-.02em;line-height:1.2}
+.also{display:flex;gap:12px;align-items:center}
+.also img{width:72px;height:54px;object-fit:cover;border-radius:4px;flex-shrink:0;background:var(--raise)}
+.gallery{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.gallery figure{margin:0;display:flex;flex-direction:column;gap:4px}
+.gallery img{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:4px;background:var(--raise)}
+.gallery figcaption{font-size:12px;color:var(--t3);line-height:1.3}
 
-  /* ================= rail ================= */
-  .rail { background: var(--rail); border-left: 1px solid var(--hair); display: flex; flex-direction: column; min-height: 0; min-width: 0; }
-  @media (max-width: 960px) { .rail { border-left: 0; border-top: 1px solid var(--hair); min-height: 70svh; } }
-  .tabs { display: flex; gap: 22px; padding: 22px 26px 0; border-bottom: 1px solid var(--hair); }
-  .tabs button { padding: 0 0 14px; color: var(--ink3); font-weight: 500; font-size: 13.5px; border-bottom: 1.5px solid transparent; margin-bottom: -1px; }
-  .tabs button.on { color: var(--ink); border-color: var(--ink); }
-  .tabs .count { font: 500 10.5px var(--mono); color: var(--ink3); margin-left: 4px; }
-  .pane { display: none; flex: 1; min-height: 0; flex-direction: column; } .pane.on { display: flex; }
-  .scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 26px 26px; scrollbar-width: thin; scrollbar-color: #2a2a2d transparent; }
-  .intro { color: var(--ink3); font-size: 13px; padding: 18px 0 6px; line-height: 1.55; }
-  .intro b { color: var(--ink2); font-weight: 500; }
+/* ---------- PIN dialog + toast ---------- */
+dialog{border:1px solid var(--line2);border-radius:16px;background:var(--cloud);color:var(--text);padding:22px;width:min(340px,90vw)}
+dialog::backdrop{background:rgba(0,0,0,.6)}
+dialog h2{margin:0 0 6px;font-size:20px}
+dialog p{margin:0 0 14px;color:var(--t2);font-size:14.5px;line-height:1.4}
+dialog input{width:100%;height:52px;border-radius:12px;border:1px solid var(--line2);background:var(--bg);font-size:24px;letter-spacing:.3em;text-align:center;font-family:var(--mono)}
+dialog .row{display:flex;gap:8px;margin-top:14px}
+dialog .row button{flex:1;height:46px;border-radius:23px;border:1px solid var(--line2);background:none;font-weight:600}
+dialog .row button.primary{background:var(--text);color:var(--bg);border:0}
+.toast{position:fixed;left:50%;bottom:120px;transform:translateX(-50%);background:var(--raise);border:1px solid var(--line2);padding:10px 16px;border-radius:12px;font-size:14px;z-index:20;max-width:90vw}
 
-  /* conversation */
-  .ex { padding: 20px 0 18px; border-bottom: 1px solid var(--hair); }
-  .live-feed .ex:last-child { animation: rise .3s ease-out; }
-  @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
-  .meta { display: flex; justify-content: space-between; font: 500 10.5px var(--mono); letter-spacing: .08em; color: var(--ink3); text-transform: uppercase; }
-  .said { font-size: 19px; font-weight: 400; letter-spacing: -.02em; line-height: 1.3; margin: 6px 0 0; color: var(--ink); }
-  .said::before { content: "“"; color: var(--ink3); } .said::after { content: "”"; color: var(--ink3); }
-  .steps { list-style: none; margin: 14px 0 0; padding: 0 0 0 2px; position: relative; }
-  .steps::before { content: ""; position: absolute; left: 5px; top: 8px; bottom: 8px; width: 1px; background: var(--hair); }
-  .steps li { position: relative; padding: 3px 0 3px 22px; font: 400 12.5px var(--mono); color: var(--ink2); }
-  .steps li::before { content: ""; position: absolute; left: 1px; top: 9px; width: 9px; height: 9px; border-radius: 50%; background: var(--rail); border: 1.5px solid var(--ink3); }
-  .steps li b { color: var(--ink); font-weight: 500; }
-  .reply { margin: 12px 0 0; display: flex; gap: 10px; color: var(--accent); font-size: 14.5px; line-height: 1.45; }
-  .reply::before { content: ""; flex: none; width: 2px; border-radius: 2px; background: var(--accent); opacity: .7; }
-  .verdict { margin-top: 12px; font: 500 12px/1.5 var(--mono); }
-  .verdict.ok { color: var(--ok); } .verdict.no { color: var(--bad); }
-  .verdict span { color: var(--ink2); font-weight: 400; }
-  .sys { padding: 10px 0; font: 400 12px var(--mono); color: var(--ink3); border-bottom: 1px solid var(--hair); display: flex; gap: 10px; }
-  .sys time { flex: none; } .sys.bad { color: var(--bad); } .sys.qnx { color: var(--qnx); } .sys.stop { color: var(--ink); }
+@keyframes blink{0%,100%{opacity:.3}50%{opacity:1}}
+@keyframes arrive{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes flash{from{background:rgba(127,211,168,.18)}to{background:transparent}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 
-  .composer { border-top: 1px solid var(--hair); padding: 14px 26px 18px; }
-  .composer form { display: flex; align-items: center; gap: 10px; margin: 0; background: #151517; border: 1px solid var(--hair); border-radius: 14px; padding: 4px 4px 4px 14px;
-    transition: border-color .15s; }
-  .composer form:focus-within { border-color: rgba(255,255,255,.28); }
-  .composer input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; color: var(--ink); font: inherit; font-size: 14px; padding: 9px 0; }
-  .composer input::placeholder { color: var(--ink3); }
-  .send { width: 34px; height: 34px; border-radius: 10px; background: var(--ink); color: #000; display: grid; place-items: center; flex: none; }
-  .prefs { display: flex; gap: 18px; align-items: center; margin-top: 10px; font-size: 12px; color: var(--ink3); }
-  .prefs label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
-  .prefs input[type=checkbox] { accent-color: var(--accent); margin: 0; }
-  #i-pin { width: 84px; background: none; border: 0; border-bottom: 1px solid var(--hair); color: var(--ink); font: 500 12px var(--mono); padding: 3px 2px; outline: 0; }
-  #i-pin:focus { border-color: var(--ink2); }
-
-  /* QNX */
-  .big { padding: 18px 0; border-bottom: 1px solid var(--hair); display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 4px 12px; }
-  .big .k { color: var(--ink2); font-size: 13px; }
-  .big .v { font: 400 30px var(--mono); letter-spacing: -.04em; text-align: right; }
-  .big .h { grid-column: 1 / -1; color: var(--ink3); font-size: 12px; }
-  .sect { font: 500 10.5px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink3); margin: 24px 0 10px; }
-  #loopc { width: 100%; height: 130px; display: block; }
-  .legend { font-size: 11.5px; color: var(--ink3); margin-top: 6px; display: flex; gap: 14px; flex-wrap: wrap; }
-  .legend i { display: inline-block; width: 10px; height: 2px; vertical-align: middle; margin-right: 5px; }
-  table.q { width: 100%; border-collapse: collapse; font: 12px var(--mono); }
-  table.q th { text-align: left; font-weight: 400; color: var(--ink3); padding: 6px 0; }
-  table.q td { padding: 9px 0; border-top: 1px solid var(--hair); }
-  table.q .n { text-align: right; white-space: nowrap; padding-left: 10px; }
-  .bar { height: 3px; border-radius: 2px; background: var(--accent); min-width: 2px; }
-  .bar.bad { background: var(--bad); } .bar.ok { background: var(--ok); }
-  .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 8px; background: var(--ink3); vertical-align: middle; }
-  .dot.up { background: var(--ok); } .dot.down { background: var(--warn); } .dot.failed { background: var(--bad); }
-  .muted { color: var(--ink3); font: 13px var(--sans); }
-
-  /* memory */
-  .search { display: flex; gap: 8px; margin: 18px 0 6px; }
-  .search input { flex: 1; min-width: 0; background: #151517; border: 1px solid var(--hair); border-radius: 12px; color: var(--ink); font: inherit; padding: 11px 14px; outline: 0; }
-  .search input:focus { border-color: rgba(255,255,255,.28); }
-  .search button { padding: 0 16px; border-radius: 12px; background: var(--ink); color: #000; font-weight: 600; }
-  #hits { list-style: none; margin: 0; padding: 0; }
-  #hits li { display: flex; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--hair); font-size: 13px; color: var(--ink2); }
-  #hits img { width: 76px; aspect-ratio: 4/3; object-fit: cover; border-radius: 8px; flex: none; }
-  #photos { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-  #photos:empty::before { content: "No photos yet. Try “take a photo of the door”."; color: var(--ink3); font-size: 13px; grid-column: 1 / -1; }
-  #photos figure { margin: 0; }
-  #photos img { width: 100%; aspect-ratio: 4/3; object-fit: cover; border-radius: 10px; display: block; }
-  #photos figcaption { font-size: 12px; color: var(--ink3); margin-top: 6px; }
+/* ---------- laptop: decision across the top, camera + history below ---------- */
+@media (min-width:1000px){
+  .app{grid-template-columns:minmax(0,1fr) minmax(300px,400px);column-gap:32px;padding:0 32px 28px;
+    grid-template-areas:"head head" "trace trace" "cam hist" "cam dock";grid-template-rows:68px auto 1fr auto}
+  header{padding:0}
+  .brand{font-size:23.4px;margin-right:20px}
+  .nav{margin-right:auto}
+  .who,.voice{display:inline-flex;align-items:center}
+  .trace{flex-direction:row;margin-bottom:32px}
+  .trace .zone{flex:1 1 0;padding:22px 40px 26px 28px;gap:18px}
+  .cloudz::after{left:auto;right:-17px;bottom:auto;top:50%;margin-top:-18px;border:18px solid transparent;border-left:17px solid var(--cloud);border-right:0}
+  .dronez{padding-left:48px!important}
+  .heard{font-size:36.6px;letter-spacing:-.02em;line-height:1.1}
+  .plan{font-size:16px} .reply{font-size:17px}
+  .verdict{font-size:71.5px;letter-spacing:-.04em;line-height:.95}
+  .verdict.waiting,.verdict.checking,.verdict.sent{font-size:45.8px}
+  .reason{font-size:23.4px;line-height:1.3}
+  .result{font-size:17px}
+  .cam{aspect-ratio:auto;max-height:none;min-height:420px;height:100%;border-radius:4px}
+  .cam .foot{padding:48px 24px 18px}
+  .cam .state{font-size:23.4px;letter-spacing:-.015em}
+  .cam .alt{font-size:17px}
+  .cam svg.fence{width:56px;height:56px}
+  .hist{display:flex}
+  .dock{position:static;padding:24px 0 0;flex-wrap:wrap;align-items:center}
+  .dock .land{order:3}
+  .dock .note{display:block;order:4;margin-left:auto;font-size:13px;color:var(--t3)}
+  .talk{order:1;height:64px;border-radius:32px;font-size:17px}
+  .talk .hint{display:inline}
+  .stop{order:2;width:112px;height:112px;font-size:21px;box-shadow:0 0 0 5px var(--bg),0 0 0 6px rgba(224,53,43,.5)}
+  .stop small{display:block}
+  .view{grid-area:trace / 1 / cam / 2;padding:8px 0 24px}
+}
 </style>
 </head>
 <body>
-<div class="app">
-  <!-- ================= LIVE VIEW ================= -->
-  <section class="view">
-    <div class="nosig" id="nosig"><div><b>Waiting for the drone's camera</b>The live view appears as soon as frames arrive.</div></div>
-    <img id="video" alt="Drone forward camera">
-    <div class="vignette"></div>
-    <svg class="reticle" width="64" height="64" viewBox="0 0 64 64" fill="none" stroke="#fff" stroke-width="1.2">
-      <path d="M32 18v8M32 38v8M18 32h8M38 32h8"/><circle cx="32" cy="32" r="1.6" fill="#fff" stroke="none"/></svg>
+<div class="app" id="app" data-view="live">
 
-    <div class="hud-top">
-      <div>
-        <div class="word">HOPE <span class="live" id="v-live"><i></i><span id="v-fps">NO SIGNAL</span></span></div>
-        <div class="headline"><span id="h-state">Connecting</span><span id="h-alt"></span></div>
-        <div class="sub"><span id="s-batt"><span class="batt"><b id="s-battbar"></b></span><span id="s-batt-t">–</span></span><span id="s-link">Offline</span></div>
-      </div>
-      <div class="who"><b id="w-ctrl">Watching</b><span id="w-sub">Hold the mic to take control</span></div>
-    </div>
+  <header>
+    <span class="brand">Hope</span>
+    <nav class="nav" aria-label="Views">
+      <button data-go="live" aria-current="page">Live</button>
+      <button data-go="safety">Safety</button>
+      <button data-go="memory">Memory</button>
+    </nav>
+    <!-- who's flying; tap to enter the pilot PIN -->
+    <button class="who" id="who" title="Enter pilot PIN">Watching</button>
+    <button class="voice" id="voice" aria-pressed="true">Voice replies here: on</button>
+  </header>
 
-    <div class="alerts" id="alerts"></div>
-
-    <canvas id="fence"></canvas>
-    <div class="fence-cap">SAFETY FENCE ±3 M</div>
-
-    <div class="dock">
-      <button class="round" id="b-stop" title="Stop and hover (always works)">STOP</button>
-      <button id="talk" aria-label="Hold to talk">
-        <span class="mic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></span>
-        <span class="lbl"><span id="talk-t">Hold to talk</span><small id="talk-s">or hold Space</small></span>
-        <canvas id="wave"></canvas>
-      </button>
-      <button class="round" id="b-land" title="Land now (needs the pilot PIN)">LAND</button>
+  <!-- ===== LIVE VIEW ===== -->
+  <section class="cam live-only" id="cam" aria-label="Live camera">
+    <img id="frame" alt="Live forward camera" hidden>
+    <div class="empty" id="camEmpty">Waiting for the camera…</div>
+    <div class="live off" id="liveTag"><i></i>LIVE</div>
+    <div class="banner" id="banner" role="alert" hidden></div>
+    <div class="foot">
+      <span class="state" id="state">Disconnected</span>
+      <span class="alt" id="alt"></span>
+      <svg class="fence" id="fence" viewBox="-3.3 -3.3 6.6 6.6" role="img" aria-label="Track from the takeoff point">
+        <path id="home" d="M-.3 0H.3M0 -.3V.3" stroke="rgba(241,242,239,.5)" stroke-width="1.2" vector-effect="non-scaling-stroke"/>
+        <polyline id="trail" fill="none" stroke="rgba(241,242,239,.45)" stroke-width="1.5" vector-effect="non-scaling-stroke" stroke-linecap="round" points=""/>
+        <circle id="dot" r=".32" fill="#F1F2EF" cx="0" cy="0"/>
+      </svg>
     </div>
   </section>
 
-  <!-- ================= RAIL ================= -->
-  <aside class="rail">
-    <nav class="tabs">
-      <button data-tab="talk" class="on">Jarvis</button>
-      <button data-tab="qnx">QNX safety</button>
-      <button data-tab="mem">Memory<span class="count" id="mem-n"></span></button>
-    </nav>
-
-    <div class="pane on" id="p-talk">
-      <div class="scroll" id="feed">
-        <p class="intro"><b>Talk to it like a person.</b> “Take off”, “fly to the door and take a photo”, “where did I leave my keys?”
-          Every plan the AI makes goes through the QNX safety gate on the drone before it moves.</p>
+  <section class="trace live-only" aria-label="Latest command">
+    <div class="zone cloudz">
+      <div class="zhead"><span class="ztitle">Jarvis suggests</span><span class="label">AI in the cloud · Vultr</span></div>
+      <div>
+        <div class="label" id="heardLabel">Hold to talk, then say what you want</div>
+        <div class="heard empty" id="heard">—</div>
       </div>
-      <div class="composer">
-        <form id="f-text">
-          <input id="i-text" type="text" placeholder="Or type a command…" autocomplete="off">
-          <button class="send" aria-label="Send"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
-        </form>
-        <div class="prefs">
-          <label><input id="c-audio" type="checkbox" checked> Voice replies here</label>
-          <label>Pilot PIN <input id="i-pin" type="password" inputmode="numeric" autocomplete="off" placeholder="····"></label>
-        </div>
+      <div id="planWrap" hidden>
+        <div class="label">Plan</div>
+        <div class="plan" id="plan"></div>
       </div>
+      <div class="reply" id="replies"></div>
+      <div class="latency mono" id="latency" hidden></div>
+      <button class="typetoggle" id="typeToggle">Type instead</button>
+      <form class="typebox" id="typeForm" hidden>
+        <input id="typeIn" placeholder="e.g. go to the red poster and read it" autocomplete="off" aria-label="Type a command">
+        <button>Send</button>
+      </form>
     </div>
-
-    <div class="pane" id="p-qnx">
-      <div class="scroll">
-        <p class="intro"><b>The AI suggests, QNX decides.</b> A 50 Hz safety loop on the drone checks every command and keeps flying even if the cloud, the laptop or a process dies.</p>
-        <div class="big"><span class="k">Safety loop lateness, p99</span><span class="v" id="q-p99">–</span><span class="h">Budget 2 ms. Max <span id="q-max">–</span></span></div>
-        <div class="big"><span class="k">Person seen → stop sent</span><span class="v" id="q-stop">–</span></div>
-        <div class="big"><span class="k">Processes restarted</span><span class="v" id="q-rest">0</span><span class="h">Kill any process; the supervisor brings it back.</span></div>
-        <div class="sect">Loop lateness · last 2 min</div>
-        <canvas id="loopc"></canvas>
-        <div class="legend"><span><i style="background:var(--accent)"></i>p99</span><span><i style="background:var(--warn)"></i>max</span><span><i style="background:var(--bad)"></i>2 ms budget</span></div>
-        <div class="sect">Processes</div>
-        <table class="q" id="q-procs"><tbody><tr><td class="muted">Waiting for the supervisor.</td></tr></tbody></table>
-        <div class="sect">Jitter under CPU hog</div>
-        <table class="q" id="q-jit"><tbody><tr><td class="muted">Run <code>tools.jitter --compare</code> on the Pi.</td></tr></tbody></table>
+    <div class="zone dronez">
+      <div class="zhead"><span class="ztitle">QNX decides</span><span class="label">Real-time OS on the drone</span></div>
+      <div role="status" aria-live="polite">
+        <div class="verdict waiting" id="verdict">Waiting for a plan</div>
+        <div class="reason" id="reason" style="margin-top:6px"></div>
       </div>
+      <div class="result" id="result"><span class="label" style="font-size:15px">Every step is checked here before the drone moves.</span></div>
     </div>
+  </section>
 
-    <div class="pane" id="p-mem">
-      <div class="scroll">
-        <form class="search" id="f-mem"><input id="i-mem" type="text" placeholder="Where did I leave my keys?"><button>Ask</button></form>
-        <ul id="hits"></ul>
-        <div class="sect">Photos</div>
-        <div id="photos"></div>
-      </div>
-    </div>
+  <aside class="hist live-only" aria-label="Earlier commands">
+    <h2>Earlier</h2>
+    <div id="histList"><div class="row"><span class="m">Nothing yet.</span></div></div>
   </aside>
+
+  <!-- ===== SAFETY VIEW ===== -->
+  <section class="view" id="safety" hidden>
+    <h1>Safety</h1>
+    <p>Every step Jarvis plans goes through a real-time gate on QNX before the drone moves. This is the proof it keeps up.</p>
+    <div>
+      <h2>Safety loop</h2>
+      <p id="loopText" style="margin-top:8px">No timing data yet.</p>
+      <svg id="loopChart" viewBox="0 0 350 104" style="width:100%;height:110px;margin-top:8px" role="img" aria-label="Safety loop lateness over the last 2 minutes"></svg>
+    </div>
+    <div class="rule"></div>
+    <div class="split"><div><h2>Person seen → stop sent</h2><div class="label" id="stopWhen" style="margin-top:3px">No stops yet</div></div><span class="big" id="stopMs">—</span></div>
+    <div class="rule"></div>
+    <div><div class="split" style="padding-bottom:4px"><h2>Processes</h2><span class="label">restarts</span></div>
+      <table><tbody id="procs"><tr><td class="muted">No process data yet.</td><td></td></tr></tbody></table></div>
+    <div class="rule"></div>
+    <div><h2 style="margin-bottom:8px">Jitter benchmark</h2><table id="jitter"><tbody><tr><td class="muted">No benchmark yet.</td></tr></tbody></table></div>
+  </section>
+
+  <!-- ===== MEMORY VIEW ===== -->
+  <section class="view" id="memory" hidden>
+    <h1>Memory</h1>
+    <form class="search" id="memForm" role="search">
+      <label for="memQ" class="label" style="display:block;margin-bottom:8px">Ask about anything the drone has photographed</label>
+      <input id="memQ" type="search" placeholder="Where did I leave my keys?">
+    </form>
+    <div id="memResults"></div>
+    <div class="rule"></div>
+    <h2>All photos</h2>
+    <div class="gallery" id="gallery"><span class="label">Photos the drone takes show up here.</span></div>
+  </section>
+
+  <!-- ===== DOCK: always visible ===== -->
+  <div class="dock">
+    <button class="land" id="land">Land</button>
+    <button class="talk" id="talk" data-phase="idle" aria-label="Hold to talk to Jarvis"><span id="talkLabel">Hold to talk</span> <span class="hint">· Space</span></button>
+    <button class="stop" id="stop" aria-label="Emergency stop">STOP<small>Esc</small></button>
+    <span class="note">Anyone watching can press STOP.</span>
+  </div>
 </div>
 
+<dialog id="pinDlg">
+  <form method="dialog" id="pinForm">
+    <h2>Pilot PIN</h2>
+    <p>Moving the drone needs the pilot PIN. STOP never does.</p>
+    <input id="pinIn" inputmode="numeric" autocomplete="off" maxlength="8" aria-label="Pilot PIN">
+    <div class="row"><button value="cancel" type="submit">Just watch</button><button class="primary" value="ok" type="submit">Fly</button></div>
+  </form>
+</dialog>
+<div class="toast" id="toast" hidden></div>
+
 <script>
-const $ = (id) => document.getElementById(id);
-const clientId = (() => {
-  try { let c = localStorage.getItem("hd-client"); if (!c) { c = "phone-" + Math.random().toString(36).slice(2, 7); localStorage.setItem("hd-client", c); } return c; }
-  catch { return "phone-" + Math.random().toString(36).slice(2, 7); }
-})();
-let ws, me = clientId, online = false, holder = null;
-// Pilot PIN (review3 #4): sent with every command that can move the drone. STOP never needs it.
-const pin = () => $("i-pin").value.trim();
-try { $("i-pin").value = localStorage.getItem("hd-pin") || ""; } catch {}
-$("i-pin").onchange = () => { try { localStorage.setItem("hd-pin", pin()); } catch {} };
+'use strict';
+/* =========================================================
+   Hope dashboard. One file, no build step.
+   Talks to FastAPI over /ws/ui and a few POST endpoints.
+   ========================================================= */
 
-function connect() {
-  const proto = location.protocol === "https:" ? "wss" : "ws";
-  ws = new WebSocket(`${proto}://${location.host}/ws/ui?client=${encodeURIComponent(clientId)}`);
-  ws.onmessage = (e) => handle(JSON.parse(e.data));
-  ws.onclose = () => { station(false); setTimeout(connect, 1500); };
-}
-function send(m) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); }
-const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
-const hhmm = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+const $ = (s) => document.querySelector(s);
+const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 
-// ---------- status ----------
-function station(on) {
-  online = on;
-  $("s-link").textContent = on ? "Drone linked" : "Offline";
-  $("s-link").className = on ? "" : "bad";
-  if (!on) { $("h-state").textContent = "Drone offline"; $("h-alt").textContent = ""; }
-  conditions();
-}
-function control(h) {
-  holder = h;
-  $("w-ctrl").innerHTML = !h ? "Controls free" : h === me ? '<span class="mine">You have control</span>' : `${esc(h)} is flying`;
-  $("w-sub").textContent = !h ? "Hold the mic to take control" : h === me ? "Others can only watch and press STOP" : "You can still press STOP";
-}
-const STATE = { DISCONNECTED: "Drone offline", IDLE: "On the ground", TAKING_OFF: "Taking off", BUSY: "Flying", HOVER: "Hovering", LANDING: "Landing", FAILSAFE: "Failsafe" };
-let T = null, yawNow = 0; const trail = []; let lastPos = null;
-function telemetry(t) {
-  if (!t || !t.state) return;
-  T = t; yawNow = t.yaw ?? 0;
-  const air = t.state !== "IDLE" && t.state !== "DISCONNECTED";
-  let s = STATE[t.state] || t.state.toLowerCase();
-  if (t.state === "BUSY" && t.active_cmd) s = t.active_cmd[0].toUpperCase() + t.active_cmd.slice(1).replace(/_/g, " ");
-  $("h-state").textContent = s;
-  $("h-alt").innerHTML = air ? ` <span style="color:var(--ink3)">·</span> <span class="alt">${(t.alt ?? 0).toFixed(2)}<small>m</small></span>` : "";
-  const v = t.battery_v, pct = v ? Math.max(0, Math.min(1, (v - 10.5) / 2.1)) : 0;   // 3S LiPo, rough
-  $("s-battbar").style.width = `calc(${(pct * 100).toFixed(0)}% - 2.4px)`;
-  $("s-batt-t").textContent = v ? `${Math.round(pct * 100)}% · ${v.toFixed(1)} V` : "–";
-  $("s-batt").className = !v ? "" : v < 10.6 ? "bad" : v < 11.0 ? "warn" : "";
-  if (t.n != null) {
-    const p = [t.n, t.e ?? 0];
-    if (!lastPos || Math.hypot(p[0] - lastPos[0], p[1] - lastPos[1]) > 0.05) { trail.push(p); lastPos = p; if (trail.length > 300) trail.shift(); }
-  }
-  drawFence(); conditions();
-}
-
-// ---------- alerts: only things that need a decision ----------
-const toasts = [];  // {cls, text, sub, until}
-function toast(cls, text, sub, secs = 7) {
-  const dup = toasts.find((x) => x.text === text && x.sub === sub); if (dup) { dup.until = Date.now() + secs * 1000; return; }
-  toasts.push({ cls, text, sub, until: Date.now() + secs * 1000 }); conditions(); setTimeout(conditions, secs * 1000 + 50); }
-function conditions() {
-  const list = [];
-  if (!online) list.push({ cls: "bad", text: "No link to the drone", sub: "commands won't reach it" });
-  else if (T) {
-    const mode = (T.mode || "").toUpperCase();
-    if (T.armed && mode && !mode.includes("GUIDED") && !mode.includes("LAND")) list.push({ cls: "warn", text: "Pilot has control", sub: mode.replace(/_/g, " ") });
-    if (T.state === "FAILSAFE") list.push({ cls: "bad", text: "Failsafe active", sub: "the drone is protecting itself" });
-    if (T.battery_v && T.battery_v < 10.6) list.push({ cls: "bad", text: "Battery critical", sub: "land now" });
-    else if (T.battery_v && T.battery_v < 11.0) list.push({ cls: "warn", text: "Battery low" });
-    if (T.state === "IDLE" && T.flow_quality != null && T.flow_quality < 50) list.push({ cls: "warn", text: "Can't see the floor", sub: "optical flow too weak to take off" });
-  }
-  const now = Date.now();
-  while (toasts.length && toasts[0].until < now) toasts.shift();
-  toasts.forEach((x) => list.push(x));
-  $("alerts").innerHTML = list.slice(-3).map((a) => `<div class="alert ${a.cls}"><i></i>${esc(a.text)}${a.sub ? ` <small>${esc(a.sub)}</small>` : ""}</div>`).join("");
-}
-
-// ---------- fence overlay (no box: lines on the vignette) ----------
-function canvasCtx(c) {
-  const dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
-  if (!w || !h) return null;
-  if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); }
-  const g = c.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h); return [g, w, h];
-}
-const FENCE = 3.0;  // edge/config.py fence_half
-function drawFence() {
-  const r = canvasCtx($("fence")); if (!r) return; const [g, w, h] = r;
-  const k = (Math.min(w, h) - 8) / (2 * FENCE), X = (e) => w / 2 + e * k, Y = (n) => h / 2 - n * k;
-  g.strokeStyle = "rgba(255,255,255,.28)"; g.lineWidth = 1; g.setLineDash([3, 4]);
-  g.strokeRect(X(-FENCE) + .5, Y(FENCE) + .5, 2 * FENCE * k - 1, 2 * FENCE * k - 1); g.setLineDash([]);
-  g.strokeStyle = "rgba(255,255,255,.5)"; g.beginPath(); g.moveTo(X(0) - 4, Y(0)); g.lineTo(X(0) + 4, Y(0)); g.moveTo(X(0), Y(0) - 4); g.lineTo(X(0), Y(0) + 4); g.stroke();
-  if (trail.length > 1) {
-    g.strokeStyle = "rgba(255,138,61,.85)"; g.lineWidth = 1.5; g.lineJoin = "round"; g.beginPath();
-    trail.forEach(([n, e], i) => i ? g.lineTo(X(e), Y(n)) : g.moveTo(X(e), Y(n))); g.stroke();
-  }
-  if (T && T.n != null) {
-    g.save(); g.translate(X(T.e ?? 0), Y(T.n)); g.rotate((yawNow * Math.PI) / 180);
-    g.fillStyle = "#fff"; g.shadowColor = "rgba(0,0,0,.6)"; g.shadowBlur = 6;
-    g.beginPath(); g.moveTo(0, -7); g.lineTo(5, 5); g.lineTo(0, 2.5); g.lineTo(-5, 5); g.closePath(); g.fill(); g.restore();
-  }
-}
-
-// ---------- video ----------
-let lastFrameAt = 0, fpsEma = 0;
-function frame(m) {
-  const now = performance.now();
-  if (lastFrameAt) { const f = 1000 / Math.max(1, now - lastFrameAt); fpsEma = fpsEma ? fpsEma * 0.8 + f * 0.2 : f; }
-  lastFrameAt = now; $("video").src = "data:image/jpeg;base64," + m.jpeg; $("nosig").classList.add("hide");
-}
-setInterval(() => {
-  const stale = !lastFrameAt || performance.now() - lastFrameAt > 2500;
-  $("nosig").classList.toggle("hide", !stale);
-  $("v-live").classList.toggle("on", !stale);
-  $("v-fps").textContent = stale ? "NO SIGNAL" : `LIVE · ${Math.round(fpsEma)} FPS`;
-}, 500);
-
-// ---------- conversation feed ----------
-const SYSTEM = new Set(["cloud", "station", "qnx", "plan", "jarvis", "edge"]);
-let cur = null;  // the exchange new plan / reply / verdict lines attach to
-function feedAppend(el) {
-  const f = $("feed"), atBottom = f.scrollTop + f.clientHeight >= f.scrollHeight - 40;
-  f.append(el); while (f.children.length > 160) f.children[1].remove();
-  if (atBottom) f.scrollTop = f.scrollHeight;
-}
-const fmtM = (v) => `${Math.abs(v) % 1 ? Math.abs(v).toFixed(1) : Math.abs(v)} m`;
-function stepText(a) {
-  const k = a.kind || a.op || "step";
-  if (k === "move") {
-    const p = [];
-    if (a.fwd) p.push(`${a.fwd > 0 ? "forward" : "back"} <b>${fmtM(a.fwd)}</b>`);
-    if (a.right) p.push(`${a.right > 0 ? "right" : "left"} <b>${fmtM(a.right)}</b>`);
-    if (a.up) p.push(`${a.up > 0 ? "up" : "down"} <b>${fmtM(a.up)}</b>`);
-    if (a.yaw_deg) p.push(`turn ${a.yaw_deg > 0 ? "right" : "left"} <b>${Math.abs(a.yaw_deg)}°</b>`);
-    return p.join(", ") || "hold position";
-  }
-  if (k === "takeoff") return `take off to <b>${fmtM(a.alt ?? 1)}</b>`;
-  const rest = Object.entries(a).filter(([key]) => key !== "kind" && key !== "op")
-    .map(([key, v]) => `${esc(key)} <b>${esc(typeof v === "object" ? JSON.stringify(v) : v)}</b>`).join(" · ");
-  return `<b>${esc(k.replace(/_/g, " "))}</b>${rest ? " · " + rest : ""}`;
-}
-function logLine(r) {
-  const who = r.who || "", text = r.text || "";
-  if (!SYSTEM.has(who)) {
-    if (/^\[(STOP|LAND) button\]$/.test(text)) {
-      const op = text.slice(1, 5).trim();
-      const d = document.createElement("div"); d.className = "sys stop";
-      d.innerHTML = `<time>${hhmm(r.t)}</time><span><b>${op}</b> pressed by ${esc(who === me ? "you" : who)}</span>`; feedAppend(d); cur = null; return;
-    }
-    cur = document.createElement("div"); cur.className = "ex"; cur.dataset.t = r.t;
-    cur.innerHTML = `<div class="meta"><span>${esc(who === me ? "You" : who)}</span><span>${hhmm(r.t)}</span></div><p class="said"></p>`;
-    cur.querySelector(".said").textContent = text; feedAppend(cur); return;
-  }
-  const fresh = cur && r.t - (+cur.dataset.t) < 120;
-  if (who === "plan" && fresh) {
-    let acts = []; try { acts = JSON.parse(text); } catch {}
-    if (acts.length) {
-      const ul = document.createElement("ol"); ul.className = "steps";
-      ul.innerHTML = acts.map((a) => `<li>${stepText(a)}</li>`).join(""); cur.append(ul);
-      const v = document.createElement("div"); v.className = "verdict ok"; v.innerHTML = "✓ Passed the QNX safety gate <span>· sent to the drone</span>";
-      v.dataset.pending = "1"; cur.append(v);
-    }
-    return;
-  }
-  if (who === "jarvis" && fresh) {
-    if (/^Safety says no/i.test(text) && markBlocked(text.replace(/^Safety says no:\s*/i, "").replace(/\.$/, ""))) return;  // the verdict line says it
-    const p = document.createElement("p"); p.className = "reply"; p.textContent = text;
-    const v = cur.querySelector(".verdict"); v ? cur.insertBefore(p, v) : cur.append(p);
-    if (/^Safety says no/i.test(text)) markBlocked(text.replace(/^Safety says no:\s*/i, "").replace(/\.$/, ""));
-    return;
-  }
-  if (who === "edge" && /^safety_reject/.test(text)) {
-    const reason = text.replace(/^safety_reject:\s*/, "");
-    toast("qnx", "QNX blocked a command", reason);
-    if (fresh && markBlocked(reason)) return;
-  }
-  if (who === "edge" && /failsafe|person|palm|watchdog|link/i.test(text)) toast("bad", text.split(":")[0].replace(/_/g, " "), text.split(":").slice(1).join(":").trim());
-  const d = document.createElement("div");
-  d.className = "sys" + (who === "qnx" ? " qnx" : who === "edge" && /reject|fail/i.test(text) ? " bad" : "");
-  d.innerHTML = `<time>${hhmm(r.t)}</time><span></span>`; d.querySelector("span").textContent = (who === "jarvis" ? "" : who + " · ") + text;
-  feedAppend(d);
-}
-function markBlocked(reason) {
-  const v = cur && cur.querySelector(".verdict"); if (!v) return false;
-  v.className = "verdict no"; v.innerHTML = `✕ Blocked by QNX <span>· ${esc(reason)}</span>`; return true;
-}
-
-// ---------- audio + photos ----------
-const audioQ = []; let playing = false;
-function playAudio(b64) { if (!$("c-audio").checked) return; audioQ.push(b64); if (!playing) nextAudio(); }
-function nextAudio() {
-  const b64 = audioQ.shift(); if (!b64) { playing = false; return; }
-  playing = true; const a = new Audio("data:audio/mpeg;base64," + b64);
-  a.onended = a.onerror = nextAudio; a.play().catch(nextAudio);
-}
-let nPhotos = 0;
-function photo(url, caption) {
-  const f = document.createElement("figure");
-  f.innerHTML = `<a target="_blank"><img></a><figcaption></figcaption>`;
-  f.querySelector("a").href = url; f.querySelector("img").src = url;
-  f.querySelector("figcaption").textContent = caption || "";
-  $("photos").prepend(f); $("mem-n").textContent = ++nPhotos;
-}
-
-// ---------- QNX ----------
-const Q = { loop: [], jitter: {}, procs: {}, stops: [] };
-const ms = (v) => v == null ? "–" : (v < 10 ? v.toFixed(2) : v.toFixed(0)) + " ms";
-function qnxAdd(m) {
-  if (m.src === "edge" && m.kind === "loop") { Q.loop.push(m); if (Q.loop.length > 120) Q.loop.shift(); drawLoop(); tilesLoop(); }
-  else if (m.src === "edge" && m.kind === "stop_latency") { Q.stops.push(m); tileStop(); }
-  else if (m.src === "jitter" && m.kind === "jitter_case") { Q.jitter[`${!!m.hog}|${m.prio || 0}`] = m; drawJitter(); }
-  else if (m.src === "supervisor" && m.name) {
-    const p = Q.procs[m.name] || (Q.procs[m.name] = { name: m.name, restarts: 0 });
-    if (m.kind === "start" || m.kind === "restart") { p.state = "up"; p.pid = m.pid; }
-    if (m.kind === "restart") Object.assign(p, { restarts: m.restarts ?? p.restarts + 1, spawn_ms: m.spawn_ms, ready_ms: m.ready_ms });
-    if (m.kind === "exit" || m.kind === "stopped") p.state = "down";
-    if (m.kind === "spawn_failed") p.state = "failed";
-    drawProcs();
-  }
-}
-function qnxState(m) {
-  Q.loop = m.loop || []; Q.stops = m.stops || []; Q.jitter = {}; Q.procs = {};
-  (m.jitter || []).forEach((j) => Q.jitter[`${!!j.hog}|${j.prio || 0}`] = j);
-  (m.procs || []).forEach((p) => Q.procs[p.name] = p);
-  drawLoop(); tilesLoop(); tileStop(); drawJitter(); drawProcs();
-}
-function tilesLoop() {
-  const l = Q.loop[Q.loop.length - 1]; if (!l) return;
-  $("q-p99").textContent = ms(l.p99_ms); $("q-p99").style.color = l.p99_ms > 2 ? "var(--bad)" : "var(--ok)";
-  $("q-max").textContent = ms(l.max_ms);
-}
-function tileStop() {
-  const s = Q.stops[Q.stops.length - 1]; if (!s) return;
-  $("q-stop").textContent = ms(s.ms ?? s.edge_ms);
-}
-function drawLoop() {
-  const r = canvasCtx($("loopc")); if (!r) return; const [g, w, h] = r;
-  const css = getComputedStyle(document.documentElement), col = (n) => css.getPropertyValue(n).trim();
-  const top = Math.max(4, ...Q.loop.map((l) => l.max_ms)) * 1.15, pad = 4;
-  const y = (v) => h - pad - (Math.min(v, top) / top) * (h - 2 * pad), x = (i) => pad + (i / 119) * (w - 2 * pad);
-  g.strokeStyle = "rgba(255,255,255,.06)"; for (let i = 0; i <= 4; i++) { g.beginPath(); g.moveTo(0, pad + i * (h - 2 * pad) / 4); g.lineTo(w, pad + i * (h - 2 * pad) / 4); g.stroke(); }
-  g.font = "11px Geist Mono, monospace"; g.fillStyle = "rgba(244,244,245,.36)"; g.fillText(top.toFixed(0) + " ms", 2, 14);
-  g.setLineDash([3, 4]); g.strokeStyle = col("--bad"); g.lineWidth = 1; g.beginPath(); g.moveTo(0, y(2)); g.lineTo(w, y(2)); g.stroke(); g.setLineDash([]);
-  if (!Q.loop.length) { g.textAlign = "center"; g.fillText("waiting for the drone's safety loop", w / 2, h / 2); g.textAlign = "start"; return; }
-  const off = 120 - Q.loop.length;
-  for (const [key, color] of [["max_ms", col("--warn")], ["p99_ms", col("--accent")]]) {
-    g.strokeStyle = color; g.lineWidth = 1.6; g.beginPath();
-    Q.loop.forEach((l, i) => i ? g.lineTo(x(off + i), y(l[key])) : g.moveTo(x(off + i), y(l[key]))); g.stroke();
-  }
-}
-function drawJitter() {
-  const cases = Object.values(Q.jitter); if (!cases.length) return;
-  cases.sort((a, b) => (a.hog - b.hog) || ((a.prio_applied ? 1 : 0) - (b.prio_applied ? 1 : 0)));
-  const top = Math.max(...cases.map((c) => c.max_ms), 2);
-  $("q-jit").innerHTML = `<thead><tr><th>Case</th><th class="n">p99</th><th class="n">max</th><th></th></tr></thead><tbody>` + cases.map((c) => {
-    const name = `${c.hog ? "CPU hog" : "idle"}, ${c.prio_applied ? "FIFO " + c.prio : (c.prio ? "FIFO not applied" : "normal")}`;
-    return `<tr><td>${name}</td><td class="n">${ms(c.p99_ms)}</td><td class="n">${ms(c.max_ms)}</td>
-      <td class="n" style="width:26%"><div class="bar ${c.p99_ms > 2 ? "bad" : "ok"}" style="width:${(Math.log1p(c.max_ms) / Math.log1p(top) * 100).toFixed(1)}%"></div></td></tr>`;
-  }).join("") + "</tbody>";
-}
-function drawProcs() {
-  const ps = Object.values(Q.procs); if (!ps.length) return;
-  $("q-rest").textContent = ps.reduce((n, p) => n + (p.restarts || 0), 0);
-  $("q-procs").innerHTML = `<thead><tr><th>Process</th><th class="n">Restarts</th><th class="n">Back in</th></tr></thead><tbody>` +
-    ps.map((p) => `<tr><td><span class="dot ${esc(p.state || "")}"></span>${esc(p.name)}</td><td class="n">${p.restarts || 0}</td>
-      <td class="n">${ms(p.ready_ms ?? p.spawn_ms)}</td></tr>`).join("") + "</tbody>";
-}
-
-// ---------- tabs ----------
-function showTab(name) {
-  document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
-  document.querySelectorAll(".pane").forEach((p) => p.classList.toggle("on", p.id === "p-" + name));
-  try { localStorage.setItem("hd-tab", name); } catch {}
-  drawLoop();
-}
-document.querySelectorAll(".tabs button").forEach((b) => b.onclick = () => showTab(b.dataset.tab));
-try { const t = localStorage.getItem("hd-tab"); if (t && $("p-" + t)) showTab(t); } catch {}
-window.addEventListener("resize", () => { drawLoop(); drawFence(); });
-
-function handle(m) {
-  switch (m.type) {
-    case "hello": me = m.you; station(m.station); control(m.holder); $("feed").classList.remove("live-feed"); (m.log || []).forEach(logLine);
-      $("feed").classList.add("live-feed"); $("feed").scrollTop = $("feed").scrollHeight; toasts.length = 0; telemetry(m.telemetry); break;
-    case "station": station(m.connected); break;
-    case "control": control(m.holder); break;
-    case "telemetry": if (!online) station(true); telemetry(m); break;
-    case "frame": frame(m); break;
-    case "log": logLine(m); break;
-    case "heard": if (m.who === me) $("talk-s").textContent = "heard: " + m.text; break;
-    case "audio": playAudio(m.mp3); break;
-    case "photo": photo(m.url, m.caption); break;
-    case "qnx": qnxAdd(m); break;
-    case "qnx_state": qnxState(m); break;
-  }
-}
-
-$("b-stop").onclick = () => send({ type: "op", op: "stop" });
-$("b-land").onclick = () => send({ type: "op", op: "land", pin: pin() });
-$("f-text").onsubmit = (e) => { e.preventDefault(); const v = $("i-text").value.trim(); if (v) { send({ type: "text", text: v, pin: pin() }); $("i-text").value = ""; } };
-$("f-mem").onsubmit = async (e) => {
-  e.preventDefault(); const q = $("i-mem").value.trim(); if (!q) return;
-  const hits = await (await fetch("/memory/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ q }) })).json();
-  const ul = $("hits"); ul.innerHTML = hits.length ? "" : '<li>Nothing remembered yet.</li>';
-  hits.forEach((h) => { const li = document.createElement("li"); li.innerHTML = `<img><span></span>`; li.querySelector("img").src = h.jpeg_url;
-    li.querySelector("span").textContent = `${h.caption} · N ${h.n.toFixed(1)}, E ${h.e.toFixed(1)} · ${hhmm(h.t)}`; ul.append(li); });
+// ---- small storage helpers (storage can throw in private mode) ----
+const store = {
+  get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+};
+const sess = {
+  get(k) { try { return sessionStorage.getItem(k) || ''; } catch { return ''; } },
+  set(k, v) { try { sessionStorage.setItem(k, v); } catch {} },
 };
 
-// ---------- push-to-talk with a live waveform ----------
-let rec, chunks = [], actx, raf;
-const setTalk = (t, s) => { $("talk-t").textContent = t; $("talk-s").textContent = s; };
-function wave(stream) {
-  try {
-    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
-    const an = actx.createAnalyser(); an.fftSize = 256; actx.createMediaStreamSource(stream).connect(an);
-    const data = new Uint8Array(an.frequencyBinCount), c = $("wave");
-    const loop = () => {
-      const r = canvasCtx(c); if (r) {
-        const [g, w, h] = r; an.getByteFrequencyData(data); const n = 18, bw = w / n;
-        g.fillStyle = "#1a0d03";
-        for (let i = 0; i < n; i++) { const v = data[2 + i * 3] / 255, bh = Math.max(3, v * h); g.beginPath(); g.roundRect(i * bw + 1.5, (h - bh) / 2, bw - 3, bh, 2); g.fill(); }
-      }
-      raf = requestAnimationFrame(loop);
-    };
-    loop();
-  } catch {}
+// ---- stable client id for this browser ----
+let CLIENT = store.get('hope_client', '');
+if (!CLIENT) { CLIENT = 'web-' + Math.random().toString(36).slice(2, 8); store.set('hope_client', CLIENT); }
+
+// ---- app state ----
+const S = {
+  you: CLIENT, holder: null, station: false,
+  telem: {}, lastTelemAt: 0,
+  trail: [],                         // recent (n, e) points for the track map
+  pin: sess.get('hope_pin'),
+  voiceHere: store.get('hope_voice', '1') === '1',
+  turn: null, history: [],           // current command + earlier ones
+  photos: [],
+  phase: 'idle',                     // talk button: idle | listening | sending | thinking
+  replaying: false,                  // true while replaying hello.log (no sounds/animation)
+  edgeAlert: null,                   // last failsafe/override event from the drone
+  qnx: { loop: [], stops: [], jitter: [], procs: [] },
+  lastRestarts: {},
+};
+
+// Battery thresholds from the brief (3-cell LiPo)
+const V_CRIT = 10.6, V_LOW = 11.0, V_MIN = 10.5, V_MAX = 12.6;
+
+const STATE_WORDS = {
+  DISCONNECTED: 'Disconnected', IDLE: 'On the ground', TAKING_OFF: 'Taking off',
+  BUSY: 'Moving', HOVER: 'Hovering', LANDING: 'Landing', FAILSAFE: 'Failsafe',
+};
+// who values that are not people
+const SYSTEM_WHO = new Set(['plan', 'jarvis', 'edge', 'cloud', 'qnx', 'station']);
+// edge primitive -> the plan step it belongs to (to highlight the refused step)
+const OP_STEP = { takeoff: 'takeoff', move_body: 'move', yaw: 'move', goto: 'mission', scan: 'mission',
+  return_home: 'home', land: 'land', stop: 'stop', hover: 'stop' };
+
+/* =========================================================
+   Formatting
+   ========================================================= */
+function fmtTime(t) {
+  if (t == null) return '';
+  let d;
+  if (typeof t === 'number') d = new Date(t < 1e12 ? t * 1000 : t);   // seconds or ms
+  else d = new Date(t);
+  if (isNaN(d)) return '';
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
 }
-// Live speech-to-text: 24 kHz mono 16-bit PCM over /ws/voice while the button is held, so the
-// text is ready ~0.4 s after release. The recorded clip is the fallback (POST /voice), used
-// only when the stream failed before any command ran (an {error} reply or a closed socket).
-let vs = null;
-function openStream(stream) {
-  try {
-    actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume && actx.resume();
-    const proto = location.protocol === "https:" ? "wss://" : "ws://";
-    const ws = new WebSocket(`${proto}${location.host}/ws/voice?client=${encodeURIComponent(me)}&pin=${encodeURIComponent(pin())}`);
-    ws.binaryType = "arraybuffer";
-    const st = { ws, queue: [] };
-    st.result = new Promise((res) => {
-      ws.onmessage = (ev) => { try { res(JSON.parse(ev.data)); } catch { res({ error: "bad reply" }); } };
-      ws.onclose = () => res({ error: "closed" }); ws.onerror = () => res({ error: "socket error" });
+// "today 13:58", "yesterday 19:12", or "Nov 19, 08:02"
+function fmtDay(t) {
+  if (t == null) return '';
+  const d = new Date(typeof t === 'number' && t < 1e12 ? t * 1000 : t); if (isNaN(d)) return '';
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((day(new Date()) - day(d)) / 864e5);
+  const hm = fmtTime(d.getTime());
+  return diff === 0 ? `today ${hm}` : diff === 1 ? `yesterday ${hm}` : `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${hm}`;
+}
+const num = (v, d = 1) => (typeof v === 'number' && isFinite(v) ? v.toFixed(d) : '—');
+const m = (v) => `${+(+v).toFixed(2)} m`;
+
+// A plan step can arrive as {op:'move', fwd:1} or {move:{fwd:1}}. Normalise to [name, args].
+function stepParts(s) {
+  if (typeof s === 'string') return [s, {}];
+  if (!s || typeof s !== 'object') return [String(s), {}];
+  const name = s.kind || s.op || s.type || s.cmd || s.action_type || s.name;
+  if (name) return [name, s.args || s.params || s];
+  const k = Object.keys(s)[0];
+  return [k, (s[k] && typeof s[k] === 'object') ? s[k] : { value: s[k] }];
+}
+
+// Human text for one plan step, e.g. "move up 10 m"
+function fmtStep(s) {
+  const [name, a] = stepParts(s);
+  const dir = (v, pos, neg) => (v ? `${v > 0 ? pos : neg} ${m(Math.abs(v))}` : null);
+  switch (name) {
+    case 'takeoff': return `takeoff ${m(a.alt ?? a.value ?? 1)}`;
+    case 'move': {
+      const parts = [dir(a.fwd, 'forward', 'back'), dir(a.right, 'right', 'left'), dir(a.up, 'up', 'down'),
+        a.yaw_deg ? `turn ${a.yaw_deg > 0 ? 'right' : 'left'} ${Math.abs(a.yaw_deg)}°` : null].filter(Boolean);
+      return `move ${parts.join(', ') || 'hold'}`;
+    }
+    case 'mission': return `mission → ${a.target ?? '?'} · ${a.action ?? ''} · ${(a.after ?? '').replace(/_/g, ' ')}`;
+    case 'look': return `look · ${a.action ?? ''}`;
+    case 'recall': return `recall “${a.query ?? ''}”${a.fly_there ? ' · fly there' : ''}`;
+    case 'land': case 'stop': case 'home': return name;
+    default: return `${name} ${JSON.stringify(a)}`;
+  }
+}
+
+// "above ceiling 1.5 m" -> "Above the 1.5 m ceiling"
+function humanReason(r) {
+  const t = (r || '').trim();
+  let x;
+  if ((x = t.match(/above (?:the )?ceiling\s*([\d.]+)\s*m/i))) return `Above the ${x[1]} m ceiling`;
+  if ((x = t.match(/below (?:the )?floor\s*([\d.]+)\s*m/i))) return `Below the ${x[1]} m minimum height`;
+  if (/fence|geofence|outside/i.test(t)) return t.charAt(0).toUpperCase() + t.slice(1).replace(/geofence/i, 'safety fence');
+  if (/battery/i.test(t)) return t.charAt(0).toUpperCase() + t.slice(1);
+  return t ? t.charAt(0).toUpperCase() + t.slice(1) : 'Not allowed';
+}
+
+/* =========================================================
+   The command trace (cloud -> QNX)
+   ========================================================= */
+function newTurn(who, text, t) {
+  // the "heard" message and the person's log line describe the same command: one turn
+  if (S.turn && S.turn.who === who && S.turn.text === text && !S.turn.plan.length) { S.turn.t = t; renderTurn(); return; }
+  if (S.turn) clearTimeout(S.turn.timer);
+  if (S.turn && S.turn.text) { S.history.unshift(S.turn); S.history = S.history.slice(0, 12); }
+  S.turn = { who, text, t, plan: [], replies: [], verdict: 'waiting', reason: '', badStep: null, results: [], photo: null, timer: null, latency: '' };
+  renderTurn(); renderHistory();
+}
+
+function renderTurn() {
+  const T = S.turn;
+  const heard = $('#heard'), label = $('#heardLabel');
+
+  // 1) what was said
+  if (S.phase === 'listening') {
+    label.textContent = 'Hearing you';
+    heard.className = 'heard';
+    heard.replaceChildren(levelBars(), document.createTextNode('Listening…'));
+  } else if (!T) {
+    label.textContent = 'Hold to talk, then say what you want';
+    heard.className = 'heard empty'; heard.textContent = '—';
+  } else {
+    const whoTxt = T.who === S.you ? 'You said' : `${T.who} said`;
+    label.textContent = `${whoTxt}${T.t ? ' · ' + fmtTime(T.t) : ''}`;
+    heard.className = 'heard'; heard.textContent = T.text;
+  }
+
+  // 2) the plan
+  const planWrap = $('#planWrap'), plan = $('#plan');
+  if (T && T.plan.length) {
+    planWrap.hidden = false;
+    plan.replaceChildren();
+    T.plan.forEach((s, i) => {
+      if (i) plan.append(el('span', 'sep', '→'));
+      const isBad = T.badStep != null && i === T.badStep;
+      plan.append(el('span', isBad ? 'bad' : '', fmtStep(s)));
     });
-    ws.onopen = () => { st.queue.forEach((b) => ws.send(b)); st.queue = []; };
-    const src = actx.createMediaStreamSource(stream), proc = actx.createScriptProcessor(2048, 1, 1), mute = actx.createGain();
-    const ratio = actx.sampleRate / 24000;
+  } else if (S.phase === 'thinking' || S.phase === 'sending') {
+    planWrap.hidden = false;
+    const d = el('span', 'reply'); d.append(dots(), document.createTextNode('Jarvis is planning'));
+    plan.replaceChildren(d);
+  } else planWrap.hidden = true;
+
+  // 3) Jarvis's spoken replies (last two)
+  const said = T ? T.replies.filter((r) => !(T.verdict === 'refused' && /^Safety says no/i.test(r))) : [];  // the verdict says it
+  $('#replies').textContent = said.length ? 'Jarvis: ' + said.slice(-2).map((r) => `“${r}”`).join('  ') : '';
+  $('#latency').hidden = !(T && T.latency); $('#latency').textContent = T && T.latency ? T.latency : '';
+
+  // 4) QNX verdict
+  const v = $('#verdict'), reason = $('#reason'), result = $('#result');
+  const vText = { waiting: 'Waiting for a plan', checking: 'Checking…', approved: 'Approved', refused: 'Refused', sent: 'Nothing to check' }[T ? T.verdict : 'waiting'];
+  if (v.textContent !== vText) {
+    v.textContent = vText;
+    v.className = 'verdict ' + (T ? T.verdict : 'waiting') + (!S.replaying && T && (T.verdict === 'approved' || T.verdict === 'refused') ? ' arrive' : '');
+  }
+  if (T && T.verdict === 'refused') reason.textContent = humanReason(T.reason) + '.';
+  else if (T && T.verdict === 'approved') reason.textContent = T.okSteps > 1 ? `${T.okSteps} steps passed the safety gate so far.` : 'The safety gate let it through.';
+  else if (T && T.verdict === 'sent') reason.textContent = 'No flight step in this plan, so nothing for the gate to check.';
+  else reason.textContent = '';
+
+  // 5) what the drone actually did
+  result.replaceChildren();
+  if (T && T.photo) {
+    const img = el('img'); img.src = T.photo.url; img.alt = T.photo.caption || 'Photo the drone took';
+    result.append(img);
+  }
+  if (T && T.verdict === 'refused') result.append(el('span', '', `Drone held${typeof S.telem.alt === 'number' ? ' at ' + m(S.telem.alt) : ''}. Nothing moved.`));
+  else if (T && T.results.length) result.append(el('span', '', T.results.slice(-1)[0]));
+  else if (T && T.photo && T.photo.caption) result.append(el('span', '', T.photo.caption));
+  else result.append(el('span', 'label', 'Every step is checked here before the drone moves.'));
+
+  $('#cam').classList.toggle('refused', !!(T && T.verdict === 'refused'));
+}
+
+function renderHistory() {
+  const list = $('#histList');
+  list.replaceChildren();
+  if (!S.history.length) { const r = el('div', 'row'); r.append(el('span', 'm', 'Nothing yet.')); list.append(r); return; }
+  for (const T of S.history) {
+    const r = el('div', 'row');
+    r.append(el('span', 't', T.text));
+    const meta = el('span', 'm');
+    meta.append(document.createTextNode(fmtTime(T.t) + ' · '));
+    const vc = T.verdict === 'approved' ? 'ok' : T.verdict === 'refused' ? 'no' : '';
+    meta.append(el('span', vc, T.verdict === 'refused' ? 'refused' : T.verdict === 'approved' ? 'approved' : T.plan.length ? 'sent' : 'no plan'));
+    if (T.verdict === 'refused' && T.reason) meta.append(document.createTextNode(' · ' + humanReason(T.reason).toLowerCase()));
+    else if (T.replies.length) meta.append(document.createTextNode(' · “' + T.replies.slice(-1)[0] + '”'));
+    r.append(meta); list.append(r);
+  }
+}
+
+function setVerdict(kind, reason, op) {
+  const T = S.turn; if (!T) return;
+  clearTimeout(T.timer);
+  if (kind === 'approved') {               // real: the station reports each step the gate accepted
+    if (T.verdict === 'refused') return;   // a later step was already refused
+    T.okSteps = (T.okSteps || 0) + 1;
+  }
+  T.verdict = kind; T.reason = reason || '';
+  if (kind === 'refused' && op) {
+    const step = OP_STEP[op] || op;
+    const i = T.plan.findIndex((s) => stepParts(s)[0] === step);
+    T.badStep = i >= 0 ? i : null;
+  }
+  if (S.phase === 'thinking') setPhase('idle');
+  renderTurn(); renderHistory();
+}
+
+/* =========================================================
+   Incoming log lines
+   ========================================================= */
+function onLog({ t, who, text }) {
+  text = text ?? '';
+  if (!SYSTEM_WHO.has(who)) { newTurn(who, text, t); return; }   // a person said something
+  if (!S.turn) newTurn('?', '', t);
+  const T = S.turn;
+
+  if (who === 'plan') {
+    let steps = [];
+    try { steps = JSON.parse(text); } catch { steps = [text]; }
+    if (!Array.isArray(steps)) steps = [steps];
+    T.plan = steps; T.badStep = null;
+    if (steps.length) {
+      T.verdict = 'checking';
+      // The gate answers each flight step ("safety_ok" / "safety_reject"). Plans with no flight
+      // step (look, recall) never reach it: after a few seconds, say so instead of spinning.
+      clearTimeout(T.timer);
+      T.timer = setTimeout(() => { if (S.turn === T && T.verdict === 'checking') { T.verdict = 'sent'; renderTurn(); renderHistory(); } }, S.replaying ? 0 : 6000);
+    }
+    if (S.phase === 'thinking') setPhase('idle');
+  } else if (who === 'jarvis') {
+    if (/^Safety says no/i.test(text) && T.verdict === 'refused') { renderTurn(); return; }  // the verdict already says it
+    T.replies.push(text);
+    if (S.phase === 'thinking') setPhase('idle');
+  } else if (who === 'edge' || who === 'qnx') {
+    // edge events arrive as "<kind>: <detail>", e.g. "safety_reject: move_body: above ceiling 1.5 m"
+    const rej = text.match(/^safety_reject\s*:\s*(?:(\w+)\s*:\s*)?(.*)$/i);
+    if (rej) { setVerdict('refused', rej[2], rej[1]); return; }
+    if (/^safety_ok\b/i.test(text)) { setVerdict('approved'); return; }
+    if (/failsafe|pilot|override|manual|link/i.test(text)) { S.edgeAlert = { text, at: Date.now() }; updateAlerts(); }
+    if (who === 'edge') T.results.push(prettifyEdge(text));
+  } else if (who === 'cloud') {
+    let x;
+    if ((x = text.match(/^voice latency.*?speech-to-text (\d+) ms.*?brain \+ send (\d+) ms/i))) {
+      T.latency = `heard in ${x[1]} ms · planned in ${x[2]} ms`;
+    } else if (/no pilot pin|needs the pilot pin|wrong pin/i.test(text)) {
+      if (!S.replaying) { toast('Pilot PIN needed to fly'); askPin(); }
+    } else if (/station not connected/i.test(text)) {
+      if (!S.replaying) toast('The drone isn’t connected');
+    }
+    // other cloud lines (station connected, ...) are covered by the alert banner
+  }
+  renderTurn();
+}
+
+// "mission_done: read 'Exit'" -> "Mission done: read 'Exit'"
+function prettifyEdge(t) { return t.replace(/^(\w+)(:)/, (_, w, c) => w.replace(/_/g, ' ').replace(/^./, (x) => x.toUpperCase()) + c); }
+
+/* =========================================================
+   Telemetry, camera, fence, alerts
+   ========================================================= */
+function onTelemetry(tm) {
+  S.telem = tm; S.lastTelemAt = Date.now();
+  let word = STATE_WORDS[tm.state] || (tm.state ? String(tm.state).toLowerCase() : '—');
+  if (tm.state === 'BUSY' && tm.active_cmd) word = `Doing: ${tm.active_cmd}`;
+  $('#state').textContent = word;
+  const altOK = typeof tm.alt === 'number' && tm.state !== 'IDLE' && tm.state !== 'DISCONNECTED';
+  $('#alt').textContent = altOK ? `${tm.alt.toFixed(2)} m up` : '';
+
+  // track map: north up, east right, takeoff point (+) at the centre. No fence outdoors, so
+  // it zooms out to fit the whole track (at least +-3 m).
+  if (typeof tm.n === 'number' && typeof tm.e === 'number') {
+    const last = S.trail[S.trail.length - 1];
+    const step = Math.max(0.05, Math.hypot(tm.n, tm.e) / 100);   // fewer points when far out
+    if (!last || Math.hypot(last[0] - tm.n, last[1] - tm.e) > step) { S.trail.push([tm.n, tm.e]); if (S.trail.length > 200) S.trail.shift(); }
+    const r = 1.1 * Math.max(3, ...S.trail.map(([n, e]) => Math.max(Math.abs(n), Math.abs(e))), Math.abs(tm.n), Math.abs(tm.e));
+    $('#fence').setAttribute('viewBox', `${(-r).toFixed(2)} ${(-r).toFixed(2)} ${(2 * r).toFixed(2)} ${(2 * r).toFixed(2)}`);
+    $('#home').setAttribute('d', `M${(-r / 11).toFixed(2)} 0H${(r / 11).toFixed(2)}M0 ${(-r / 11).toFixed(2)}V${(r / 11).toFixed(2)}`);
+    $('#dot').setAttribute('r', (r / 10).toFixed(2));
+    $('#trail').setAttribute('points', S.trail.map(([n, e]) => `${e.toFixed(2)},${(-n).toFixed(2)}`).join(' '));
+    $('#dot').setAttribute('cx', tm.e.toFixed(2)); $('#dot').setAttribute('cy', (-tm.n).toFixed(2));
+  }
+  updateAlerts();
+}
+
+function onFrame(f) {
+  const img = $('#frame');
+  img.src = 'data:image/jpeg;base64,' + f.jpeg;
+  if (img.hidden) { img.hidden = false; $('#camEmpty').hidden = true; }
+  $('#liveTag').classList.remove('off');
+  S.lastFrameAt = Date.now();
+}
+
+// Only show a problem when there is one. Most serious wins.
+function updateAlerts() {
+  const tm = S.telem, b = $('#banner');
+  const stale = S.station && S.lastTelemAt && Date.now() - S.lastTelemAt > 3000;
+  const v = tm.battery_v;
+  const pct = typeof v === 'number' ? Math.max(0, Math.min(100, Math.round(((v - V_MIN) / (V_MAX - V_MIN)) * 100))) : null;
+  let a = null;
+  if (!S.wsOpen) a = ['crit', 'Dashboard offline', 'Reconnecting to the server…'];
+  else if (!S.station) a = ['crit', 'Drone not connected', 'The drone’s computer isn’t talking to the server.'];
+  else if (stale) a = ['crit', 'Link lost', 'No word from the drone for a few seconds. It will hold, then land.'];
+  else if (tm.state === 'FAILSAFE') a = ['crit', 'Failsafe', 'The drone is protecting itself (hold or land). Commands are paused.'];
+  else if (typeof v === 'number' && v < V_CRIT) a = ['crit', `Battery critical · ${v.toFixed(1)} V`, 'Land now.'];
+  else if ((tm.armed && tm.mode && !/GUIDED|LAND/i.test(tm.mode)) || (S.edgeAlert && /pilot|override|manual/i.test(S.edgeAlert.text) && Date.now() - S.edgeAlert.at < 8000))
+    a = ['warn', 'Pilot has the remote', 'Manual override. Jarvis is hands-off until it’s released.'];
+  else if (typeof v === 'number' && v < V_LOW) a = ['warn', `Battery low · ${v.toFixed(1)} V · about ${pct}%`, 'A couple more commands, then land.'];
+  if (!a) { b.hidden = true; return; }
+  b.hidden = false; b.className = 'banner ' + a[0];
+  b.replaceChildren(el('b', '', a[1]), document.createTextNode(a[2]));
+}
+setInterval(updateAlerts, 1000);
+setInterval(() => { if (S.lastFrameAt && Date.now() - S.lastFrameAt > 2000) $('#liveTag').classList.add('off'); }, 1000);
+
+function onControl(holder) {
+  S.holder = holder;
+  const w = $('#who');
+  if (!holder) w.textContent = S.pin ? 'Nobody is flying' : 'Watching · enter PIN to fly';
+  else if (holder === S.you) w.textContent = 'You have control';
+  else w.textContent = `${holder} is flying`;
+}
+
+/* =========================================================
+   Photos + memory
+   ========================================================= */
+function onPhoto(p) {
+  S.photos.unshift(p);
+  if (S.turn) { S.turn.photo = p; renderTurn(); }
+  renderGallery();
+}
+function renderGallery() {
+  const g = $('#gallery');
+  if (!S.photos.length) return;
+  g.replaceChildren(...S.photos.slice(0, 30).map((p) => {
+    const f = el('figure'); const i = el('img'); i.src = p.url; i.alt = p.caption || 'Photo'; i.loading = 'lazy';
+    f.append(i); if (p.caption) f.append(el('figcaption', '', p.caption)); return f;
+  }));
+}
+
+$('#memForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const q = $('#memQ').value.trim(); if (!q) return;
+  const box = $('#memResults'); box.replaceChildren(el('p', '', 'Looking through photos…'));
+  try {
+    const r = await fetch('/memory/search', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ q }) });
+    if (!r.ok) throw new Error(r.status);
+    const hits = await r.json();
+    box.replaceChildren();
+    if (!hits.length) { box.append(el('p', '', 'Nothing in the photos matches that yet.')); return; }
+    const [top, ...rest] = hits;
+    const h = el('div', 'hit'); const img = el('img'); img.src = top.jpeg_url; img.alt = top.caption || '';
+    h.append(img, el('div', 'cap', top.caption || 'Best match'), el('p', '', where(top)));
+    box.append(h);
+    if (rest.length) {
+      const also = el('div'); also.style.cssText = 'display:flex;flex-direction:column;gap:12px;margin-top:22px';
+      also.append(el('h2', '', 'Also seen'));
+      for (const x of rest.slice(0, 5)) {
+        const r2 = el('div', 'also'); const i2 = el('img'); i2.src = x.jpeg_url; i2.alt = '';
+        const tx = el('div'); tx.append(el('div', '', x.caption || ''), el('div', 'label', where(x)));
+        r2.append(i2, tx); also.append(r2);
+      }
+      box.append(also);
+    }
+  } catch (err) { box.replaceChildren(el('p', '', 'Search failed. Is the server up?')); }
+});
+// "Seen 13:58 · 2.1 m ahead, 0.8 m right of takeoff, 1.0 m up"
+function where(x) {
+  const bits = [];
+  if (typeof x.n === 'number') bits.push(`${Math.abs(x.n).toFixed(1)} m ${x.n >= 0 ? 'ahead' : 'behind'}`);
+  if (typeof x.e === 'number') bits.push(`${Math.abs(x.e).toFixed(1)} m ${x.e >= 0 ? 'right' : 'left'}`);
+  let s = bits.length ? bits.join(', ') + ' of takeoff' : '';
+  if (typeof x.alt === 'number') s += `${s ? ', ' : ''}${x.alt.toFixed(1)} m up`;
+  return `Seen ${fmtDay(x.t)}${s ? ' · ' + s : ''}`;
+}
+
+/* =========================================================
+   QNX safety proof
+   ========================================================= */
+// Field names for qnx_state aren't fixed in the brief, so read them loosely.
+const pick = (o, keys) => { for (const k of keys) if (o && o[k] != null) return o[k]; return null; };
+function lateMs(x) {
+  if (typeof x === 'number') return x;
+  const ms = pick(x, ['late_ms', 'lateness_ms', 'max_ms', 'p99_ms', 'ms', 'value']);
+  if (ms != null) return +ms;
+  const us = pick(x, ['late_us', 'lateness_us', 'max_us', 'p99_us', 'us']);
+  return us != null ? us / 1000 : null;
+}
+function onQnx(q) {
+  const Q = S.qnx;
+  if (q.type === 'qnx_state') {
+    for (const k of ['loop', 'stops', 'jitter', 'procs']) if (Array.isArray(q[k])) Q[k] = q[k];
+  } else if (q.src === 'edge' && q.kind === 'loop') { Q.loop.push(q); if (Q.loop.length > 120) Q.loop.shift(); }
+  else if (q.src === 'edge' && q.kind === 'stop_latency') Q.stops.push(q);
+  else if (q.src === 'jitter' && q.kind === 'jitter_case') {
+    const key = (c) => `${!!c.hog}|${c.prio || 0}`;
+    Q.jitter = Q.jitter.filter((c) => key(c) !== key(q)).concat([q]);
+  } else if (q.src === 'supervisor' && q.name) {
+    let p = Q.procs.find((x) => x.name === q.name);
+    if (!p) { p = { name: q.name, restarts: 0 }; Q.procs.push(p); }
+    if (q.kind === 'start' || q.kind === 'restart') p.state = 'up';
+    if (q.kind === 'restart') p.restarts = q.restarts ?? p.restarts + 1;
+    if (q.kind === 'exit' || q.kind === 'stopped') p.state = 'down';
+    if (q.kind === 'spawn_failed') p.state = 'failed';
+  }
+  renderSafety();
+}
+function renderSafety() {
+  const Q = S.qnx, BUDGET = 2;
+  // loop lateness
+  const vals = Q.loop.map(lateMs).filter((v) => v != null && isFinite(v));
+  const svg = $('#loopChart');
+  if (vals.length) {
+    const sorted = [...vals].sort((a, b) => a - b);
+    const lastP99 = Q.loop.length ? pick(Q.loop[Q.loop.length - 1], ['p99_ms']) : null;
+    const p99 = lastP99 != null ? +lastP99 : sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.99))];
+    const worst = sorted[sorted.length - 1];
+    const lp = $('#loopText'); lp.replaceChildren();
+    lp.append('Never more than ', el('b', '', worst.toFixed(2) + ' ms'), ' late in this window. p99 is ', el('b', '', p99.toFixed(2) + ' ms'), `. The budget is ${BUDGET} ms.`);
+    const top = Math.max(BUDGET * 1.1, worst * 1.1), y = (v) => 88 - (v / top) * 80, x0 = 30, w = 320;
+    const pts = vals.map((v, i) => `${(x0 + (i / Math.max(1, vals.length - 1)) * w).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+    const wi = vals.indexOf(worst);
+    svg.innerHTML =
+      `<line x1="30" y1="${y(BUDGET)}" x2="350" y2="${y(BUDGET)}" stroke="#4A5056" stroke-dasharray="3 3"/>` +
+      `<line x1="30" y1="88" x2="350" y2="88" stroke="#262A2E"/>` +
+      `<g font-family="Schibsted Grotesk,sans-serif" font-size="11" fill="#868C92"><text x="0" y="${y(BUDGET) + 4}">${BUDGET} ms</text><text x="0" y="92">0</text><text x="30" y="104">−2 min</text><text x="350" y="104" text-anchor="end">now</text></g>` +
+      `<polyline fill="none" stroke="#F1F2EF" stroke-width="1.3" stroke-linejoin="round" points="${pts}"/>` +
+      `<circle cx="${(x0 + (wi / Math.max(1, vals.length - 1)) * w).toFixed(1)}" cy="${y(worst).toFixed(1)}" r="2.5" fill="#F1F2EF"/>`;
+  }
+  // person seen -> stop
+  if (Q.stops.length) {
+    const s = Q.stops[Q.stops.length - 1];
+    const ms = typeof s === 'number' ? s : pick(s, ['ms', 'edge_ms', 'latency_ms', 'stop_ms', 'value']);
+    $('#stopMs').textContent = ms != null ? `${Math.round(ms)} ms` : '—';
+    const t = typeof s === 'object' ? pick(s, ['t', 'time', 'ts']) : null;
+    $('#stopWhen').textContent = t ? `Last time at ${fmtTime(t)}` : `${Q.stops.length} stop${Q.stops.length > 1 ? 's' : ''} measured`;
+  }
+  // processes (flash a row when its restart count goes up: the "kill it live" demo)
+  if (Q.procs.length) {
+    const tb = $('#procs'); tb.replaceChildren();
+    for (const p of Q.procs) {
+      const name = pick(p, ['name', 'proc', 'process']) ?? '?';
+      const restarts = +(pick(p, ['restarts', 'restart_count']) ?? 0);
+      let status = pick(p, ['state', 'status']) ?? (p.alive === false ? 'down' : 'running');
+      if (status === 'up') status = 'running';
+      const tr = el('tr');
+      if (S.lastRestarts[name] != null && restarts > S.lastRestarts[name]) tr.className = 'flash';
+      S.lastRestarts[name] = restarts;
+      const td1 = el('td', 'mono', name); td1.style.fontSize = '13px';
+      if (String(status) !== 'running') td1.append(el('span', 'no', '  ' + status));
+      tr.append(td1, el('td', 'r', String(restarts))); tb.append(tr);
+    }
+  }
+  // jitter benchmark: idle vs CPU hog, normal vs real-time (FIFO) priority
+  if (Q.jitter.length) {
+    const t = $('#jitter'), head = el('thead'), hr = el('tr');
+    ['Case', 'p99', 'worst'].forEach((c, i) => hr.append(el('th', i ? 'r' : '', c)));
+    head.append(hr);
+    const body = el('tbody');
+    const rows = [...Q.jitter].sort((a, b) => (a.hog - b.hog) || ((a.prio_applied ? 1 : 0) - (b.prio_applied ? 1 : 0)));
+    for (const c of rows) {
+      const tr = el('tr');
+      const name = `${c.hog ? 'CPU hog' : 'Idle'}, ${c.prio_applied ? 'real-time priority' : c.prio ? 'priority not applied' : 'normal priority'}`;
+      tr.append(el('td', '', name), el('td', 'r', num(c.p99_ms, 2) + ' ms'), el('td', 'r' + (c.max_ms > 2 ? ' no' : ''), num(c.max_ms, 2) + ' ms'));
+      body.append(tr);
+    }
+    t.replaceChildren(head, body);
+  }
+}
+
+/* =========================================================
+   WebSocket
+   ========================================================= */
+let ws, retry = 0;
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws/ui?client=${encodeURIComponent(CLIENT)}`);
+  ws.onopen = () => { S.wsOpen = true; retry = 0; updateAlerts(); };
+  ws.onclose = () => { S.wsOpen = false; updateAlerts(); setTimeout(connect, Math.min(5000, 500 * 2 ** retry++)); };
+  ws.onerror = () => ws.close();
+  ws.onmessage = (ev) => {
+    let msg; try { msg = JSON.parse(ev.data); } catch { return; }
+    switch (msg.type) {
+      case 'hello':
+        if (msg.you) S.you = msg.you;
+        S.station = !!(msg.station && (msg.station.connected ?? msg.station));
+        onControl(msg.holder ?? null);
+        S.replaying = true; S.turn = null; S.history = [];
+        (msg.log || []).forEach(onLog);
+        S.replaying = false; renderTurn(); renderHistory();
+        if (msg.telemetry) onTelemetry(msg.telemetry);
+        if (!S.photos.length) fetch('/memory/recent?kind=photo').then((r) => r.ok ? r.json() : []).then((rows) => {
+          S.photos = rows.map((x) => ({ url: x.jpeg_url, caption: x.caption, t: x.t })); renderGallery();
+        }).catch(() => {});
+        break;
+      case 'station': S.station = !!msg.connected; updateAlerts(); break;
+      case 'control': onControl(msg.holder ?? null); break;
+      case 'telemetry': onTelemetry(msg); break;
+      case 'frame': onFrame(msg); break;
+      case 'log': onLog(msg); break;
+      case 'heard':
+        // speech-to-text result; the matching person log line usually follows, this just shows it sooner
+        if (msg.who === S.you && S.phase !== 'listening') { setPhase('thinking'); newTurn(msg.who, msg.text, Date.now()); }
+        break;
+      case 'audio': if (S.voiceHere && !S.replaying && msg.mp3) new Audio('data:audio/mpeg;base64,' + msg.mp3).play().catch(() => {}); break;
+      case 'photo': onPhoto(msg); break;
+      case 'qnx': case 'qnx_state': onQnx(msg); break;
+    }
+  };
+}
+const send = (o) => { if (ws && ws.readyState === 1) { ws.send(JSON.stringify(o)); return true; } toast('Not connected'); return false; };
+
+/* =========================================================
+   Controls: STOP, Land, PIN, typing
+   ========================================================= */
+function doStop() { send({ type: 'op', op: 'stop' }); toast('STOP sent'); }
+$('#stop').addEventListener('click', doStop);
+
+$('#land').addEventListener('click', async () => {
+  if (!S.pin && !(await askPin())) return;
+  send({ type: 'op', op: 'land', pin: S.pin });
+});
+
+function askPin() {
+  return new Promise((res) => {
+    const d = $('#pinDlg'); $('#pinIn').value = S.pin;
+    d.onclose = () => {
+      if (d.returnValue === 'ok' && $('#pinIn').value.trim()) { S.pin = $('#pinIn').value.trim(); sess.set('hope_pin', S.pin); onControl(S.holder); res(true); }
+      else res(false);
+    };
+    d.showModal(); setTimeout(() => $('#pinIn').focus(), 50);
+  });
+}
+$('#who').addEventListener('click', askPin);
+
+$('#typeToggle').addEventListener('click', () => { const f = $('#typeForm'); f.hidden = !f.hidden; if (!f.hidden) $('#typeIn').focus(); });
+$('#typeForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const text = $('#typeIn').value.trim(); if (!text) return;
+  if (!S.pin && !(await askPin())) return;
+  if (send({ type: 'text', text, pin: S.pin })) { $('#typeIn').value = ''; setPhase('thinking'); }
+});
+
+$('#voice').addEventListener('click', () => {
+  S.voiceHere = !S.voiceHere; store.set('hope_voice', S.voiceHere ? '1' : '0');
+  $('#voice').textContent = `Voice replies here: ${S.voiceHere ? 'on' : 'off'}`;
+  $('#voice').setAttribute('aria-pressed', S.voiceHere);
+});
+$('#voice').textContent = `Voice replies here: ${S.voiceHere ? 'on' : 'off'}`;
+
+/* =========================================================
+   Hold to talk (MediaRecorder + live mic level)
+   ========================================================= */
+let stream, rec, chunks = [], actx, analyser, raf, thinkTimer;
+const LEVEL = { v: 0 };
+
+function setPhase(p) {
+  S.phase = p;
+  const b = $('#talk'); b.dataset.phase = p;
+  $('#talkLabel').textContent = { idle: 'Hold to talk', listening: 'Let go to send', sending: 'Sending…', thinking: 'Sent to Jarvis' }[p];
+  clearTimeout(thinkTimer);
+  if (p === 'thinking') thinkTimer = setTimeout(() => setPhase('idle'), 15000);   // don't get stuck if no reply
+  renderTurn();
+}
+function levelBars() { const s = el('span', 'lv'); s.id = 'lvBars'; for (let i = 0; i < 5; i++) s.append(el('span')); return s; }
+function dots() { const s = el('span', 'dots'); s.style.marginRight = '8px'; for (let i = 0; i < 3; i++) s.append(el('span')); return s; }
+
+// Live speech-to-text: 24 kHz mono 16-bit PCM over /ws/voice while the button is held, so the
+// text is ready ~0.4 s after release. The recorded clip (POST /voice) is the fallback, used only
+// when the stream failed before any command ran.
+let vs = null;
+function openStream(src) {
+  try {
+    const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+    const w = new WebSocket(`${proto}${location.host}/ws/voice?client=${encodeURIComponent(S.you)}&pin=${encodeURIComponent(S.pin || '')}`);
+    w.binaryType = 'arraybuffer';
+    const st = { ws: w, queue: [] };
+    st.result = new Promise((res) => {
+      w.onmessage = (ev) => { try { res(JSON.parse(ev.data)); } catch { res({ error: 'bad reply' }); } };
+      w.onclose = () => res({ error: 'closed' }); w.onerror = () => res({ error: 'socket error' });
+    });
+    w.onopen = () => { st.queue.forEach((b) => w.send(b)); st.queue = []; };
+    const proc = actx.createScriptProcessor(2048, 1, 1), mute = actx.createGain(), ratio = actx.sampleRate / 24000;
     proc.onaudioprocess = (ev) => {
       const x = ev.inputBuffer.getChannelData(0), n = Math.floor(x.length / ratio), out = new Int16Array(n);
       for (let i = 0; i < n; i++) {  // box-filter downsample to 24 kHz
@@ -613,57 +911,118 @@ function openStream(stream) {
         let s = 0; for (let j = a; j < b; j++) s += x[j];
         out[i] = Math.max(-1, Math.min(1, s / (b - a))) * 0x7fff;
       }
-      if (ws.readyState === 1) ws.send(out.buffer); else if (ws.readyState === 0) st.queue.push(out.buffer);
+      if (w.readyState === 1) w.send(out.buffer); else if (w.readyState === 0) st.queue.push(out.buffer);
     };
     mute.gain.value = 0; src.connect(proc); proc.connect(mute); mute.connect(actx.destination);
-    st.stop = () => { try { proc.disconnect(); src.disconnect(); mute.disconnect(); } catch {} };
+    st.stop = () => { try { proc.disconnect(); mute.disconnect(); } catch {} };
     return st;
   } catch { return null; }
 }
+// -> the server's JSON reply, or null to fall back to uploading the clip
 async function finishStream(st) {
-  // true: handled (or must not be retried); false: fall back to uploading the clip
-  if (!st) return false;
+  if (!st) return null;
   st.stop();
-  if (st.ws.readyState !== 1) { try { st.ws.close(); } catch {} return false; }
-  st.ws.send("end");
+  if (st.ws.readyState !== 1) { try { st.ws.close(); } catch {} return null; }
+  st.ws.send('end');
   const j = await Promise.race([st.result, new Promise((r) => setTimeout(() => r({ timeout: true }), 8000))]);
-  if (j.timeout) { toast("warn", "Voice timed out"); try { st.ws.close(); } catch {} return true; }  // may have run: don't resend
-  if (j.error) { console.log("voice stream fell back:", j.error); return false; }
-  return true;
+  if (j.timeout) { try { st.ws.close(); } catch {} return { timeout: true }; }  // may have run: don't resend
+  return j.error ? null : j;
 }
-async function startTalk(e) {
-  e && e.preventDefault(); if (rec && rec.state === "recording") return;
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find((t) => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || "";
-    rec = new MediaRecorder(stream, mime ? { mimeType: mime } : {}); chunks = [];
-    rec.ondataavailable = (ev) => ev.data.size && chunks.push(ev.data);
-    vs = openStream(stream);
-    rec.onstop = async () => {
-      cancelAnimationFrame(raf); stream.getTracks().forEach((t) => t.stop());
-      $("talk").classList.remove("rec"); $("talk").classList.add("busy"); setTalk("Thinking…", "transcribing and planning");
-      const st = vs; vs = null;
-      if (await finishStream(st)) { $("talk").classList.remove("busy"); setTalk("Hold to talk", "or hold Space"); return; }
-      const type = rec.mimeType || "audio/webm"; const ext = type.includes("mp4") ? "m4a" : "webm";
-      const fd = new FormData(); fd.append("audio", new Blob(chunks, { type }), "clip." + ext); fd.append("client", me); fd.append("pin", pin());
-      try {
-        const r = await fetch("/voice", { method: "POST", body: fd });
-        const j = await r.json(); if (!r.ok) toast("warn", "Voice failed", j.detail || "");
-      } catch { toast("warn", "Voice upload failed"); }
-      $("talk").classList.remove("busy"); setTalk("Hold to talk", "or hold Space");
-    };
-    rec.start(); $("talk").classList.add("rec"); setTalk("Listening", "release to send"); wave(stream);
-  } catch (err) { toast("warn", "Microphone unavailable", err.message); }
+function voiceDone(j) {
+  if (j && j.need_pin) { setPhase('idle'); toast('Pilot PIN needed to fly'); askPin(); return; }
+  if (j && j.timeout) { setPhase('idle'); toast('Voice timed out'); return; }
+  if (j && j.text === '') { setPhase('idle'); toast('Didn’t catch that. Hold the button while you talk.'); return; }
+  setPhase('thinking');
 }
-function stopTalk(e) { e && e.preventDefault(); if (rec && rec.state === "recording") rec.stop(); }
-const talk = $("talk");
-talk.addEventListener("pointerdown", startTalk); talk.addEventListener("pointerup", stopTalk);
-talk.addEventListener("pointerleave", stopTalk); talk.addEventListener("contextmenu", (e) => e.preventDefault());
-const typing = () => /INPUT|TEXTAREA/.test(document.activeElement?.tagName || "");
-document.addEventListener("keydown", (e) => { if (e.code === "Space" && !e.repeat && !typing()) startTalk(e); });
-document.addEventListener("keyup", (e) => { if (e.code === "Space" && !typing()) stopTalk(e); });
 
-drawFence(); drawLoop(); station(false);
+async function startTalk() {
+  if (S.phase === 'listening' || S.phase === 'sending') return;
+  if (!navigator.mediaDevices?.getUserMedia) { toast('Mic needs HTTPS (or localhost). Use “Type instead”.'); return; }
+  try {
+    stream = stream || await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+  } catch { toast('Mic blocked. Allow it in the browser, or use “Type instead”.'); return; }
+  chunks = [];
+  const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'].find((t) => window.MediaRecorder?.isTypeSupported?.(t)) || '';
+  rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+  rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+  rec.onstop = uploadVoice;
+  rec.start();
+  S.talkStart = Date.now();
+  setPhase('listening');
+  // mic level -> bar heights; the same source feeds the live speech-to-text stream
+  actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+  if (actx.state === 'suspended') actx.resume();
+  analyser = actx.createAnalyser(); analyser.fftSize = 512;
+  if (S.micSrc) { try { S.micSrc.disconnect(); } catch {} }
+  S.micSrc = actx.createMediaStreamSource(stream); S.micSrc.connect(analyser);
+  vs = openStream(S.micSrc);
+  const buf = new Uint8Array(analyser.fftSize);
+  const tick = () => {
+    analyser.getByteTimeDomainData(buf);
+    let sum = 0; for (const x of buf) sum += (x - 128) ** 2;
+    LEVEL.v = LEVEL.v * 0.6 + Math.min(1, Math.sqrt(sum / buf.length) / 30) * 0.4;
+    const bars = document.getElementById('lvBars'); if (bars) bars.style.setProperty('--lvl', LEVEL.v.toFixed(2));
+    raf = requestAnimationFrame(tick);
+  };
+  tick();
+}
+function stopTalk() {
+  if (S.phase !== 'listening' || !rec) return;
+  cancelAnimationFrame(raf);
+  if (Date.now() - S.talkStart < 400) {
+    rec.onstop = null; rec.stop(); setPhase('idle'); toast('Hold the button while you talk');
+    if (vs) { vs.stop(); try { vs.ws.close(); } catch {} vs = null; }
+    return;
+  }
+  setPhase('sending'); rec.stop();
+}
+async function uploadVoice() {
+  const st = vs; vs = null;
+  const j = await finishStream(st);
+  if (j) { voiceDone(j); return; }
+  const type = rec.mimeType || 'audio/webm';
+  const ext = type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm';
+  const fd = new FormData();
+  fd.append('audio', new Blob(chunks, { type }), `speech.${ext}`);
+  fd.append('client', S.you); fd.append('pin', S.pin || '');
+  try {
+    const r = await fetch('/voice', { method: 'POST', body: fd });
+    if (r.status === 503) { setPhase('idle'); toast('Speech-to-text isn’t set up (no Vultr key). Type instead.'); return; }
+    if (!r.ok) throw new Error(r.status);
+    voiceDone(await r.json().catch(() => ({})));
+  } catch { setPhase('idle'); toast('Couldn’t send audio. Try again, or type it.'); }
+}
+
+const talk = $('#talk');
+talk.addEventListener('pointerdown', (e) => { e.preventDefault(); talk.setPointerCapture?.(e.pointerId); startTalk(); });
+talk.addEventListener('pointerup', stopTalk);
+talk.addEventListener('pointercancel', stopTalk);
+talk.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// keyboard: hold Space to talk, Esc = STOP (not while typing)
+const typing = () => /INPUT|TEXTAREA/.test(document.activeElement?.tagName);
+addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { if (!$('#pinDlg').open) doStop(); return; }
+  if (e.code === 'Space' && !typing() && !e.repeat) { e.preventDefault(); startTalk(); }
+});
+addEventListener('keyup', (e) => { if (e.code === 'Space' && !typing()) { e.preventDefault(); stopTalk(); } });
+
+/* =========================================================
+   Views + toast
+   ========================================================= */
+document.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => {
+  const v = b.dataset.go;
+  $('#app').dataset.view = v;
+  document.querySelectorAll('[data-go]').forEach((x) => (x === b ? x.setAttribute('aria-current', 'page') : x.removeAttribute('aria-current')));
+  document.querySelectorAll('.live-only').forEach((n) => (n.hidden = v !== 'live'));
+  $('#safety').hidden = v !== 'safety'; $('#memory').hidden = v !== 'memory';
+  if (v === 'memory') renderGallery();
+}));
+let toastT;
+function toast(t) { const n = $('#toast'); n.textContent = t; n.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => (n.hidden = true), 2600); }
+
+onControl(null);
+renderTurn();
 connect();
 </script>
 </body>

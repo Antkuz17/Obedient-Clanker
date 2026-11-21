@@ -32,7 +32,7 @@ log = logging.getLogger("brain")
 ACTIONS = ("none", "photo", "read", "solve", "describe")
 AFTER = ("stay", "come_back", "land")
 
-SYSTEM = """You are Jarvis, the voice of a small indoor quadcopter at a hackathon. You are \
+SYSTEM = """You are Jarvis, the voice of a quadcopter at a hackathon. You are \
 dry, witty and a little sarcastic, but helpful. Replies are spoken aloud: one short sentence, \
 no emoji, no markdown.
 
@@ -44,9 +44,10 @@ Turn the user's request into tool calls, in order. Rules:
 "where I'm pointing".
 - "What's written here", "solve this", "what do you see" with no named target is look.
 - "Where did I leave X" / "have you seen X" is recall; fly_there only if they ask you to go.
-- The drone flies indoors between 0.3 and 1.5 m high, inside a 6 x 6 m box, at most 3 m per \
-move. If a request is dangerous, silly or impossible (crash, flip, fly 10 m up, chase \
-people, leave the room), make NO tool call and refuse with attitude.
+- The drone flies outdoors. There is no height ceiling, flying area or distance limit: do \
+what is asked. Its safety system on board still checks every move. If a request is \
+dangerous to people or the drone (crash into something, flip, chase people), make NO tool \
+call and refuse with attitude.
 - If the drone is landed and they ask for a move or mission, call takeoff first (1.0 m).
 - Chit-chat: no tool call, just answer.
 Current drone state: {state}"""
@@ -60,7 +61,7 @@ def _tool(name: str, desc: str, props: dict, required: list[str] | None = None) 
 
 _num = {"type": "number"}
 TOOLS = [
-    _tool("takeoff", "Arm and climb to a height.", {"alt": {**_num, "description": "metres, 0.5-1.5"}}),
+    _tool("takeoff", "Arm and climb to a height.", {"alt": {**_num, "description": "metres, at least 0.5"}}),
     _tool("land", "Land where it is and disarm.", {}),
     _tool("stop", "Stop whatever is running and hover.", {}),
     _tool("home", "Fly back to the takeoff point.", {}),
@@ -229,8 +230,8 @@ def is_urgent(text: str) -> bool:
 # --- fast path ---------------------------------------------------------------------------------
 # Plain flying commands skip the LLM (~0.5 s). Strict on purpose: the WHOLE utterance must be a
 # chain of known clauses ("take off to 1 metre", "forward 1.5 m", "turn left 90 degrees",
-# "come back", "land") with explicit distances, inside the limits the LLM is told about.
-# Anything else (a bare "go left", "a bit", an object, a question, too far) returns None and
+# "come back", "land") with explicit distances.
+# Anything else (a bare "go left", "a bit", an object, a question) returns None and
 # goes to the LLM, which can ask, refuse or plan. The edge safety gate still checks everything.
 _FWORDS = {"half": 0.5, "half a": 0.5, "a": 1, "an": 1, "one": 1, "two": 2, "three": 3,
            "four": 4, "five": 5, "fifteen": 15, "twenty": 20, "thirty": 30, "forty five": 45,
@@ -250,7 +251,6 @@ _F_AROUND = re.compile(r"(?:turn|spin) around")
 _F_HOME = re.compile(r"come back|come home|go home|fly home|return home|go back home")
 _F_LAND = re.compile(r"land(?: now)?")
 _F_SPLIT = re.compile(r" (?:and then|then|and|after that) ")
-MAX_FAST_MOVE_M = 3.0
 
 
 def _fnum(s: str | None, default: float) -> float:
@@ -280,7 +280,7 @@ def fast_parse(text: str, telemetry: dict | None = None) -> BrainResult | None:
         mv = {"kind": "move", "fwd": 0.0, "right": 0.0, "up": 0.0, "yaw_deg": 0.0}
         if m := _F_TAKEOFF.fullmatch(c):
             alt = _fdist(m.group(1), m.group(2)) if m.group(1) else 1.0
-            if not 0.3 <= alt <= 1.5:
+            if alt < 0.3:
                 return None
             actions.append({"kind": "takeoff", "alt": alt})
             continue
@@ -305,7 +305,7 @@ def fast_parse(text: str, telemetry: dict | None = None) -> BrainResult | None:
                 word, d = m.group(3), _fdist(m.group(1), m.group(2))
             else:
                 return None  # not a clause we know: let the LLM have the whole thing
-            if not 0 < d <= MAX_FAST_MOVE_M:
+            if d <= 0:
                 return None
             key, sign = {"forward": ("fwd", 1), "forwards": ("fwd", 1), "ahead": ("fwd", 1),
                          "back": ("fwd", -1), "backward": ("fwd", -1),

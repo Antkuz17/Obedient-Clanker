@@ -57,7 +57,8 @@ class Station:
             from .localize import locate
         self.planner = Planner(self.edge, self.camera, locate=locate,
                                ai=self.ai if s.vultr_key else None, memory=self.memory_search,
-                               say=self.say, on_photo=self.on_photo)
+                               say=self.say, on_photo=self.on_photo,
+                               on_approved=self._on_approved)
         self.brain = Brain(self.ai if s.vultr_key else None)
         self.ws = None
         self._req = itertools.count(1)
@@ -69,6 +70,7 @@ class Station:
         self._cloud_landed = False  # one landing per outage
         self._edge_ready = asyncio.Event()
         self.qnx_port = qnx_port
+        self.qnx_allowed = {"127.0.0.1", "::1"}  # + EDGE_HOST, resolved in qnx_listen
 
     # --- cloud link --------------------------------------------------------------------------
     async def _send_cloud(self, msg: dict) -> bool:
@@ -178,6 +180,11 @@ class Station:
             self._edge_ready.set()
             log.info("edge connected at %s:%d", self.s.edge_host, self.s.edge_port)
 
+    def _on_approved(self, op: str) -> None:
+        """The QNX safety gate accepted a step: the dashboard shows "Approved" (it only ever got
+        rejections before)."""
+        asyncio.ensure_future(self._send_cloud({"type": "event", "kind": "safety_ok", "detail": op}))
+
     def _on_edge_event(self, ev: dict) -> None:
         asyncio.ensure_future(self._send_cloud(ev))
 
@@ -188,17 +195,20 @@ class Station:
         if self.qnx_port is None:
             return
         station = self
+        loop = asyncio.get_running_loop()
+        # it listens on every interface (the Pi sends from the LAN), so only the Pi and this
+        # machine may feed the dashboard: anyone else on the venue Wi-Fi is ignored
+        try:
+            for *_, sa in await loop.getaddrinfo(self.s.edge_host, None):
+                self.qnx_allowed.add(sa[0])
+        except OSError as e:
+            log.warning("can't resolve EDGE_HOST %s (%s); QNX stats from localhost only",
+                        self.s.edge_host, e)
 
         class _Rx(asyncio.DatagramProtocol):
             def datagram_received(self, data, addr):
-                try:
-                    m = json.loads(data)
-                except ValueError:
-                    return
-                if isinstance(m, dict):
-                    station.on_qnx(m, addr[0])
+                station.on_qnx_datagram(data, addr[0])
 
-        loop = asyncio.get_running_loop()
         try:
             await loop.create_datagram_endpoint(_Rx, local_addr=("0.0.0.0", self.qnx_port))
         except OSError as e:
@@ -206,6 +216,16 @@ class Station:
                         self.qnx_port, e)
             return
         log.info("QNX stats on udp :%d", self.qnx_port)
+
+    def on_qnx_datagram(self, data: bytes, host: str) -> None:
+        if host not in self.qnx_allowed:
+            return
+        try:
+            m = json.loads(data)
+        except ValueError:
+            return
+        if isinstance(m, dict):
+            self.on_qnx(m, host)
 
     def on_qnx(self, m: dict, host: str = "") -> None:
         m = {**m, "src": m.get("src") or "supervisor", "host": host}
@@ -234,7 +254,9 @@ class Station:
                     b64 = base64.b64encode(fr.jpeg).decode()
                     await self._send_cloud({"type": "frame", "jpeg": b64, "pose": fr.pose.as_dict()})
                     now = time.monotonic()
-                    if fr.pose.age <= 0.5 and self._memory_due(fr, now):  # stale pose: bad memory
+                    # stale pose: bad memory. On the ground the view never changes, and every
+                    # memory frame is a paid caption + embedding call: flying only
+                    if fr.pose.age <= 0.5 and self._airborne() and self._memory_due(fr, now):
                         await self._send_cloud({"type": "memory_frame", "jpeg": b64,
                                                 "pose": fr.pose.as_dict()})
             await asyncio.sleep(max(0.0, frame_every - (time.monotonic() - started)))

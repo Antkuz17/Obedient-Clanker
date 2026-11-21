@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import collections
 import contextlib
 import hmac
 import itertools
@@ -56,6 +57,17 @@ def is_local(conn: HTTPConnection) -> bool:
     if "x-forwarded-for" in conn.headers or "forwarded" in conn.headers:
         return False
     return conn.client is not None and conn.client.host in LOCAL_HOSTS
+
+
+def client_host(conn: HTTPConnection) -> str:
+    """The caller's IP. Behind Caddy, uvicorn --proxy-headers already puts the real IP here."""
+    return conn.client.host if conn.client else "?"
+
+
+PIN_FREE_TRIES = 5       # wrong PINs from one address before it is locked out
+PIN_LOCK_S = 30.0        # first lockout; doubles with every further wrong PIN (max 32 min)
+VIEWER_QUEUE_MAX = 500   # queued messages (not frames/telemetry) before a viewer is dropped
+SEARCH_PER_MIN = 10      # memory searches per address per minute (each is a paid API call)
 QNX_LOOP_KEEP = 120      # 1 Hz edge loop stats: two minutes of graph
 QNX_EVENTS_KEEP = 50     # supervisor events
 QNX_STOPS_KEEP = 20      # person / palm stop latencies
@@ -96,12 +108,66 @@ class QnxState:
                 "stops": self.stops}
 
 
+class Viewer:
+    """One dashboard connection with its own sender task, so a phone on bad Wi-Fi only delays
+    itself, never the station relay or the other viewers. Video frames and telemetry are
+    latest-wins (a slow phone skips stale ones); everything else is queued in order, and a
+    viewer that falls VIEWER_QUEUE_MAX messages behind is dropped (its page reconnects)."""
+    LATEST = ("frame", "telemetry")
+
+    def __init__(self, ws: WebSocket):
+        self.ws = ws
+        self.q: collections.deque[dict] = collections.deque()
+        self.latest: dict[str, dict] = {}
+        self.closed = False
+        self._wake = asyncio.Event()
+        self._task = asyncio.create_task(self._run())
+
+    def put(self, msg: dict) -> bool:
+        if self.closed:
+            return False
+        if msg.get("type") in self.LATEST:
+            self.latest[msg["type"]] = msg
+        elif len(self.q) >= VIEWER_QUEUE_MAX:
+            log.warning("viewer too slow (%d queued); dropping it", len(self.q))
+            self.close()
+            return False
+        else:
+            self.q.append(msg)
+        self._wake.set()
+        return True
+
+    async def _run(self) -> None:
+        try:
+            while True:
+                await self._wake.wait()
+                self._wake.clear()
+                while self.q or self.latest:
+                    m = self.q.popleft() if self.q else self.latest.pop(next(iter(self.latest)))
+                    await self.ws.send_json(m)
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            self.close()
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        self._task.cancel()
+        asyncio.ensure_future(self._close_ws())
+
+    async def _close_ws(self) -> None:
+        with contextlib.suppress(Exception):
+            await self.ws.close()
+
+
 class Hub:
     def __init__(self, s: Settings, ai: AI, memory: Memory):
         self.s, self.ai, self.memory = s, ai, memory
         self.brain = Brain(ai if s.vultr_key else None)
         self.station: WebSocket | None = None
-        self.uis: dict[str, WebSocket] = {}
+        self.uis: dict[str, Viewer] = {}
         self.telemetry: dict = {}
         self.last_frame: dict | None = None
         self.flight_log: list[dict] = []
@@ -109,18 +175,42 @@ class Hub:
         self.holder: str | None = None
         self.holder_t = 0.0
         self._req = itertools.count(1)
+        self._viewer_n = itertools.count(1)
         self._bg: set[asyncio.Task] = set()
+        self._pin_fails: dict[str, tuple[int, float]] = {}  # host -> (wrong PINs, locked until)
+        self._search_t: dict[str, collections.deque[float]] = {}  # host -> recent search times
+
+    def search_allowed(self, conn: HTTPConnection) -> bool:
+        """Memory search is open to every viewer, but each one is a paid embedding + rerank
+        call: at most SEARCH_PER_MIN per address per minute."""
+        host, now = client_host(conn), time.monotonic()
+        if len(self._search_t) > 10_000:
+            self._search_t.clear()
+        q = self._search_t.setdefault(host, collections.deque())
+        while q and now - q[0] > 60.0:
+            q.popleft()
+        if len(q) >= SEARCH_PER_MIN:
+            return False
+        q.append(now)
+        return True
 
     # --- fan-out -----------------------------------------------------------------------------
     async def to_uis(self, msg: dict) -> None:
-        dead = []
-        for cid, ws in list(self.uis.items()):
-            try:
-                await ws.send_json(msg)
-            except Exception:
-                dead.append(cid)
-        for cid in dead:
-            self.uis.pop(cid, None)
+        for cid, v in list(self.uis.items()):
+            if not v.put(msg) and self.uis.get(cid) is v:
+                self.uis.pop(cid, None)
+
+    def to_ui(self, cid: str, msg: dict) -> None:
+        if (v := self.uis.get(cid)) is not None:
+            v.put(msg)
+
+    def viewer_id(self, client: str) -> str:
+        """The page's own id (kept in localStorage), made unique: a second tab of the same
+        browser used to replace the first one, which then froze on stale telemetry."""
+        base = "".join(ch for ch in client if ch.isalnum() or ch in "-_.")[:40]
+        if base and base not in self.uis:
+            return base
+        return f"{base or 'viewer'}-{next(self._viewer_n)}"
 
     async def to_station(self, msg: dict) -> bool:
         if not self.station:
@@ -153,11 +243,8 @@ class Hub:
         return False
 
     async def announce_control(self) -> None:
-        for cid, ws in list(self.uis.items()):
-            try:
-                await ws.send_json({"type": "control", "holder": self.holder, "you": cid})
-            except Exception:
-                pass
+        for cid, v in list(self.uis.items()):
+            v.put({"type": "control", "holder": self.holder, "you": cid})
 
     # --- speech ------------------------------------------------------------------------------
     async def speak(self, text: str) -> None:
@@ -173,23 +260,46 @@ class Hub:
     def pin_ok(self, pin, conn: HTTPConnection) -> bool:
         """The pilot PIN gates everything that can move the drone (review3 #4): the viewer
         name is whatever the browser says, so it can't be the lock. No PIN configured: only
-        this machine (dev, `station.dev`) may fly."""
-        if self.s.control_pin:
-            return hmac.compare_digest(str(pin or ""), self.s.control_pin)
-        return is_local(conn)
+        this machine (dev, `station.dev`) may fly.
+
+        Brute force: after PIN_FREE_TRIES wrong PINs an address is locked out for PIN_LOCK_S,
+        doubling with each further wrong PIN. An empty PIN (a viewer pressing STOP) never
+        counts as a try."""
+        if not self.s.control_pin:
+            return is_local(conn)
+        pin = str(pin or "")
+        if not pin:
+            return False
+        host, now = client_host(conn), time.monotonic()
+        fails, until = self._pin_fails.get(host, (0, 0.0))
+        if until > now:
+            return False  # locked out: not even a right PIN gets in until it expires
+        if hmac.compare_digest(pin.encode(), self.s.control_pin.encode()):
+            self._pin_fails.pop(host, None)
+            return True
+        fails += 1
+        if fails >= PIN_FREE_TRIES:
+            until = now + PIN_LOCK_S * 2 ** min(6, fails - PIN_FREE_TRIES)
+            log.warning("pilot PIN: %d wrong tries from %s; locked for %.0f s", fails, host,
+                        until - now)
+        if len(self._pin_fails) > 10_000:  # don't grow without bound under a spray of IPs
+            self._pin_fails = {h: v for h, v in self._pin_fails.items() if v[1] > now}
+        self._pin_fails[host] = (fails, until)
+        return False
+
+    NEED_PIN = "You need the pilot PIN to fly me. Anyone can hit stop."
 
     async def command(self, text: str, cid: str, authorized: bool = True) -> dict:
         """A typed or transcribed command from a viewer (or the laptop mic)."""
         text = text.strip()
         if not text:
             return {"ok": False, "reply": "I didn't catch that."}
+        if not authorized:
+            # answered to the caller only: no broadcast, no TTS, so strangers can't spam the
+            # feed and the speakers or spend ElevenLabs credits
+            return {"ok": False, "reply": self.NEED_PIN, "need_pin": True}
         await self.to_uis({"type": "heard", "text": text, "who": cid})
         await self.log_line(cid, text)
-        if not authorized:
-            reply = "You need the pilot PIN to fly me. Anyone can hit stop."
-            await self.log_line("cloud", f"{cid}: no pilot PIN, command not sent")
-            self.spawn(self.speak(reply))
-            return {"ok": False, "reply": reply, "need_pin": True}
         if not self.may_command(cid):
             reply = "Someone else has the controls right now. You can still hit stop."
             await self.speak(reply)
@@ -213,7 +323,8 @@ class Hub:
         if op not in ("stop", "land"):
             return
         if op == "land" and not authorized:
-            await self.log_line("cloud", f"{cid}: LAND needs the pilot PIN (STOP doesn't)")
+            self.to_ui(cid, {"type": "log", "t": time.time(), "who": "cloud",
+                             "text": "LAND needs the pilot PIN (STOP doesn't)"})
             return
         await self.log_line(cid, f"[{op.upper()} button]")
         if not await self.to_station({"type": "actions", "actions": [{"kind": op}],
@@ -249,9 +360,12 @@ class Hub:
                                     + (f", serving again {ready} ms" if ready is not None else ""))
             elif m.get("kind") == "stop_latency" and "ms" in m:
                 await self.log_line("qnx", f"{m.get('what')} stop: {m['ms']} ms frame to stop")
-        elif t == "memory_search":
-            hits = await self._search(m.get("q", ""))
-            await self.to_station({"type": "memory_result", "req": m.get("req"), "hits": hits})
+        elif t == "memory_search":  # embedding + rerank calls: off the relay loop
+            self.spawn(self._memory_result(m))
+
+    async def _memory_result(self, m: dict) -> None:
+        hits = await self._search(m.get("q", ""))
+        await self.to_station({"type": "memory_result", "req": m.get("req"), "hits": hits})
 
     async def _photo(self, m: dict) -> None:
         jpeg = base64.b64decode(m["jpeg"])
@@ -391,7 +505,9 @@ def create_app(s: Settings | None = None, ai: AI | None = None) -> FastAPI:
         return {"deleted": hub.memory.clear()}
 
     @app.post("/memory/search")
-    async def memory_search(body: dict):
+    async def memory_search(request: Request, body: dict):
+        if not hub.search_allowed(request):
+            raise HTTPException(429, "too many searches; try again in a minute")
         return await hub._search(str(body.get("q", "")))
 
     @app.get("/memory/recent")
@@ -442,8 +558,8 @@ def create_app(s: Settings | None = None, ai: AI | None = None) -> FastAPI:
     @app.websocket("/ws/ui")
     async def ws_ui(ws: WebSocket, client: str = ""):
         await ws.accept()
-        cid = client or f"viewer{len(hub.uis) + 1}"
-        hub.uis[cid] = ws
+        cid = hub.viewer_id(client)
+        # the greeting goes out before the viewer's sender task exists: never two writers
         await ws.send_json({"type": "hello", "you": cid, "station": hub.station is not None,
                             "holder": hub.holder, "log": hub.flight_log[-50:],
                             "pin_required": bool(s.control_pin),
@@ -451,18 +567,26 @@ def create_app(s: Settings | None = None, ai: AI | None = None) -> FastAPI:
         if hub.last_frame:
             await ws.send_json(hub.last_frame)
         await ws.send_json(hub.qnx.snapshot())
+        v = hub.uis[cid] = Viewer(ws)
         try:
             while True:
                 m = await ws.receive_json()
-                ok = hub.pin_ok(m.get("pin"), ws)
-                if m.get("type") == "text":
-                    hub.spawn(hub.command(str(m.get("text", "")), cid, authorized=ok))
-                elif m.get("type") == "op":
-                    await hub.op(str(m.get("op")), cid, authorized=ok)
-        except (WebSocketDisconnect, RuntimeError):
+                kind = m.get("type")
+                if kind == "text":
+                    if hub.pin_ok(m.get("pin"), ws):
+                        hub.spawn(hub.command(str(m.get("text", "")), cid))
+                    else:
+                        hub.to_ui(cid, {"type": "log", "t": time.time(), "who": "cloud",
+                                        "text": "no pilot PIN, command not sent"})
+                elif kind == "op":
+                    op = str(m.get("op"))
+                    ok = op == "stop" or hub.pin_ok(m.get("pin"), ws)  # STOP: no PIN check
+                    await hub.op(op, cid, authorized=ok)
+        except (WebSocketDisconnect, RuntimeError, ValueError):
             pass
         finally:
-            if hub.uis.get(cid) is ws:
+            v.close()
+            if hub.uis.get(cid) is v:
                 hub.uis.pop(cid, None)
 
     return app

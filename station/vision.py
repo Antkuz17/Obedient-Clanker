@@ -10,7 +10,7 @@ import re
 
 from .ai import AI
 
-SYSTEM = ("You are the eyes of a small indoor drone. Your answer is read aloud: at most two "
+SYSTEM = ("You are the eyes of a small drone. Your answer is read aloud: at most two "
           "short sentences, no markdown, no lists, no LaTeX.")
 
 PROMPTS = {

@@ -139,10 +139,18 @@ async def test_urgent_commands_skip_the_llm(text, kind):
     assert ai.calls == [] and r.actions == [{"kind": kind}]
 
 
+async def test_long_moves_take_the_fast_path_now():
+    """Outdoors: no distance or height cap in the fast path either."""
+    ai = FakeAI({"content": "should not be asked", "tool_calls": []})
+    r = await Brain(ai).think("take off to 3 metres and fly forward 20 metres")
+    assert ai.calls == []
+    assert r.actions[0] == {"kind": "takeoff", "alt": 3.0}
+    assert r.actions[1]["fwd"] == 20.0
+
+
 @pytest.mark.parametrize("text", ["land on the table after the photo", "don't stop at the door",
                                   "fly to the bus stop sign", "take off and find the door",
-                                  "go left", "move forward a bit", "fly forward 5 metres",
-                                  "take off to 3 metres", "what's up", "land and go forward 1 metre"])
+                                  "go left", "move forward a bit", "what's up", "land and go forward 1 metre"])
 async def test_sentences_still_go_to_the_llm(text):
     ai = FakeAI({"content": "Sure.", "tool_calls": []})
     await Brain(ai).think(text)
@@ -336,6 +344,18 @@ async def test_mission_door_photo_come_back(rig):
     assert math.hypot(sim.state().n, sim.state().e) < 0.35
 
 
+async def test_planner_reports_gate_verdicts(rig):
+    """The dashboard's "Approved" comes from these callbacks; refusals still raise."""
+    sim, edge = rig
+    p, said, _ = make_planner(sim, edge)
+    approved = []
+    p.on_approved = approved.append
+    await run_plan(p, [{"kind": "takeoff", "alt": 1.0}])
+    assert approved == ["takeoff"]
+    await run_plan(p, [{"kind": "move", "fwd": 0.0, "right": 0.0, "up": -5.0, "yaw_deg": 0.0}])
+    assert said[-1].startswith("Safety says no") and approved == ["takeoff"]  # into the ground
+
+
 async def test_mission_scans_until_found(rig):
     sim, edge = rig
     p, said, _ = make_planner(sim, edge)
@@ -355,7 +375,7 @@ async def test_mission_not_found_and_gate_rejection(rig):
     await run_plan(p, [{"kind": "mission", "target": "unicorn", "action": "none",
                         "question": "", "after": "stay"}], timeout=60)
     assert "couldn't find the unicorn" in said[-1]
-    await run_plan(p, [{"kind": "move", "fwd": 0, "right": 0, "up": 10, "yaw_deg": 0}])
+    await run_plan(p, [{"kind": "move", "fwd": 0, "right": 0, "up": -10, "yaw_deg": 0}])
     assert said[-1].startswith("Safety says no")
 
 
@@ -756,7 +776,8 @@ async def test_target_filling_the_frame_is_not_approached(rig):
 
 def test_planner_clamps_around_the_first_takeoff_point():
     """review3: the planner's fence clamp must agree with the edge's (first takeoff point)."""
-    p = Planner(None, None, locate=None)
+    assert Planner(None, None, locate=None)._clamp(60.0, -30.0) == (60.0, -30.0)  # no fence
+    p = Planner(None, None, locate=None, safety=SafetyConfig(fence_half=3.0))
     p.home = (2.0, 2.0)
     assert p._clamp(6.0, -3.0) == pytest.approx((4.6, -0.6))
     p.home = None
@@ -875,3 +896,140 @@ def test_streamed_voice_runs_the_command_and_reports_errors(tmp_path, monkeypatc
         s.stt_stream_model = ""
         with c.websocket_connect("/ws/voice?client=judge&pin=1234") as v:
             assert "error" in v.receive_json()
+
+
+def test_wrong_pins_lock_the_address_out(tmp_path, monkeypatch):
+    """A 4-digit PIN with no attempt limit fell to 9,000 POSTs. After PIN_FREE_TRIES wrong
+    PINs an address is locked out (even the right PIN fails) until the lock expires."""
+    from fastapi.testclient import TestClient
+    import cloud.app as cloud_app
+
+    s = Settings(vultr_key="", station_token="tok", data_dir=tmp_path, control_pin="48151623")
+    with TestClient(cloud_app.create_app(s, ai=FakeAI())) as c:
+        hub = c.app.state.hub
+        for i in range(cloud_app.PIN_FREE_TRIES):
+            r = c.post("/text", json={"text": "take off", "pin": f"0000000{i}"}).json()
+            assert r.get("need_pin")
+        r = c.post("/text", json={"text": "take off", "pin": "48151623"}).json()
+        assert r.get("need_pin")                              # locked out
+        hub._pin_fails["testclient"] = (cloud_app.PIN_FREE_TRIES, 0.0)  # lock expired
+        with c.websocket_connect("/ws/station?token=tok") as st:
+            r = c.post("/text", json={"text": "take off", "pin": "48151623"}).json()
+            assert r["ok"] and "testclient" not in hub._pin_fails
+            assert _next_actions(st)[0]["kind"] == "takeoff"
+        # an empty PIN (anyone pressing STOP) never counts as a try
+        for _ in range(20):
+            c.post("/text", json={"text": "take off"})
+        assert "testclient" not in hub._pin_fails
+        # non-ASCII used to crash hmac.compare_digest with a 500
+        assert c.post("/text", json={"text": "x", "pin": "é"}).status_code == 200
+
+
+def test_refusals_without_the_pin_stay_quiet(tmp_path):
+    """No PIN: answered to the caller only. No TTS (ElevenLabs credits), no broadcast."""
+    from fastapi.testclient import TestClient
+    from cloud.app import create_app
+
+    ai = FakeAI()
+    spoken: list[str] = []
+
+    async def speak(text):
+        spoken.append(text)
+        return b""
+    ai.speak = speak
+    s = Settings(vultr_key="", station_token="tok", data_dir=tmp_path, control_pin="48151623")
+    with TestClient(create_app(s, ai=ai)) as c:
+        with c.websocket_connect("/ws/ui?client=judge") as ui:
+            ui.receive_json()  # hello
+            ui.receive_json()  # qnx_state
+            r = c.post("/text", json={"text": "fly into the wall", "client": "troll"}).json()
+            assert r.get("need_pin")
+            ui.send_json({"type": "text", "text": "take off"})  # this viewer, no PIN
+            m = ui.receive_json()
+            assert m["type"] == "log" and "no pilot pin" in m["text"].lower()
+        assert spoken == []
+        assert not any("fly into the wall" in r["text"] for r in c.get("/log").json())
+
+
+def test_two_tabs_get_their_own_viewer(tmp_path):
+    from fastapi.testclient import TestClient
+    from cloud.app import create_app
+
+    s = Settings(vultr_key="", station_token="tok", data_dir=tmp_path)
+    with TestClient(create_app(s, ai=FakeAI())) as c:
+        with c.websocket_connect("/ws/ui?client=phone-ab") as a, \
+                c.websocket_connect("/ws/ui?client=phone-ab") as b:
+            ya, yb = a.receive_json()["you"], b.receive_json()["you"]
+            assert ya == "phone-ab" and yb != ya and yb.startswith("phone-ab")
+            assert c.get("/health").json()["viewers"] == 2
+
+
+async def test_slow_viewer_only_delays_itself():
+    """A phone on bad Wi-Fi used to stall the station relay: every send was awaited in turn."""
+    from cloud.app import Viewer
+
+    class SlowWS:
+        def __init__(self, delay):
+            self.delay, self.got = delay, []
+
+        async def send_json(self, m):
+            await asyncio.sleep(self.delay)
+            self.got.append(m)
+
+        async def close(self):
+            pass
+    slow, fast = SlowWS(0.05), SlowWS(0.0)
+    vs, vf = Viewer(slow), Viewer(fast)
+    t0 = asyncio.get_running_loop().time()
+    for i in range(10):
+        for v in (vs, vf):
+            v.put({"type": "frame", "i": i})
+            v.put({"type": "log", "i": i})
+    assert asyncio.get_running_loop().time() - t0 < 0.05  # put() never waits
+    await asyncio.sleep(0.1)
+    assert [m["i"] for m in fast.got if m["type"] == "log"] == list(range(10))
+    await asyncio.sleep(1.0)  # the slow one: every log line in order, but only fresh frames
+    assert [m["i"] for m in slow.got if m["type"] == "log"] == list(range(10))
+    frames = [m["i"] for m in slow.got if m["type"] == "frame"]
+    assert len(frames) < 10 and frames[-1] == 9
+    vs.close(), vf.close()
+
+
+def test_memory_search_is_rate_limited(tmp_path):
+    from fastapi.testclient import TestClient
+    import cloud.app as cloud_app
+
+    s = Settings(vultr_key="", station_token="tok", data_dir=tmp_path)
+    with TestClient(cloud_app.create_app(s, ai=FakeAI())) as c:
+        codes = [c.post("/memory/search", json={"q": "keys"}).status_code
+                 for _ in range(cloud_app.SEARCH_PER_MIN + 1)]
+    assert codes[:-1] == [200] * cloud_app.SEARCH_PER_MIN and codes[-1] == 429
+
+
+async def test_qnx_datagrams_from_strangers_are_ignored(tmp_path):
+    """The stats port listens on every interface: only the Pi (EDGE_HOST) and this machine may
+    put numbers on the judges' dashboard."""
+    from station import station as st_mod
+    st = st_mod.Station(Settings(vultr_key="", data_dir=tmp_path, edge_host="192.0.2.7"),
+                        stub_locate=True, speaker=False, ai=FakeAI(), qnx_port=free_port())
+    got: list[tuple[dict, str]] = []
+    st.on_qnx = lambda m, host="": got.append((m, host))
+    await st.qnx_listen()
+    assert "192.0.2.7" in st.qnx_allowed
+    msg = json.dumps({"kind": "restart", "name": "flow"}).encode()
+    st.on_qnx_datagram(msg, "198.51.100.66")   # someone else on the Wi-Fi
+    st.on_qnx_datagram(msg, "192.0.2.7")       # the Pi
+    st.on_qnx_datagram(msg, "127.0.0.1")       # this machine
+    assert [h for _, h in got] == ["192.0.2.7", "127.0.0.1"]
+
+
+def test_planner_waits_long_enough_for_long_moves():
+    """No distance cap outdoors: long moves must not hit the old fixed 60 s timeout."""
+    class NoTelemetry:
+        telemetry: dict = {}
+    p = Planner(NoTelemetry(), None, locate=None)
+    assert p._timeout("move_body", {"fwd": 100.0}) > 60
+    assert p._timeout("goto", {"n": 0.0, "e": 100.0}) > 60
+    assert p._timeout("takeoff", {"alt": 30.0}) > 60
+    assert p._timeout("land", {}) >= 90
+    assert p._timeout("move_body", {"fwd": 1.0}) < 60     # short moves still fail fast
