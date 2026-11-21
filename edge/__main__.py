@@ -40,13 +40,18 @@ async def main(a) -> None:
         from .mav import MavVehicle
         vehicle = MavVehicle(a.mav, baud=a.baud, speed_xy=cfg.speed_xy)
 
-    srv = EdgeServer(vehicle, cfg, port=a.port, log_path=Path(a.log) if a.log else None)
+    srv = EdgeServer(vehicle, cfg, port=a.port, perception_port=a.perception_port,
+                     flow_port=a.flow_port, log_path=Path(a.log) if a.log else None)
     await srv.start()
 
     if not a.no_video:
-        from .video import SimCamera, UsbCamera, serve_video
-        cam = SimCamera(vehicle.state) if a.sim and a.camera is None else \
-            UsbCamera(vehicle.state, a.camera or 0)
+        from .video import ShmCamera, SimCamera, UsbCamera, serve_video
+        if a.camera is None:
+            cam = SimCamera(vehicle.state) if a.sim else ShmCamera(vehicle.state)
+        elif a.camera.startswith("shm:"):
+            cam = ShmCamera(vehicle.state, a.camera[4:])
+        else:
+            cam = UsbCamera(vehicle.state, int(a.camera))
         serve_video(cam, port=a.video_port)
         logging.info("video on http://0.0.0.0:%d/forward.mjpg", a.video_port)
     await asyncio.Event().wait()
@@ -64,7 +69,11 @@ if __name__ == "__main__":
     ap.add_argument("--baud", type=int, default=115200)
     ap.add_argument("--port", type=int, default=P.EDGE_PORT)
     ap.add_argument("--video-port", type=int, default=P.VIDEO_PORT)
-    ap.add_argument("--camera", type=int, default=None, help="USB camera index (real video)")
+    ap.add_argument("--perception-port", type=int, default=7001, help="UDP from vision proc")
+    ap.add_argument("--flow-port", type=int, default=7002, help="UDP from flow proc")
+    ap.add_argument("--camera", default=None,
+                    help="forward video: shm:NAME (camgrab; default on --mav) or a cv2 index "
+                         "(laptops). Default with --sim: the fake room")
     ap.add_argument("--no-video", action="store_true")
     ap.add_argument("--speedup", type=float, default=1.0, help="sim only")
     ap.add_argument("--log", default="flight_log.jsonl", help="JSONL flight log ('' = off)")

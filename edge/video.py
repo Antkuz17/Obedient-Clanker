@@ -80,8 +80,26 @@ class SimCamera:
         return jpg.tobytes(), s, t
 
 
+class ShmCamera:
+    """Frames from camgrab's shared memory (the only way to get camera frames on QNX)."""
+
+    def __init__(self, get_state: Callable[[], VehicleState], name: str = "camgrab_fwd"):
+        from .camera import ShmFrameReader
+        self.get_state = get_state
+        self.r = ShmFrameReader(name)
+        self.K = intrinsics(self.r.width, self.r.height)
+
+    def capture(self) -> tuple[bytes, VehicleState, float]:
+        f = self.r.read()
+        s = self.get_state()
+        if f is None:
+            return b"", s, time.time()
+        ok, jpg = cv2.imencode(".jpg", f.bgr(), [cv2.IMWRITE_JPEG_QUALITY, 80])
+        return jpg.tobytes(), s, f.t
+
+
 class UsbCamera:
-    """cv2.VideoCapture camera. On QNX this may need the Sensor Framework instead (unit 5)."""
+    """cv2.VideoCapture camera, for laptops only. On QNX use ShmCamera + camgrab."""
 
     def __init__(self, get_state: Callable[[], VehicleState], index: int = 0):
         self.get_state = get_state
