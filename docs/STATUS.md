@@ -2,6 +2,26 @@
 
 Last updated: 2026-11-21. Update this at the end of every session.
 
+## Done: station + cloud (Person A, 2026-11-21; includes B's old localization / VLM / memory)
+
+All written as if the keys exist; **no key has been used yet** (see TODO "CRITICAL"). Verified with
+mocked HTTP (`tests/test_station.py`, 27 tests) and a live no-key smoke run: sim edge + cloud +
+station, typed "fly to the door and take a photo, then come back" → rule brain → planner flew
+to 1 m short of the door, took the photo, came home.
+
+| Piece | Files | Verified how |
+|---|---|---|
+| AI client: Vultr chat/tools, vision, embeddings, STT (ffmpeg → 16 kHz wav); ElevenLabs → Vultr TTS → text | `station/ai.py`, `station/config.py` | mocked HTTP; **never called with a real key** |
+| Brain: Jarvis prompt, 8 tools, refusals, rule fallback with no key / LLM down | `station/brain.py` | unit tests (LLM mocked) |
+| Planner: actions → gated primitives, scan until found, approach 1 m short, 3 m legs, fence clamp, tasks, recall, stop pre-empts | `station/planner.py` | e2e vs the sim edge |
+| `locate()`: VLM box → bearing/range → NED; sim ground-truth stub | `station/localize.py`, `station/localize_stub.py` | geometry recovers sim object positions to 0.15 m; **VLM box quality untested** |
+| Vision tasks read / solve / describe / caption | `station/vision.py` | mocked |
+| Visual memory: SQLite + numpy cosine + keyword + recency | `cloud/memory.py` | unit test with a fake embedder |
+| Cloud: `/voice`, `/text`, `/ws/station` (token), `/ws/ui`, control holder, STOP/LAND for all, memory API, flight log | `cloud/app.py` | TestClient test + smoke run |
+| Phone dashboard | `cloud/static/index.html` | served in the smoke run; **not opened on a phone yet** |
+| Station: edge link, WSS uplink (telemetry 5 Hz, frames 4 fps, memory frames on movement), audio out, `--local` REPL / mic | `station/station.py`, `station/audio.py`, `station/__main__.py` | smoke run (cloud mode) |
+| Deploy guide (VM, systemd, Caddy HTTPS) | `cloud/deploy.md`, `.env.example` | not deployed yet |
+
 ## Done (Person A)
 
 | Piece | Files | Verified how |

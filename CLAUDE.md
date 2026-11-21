@@ -9,13 +9,15 @@ flight details: `docs/hardware.md`, `docs/flight-setup.md`, `docs/qnx.md`.
 
 ## Who does what
 
-- **Person A: Flight + Voice** (the repo user working with Claude): `edge/` core, `tools/`,
-  QNX real-time, voice, LLM, planner, Vultr deployment and dashboard.
-- **Person B: Perception + Memory** (teammate): `edge/flow/`, `edge/vision/`, target
-  localization, VLM tasks, visual memory.
+- **Person A** (the repo user working with Claude): `edge/` core, `tools/`, QNX real-time, and
+  **all off-drone software**: `station/` (brain, planner, localization, vision tasks, voice) and
+  `cloud/` (Vultr app, dashboard, visual memory). Took over B's localization, VLM and memory
+  work on 2026-11-21.
+- **Person B** (teammate): on-drone perception tied to the hardware: `edge/flow/` (optical
+  flow), `edge/vision/` (TFLite person + palm on QNX), cameras, sensors, wiring.
 
 By default, build Person A's items. Don't write B's modules beyond the stubs and interfaces in
-PRD section 5.
+PRD section 5. Keys (Vultr, ElevenLabs) are in `.env`, never in git; see `.env.example`.
 
 ## Commands
 
@@ -30,6 +32,13 @@ docker build -t hope-sitl tools/sitl && docker run --rm -d --name hope-sitl -p 5
 .venv/bin/python -m edge --mav tcp:127.0.0.1:5760 --sitl   # or fly it by hand with tools.cmd
 ```
 Restart the SITL container (`docker restart hope-sitl`) between runs.
+
+```sh
+.venv/bin/python -m edge --sim --port 7100 --video-port 8180
+.venv/bin/uvicorn cloud.app:app --port 8100            # dashboard on http://127.0.0.1:8100
+.venv/bin/python -m station --edge 127.0.0.1:7100 --video-port 8180 --cloud ws://127.0.0.1:8100 --stub-locate
+.venv/bin/python -m station --edge 127.0.0.1:7100 --video-port 8180 --local --stub-locate  # no cloud
+```
 
 ```sh
 .venv/bin/python -m tools.supervisor tools/supervisor_laptop.json   # sim edge :7100 + fake camgrab, restarts on kill

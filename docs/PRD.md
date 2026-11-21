@@ -38,11 +38,12 @@ These resolve conflicts between the earlier docs. Change them only by agreement.
 
 ### Still to decide
 
-1. **Models** (budget about $200 Vultr): the LLM brain (tool calling), the open-vocabulary
-   detector for "find the red thing", and the VLM for read / solve / describe. Check
-   `GET https://api.vultrinference.com/v1/models` and GPU availability first.
-2. **Command schema:** the LLM's tool definitions (direct moves vs tasks) and how each maps to
-   protocol v1 primitives.
+1. ~~Models~~ decided (2026-11-21, `station/config.py`, overridable in `.env`): brain
+   `glm-5.3-flash` (backup `qwen3.8-flash-next`), STT `whisper-large-v3-turbo`, vision +
+   bounding boxes `qwen3.8-27b` (no hosted detector), embeddings `qwen3-embedding-4b`, voice
+   ElevenLabs then `chatterbox`. Still to test on real frames (models.md).
+2. ~~Command schema~~ decided: tools `takeoff / land / stop / home / move / mission / look /
+   recall`, documented in `station/brain.py`; the planner maps them to protocol v1 primitives.
 
 ## 3. Users and core flows
 
@@ -172,6 +173,13 @@ fair share of hardware chores.
 
 - **Person A: Flight + Voice.** You fly the drone and make it talk.
 - **Person B: Perception + Memory.** The drone sees and remembers.
+
+> **Split changed 2026-11-21:** A took over every piece of B's work that is software not tied
+> to the drone's hardware: **B3 target localization, B4 VLM tasks and B5 visual memory** (now
+> in `station/localize.py`, `station/vision.py`, `cloud/memory.py`). B keeps B1 optical flow,
+> B2 on-board TFLite person + palm on QNX, and B6 hardware. The interfaces in section 5 are
+> unchanged, except that `locate()` is `async` and takes the AI client as its first argument:
+> `await locate(ai, name, jpeg, pose, K)`.
 
 ### Person A: Flight + Voice
 

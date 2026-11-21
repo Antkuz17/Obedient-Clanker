@@ -1,8 +1,28 @@
 # To-do
 
-Last updated: 2026-11-21. A = Person A (Flight + Voice), B = Person B (Perception + Memory).
+Last updated: 2026-11-21. A = Person A (Flight + Voice + all off-drone software),
+B = Person B (on-drone perception + hardware). Split changed 2026-11-21: A took over B's
+software that isn't tied to drone hardware (localization, VLM tasks, visual memory).
 Details and commands: [STATUS.md](STATUS.md). Plan and split: [PRD.md](PRD.md). Tick items
 here as they're done.
+
+## 🔴 CRITICAL: keys and accounts (the voice/vision demo does not run without these)
+
+The software is written and tested as if these exist. Without them: rule-based commands
+only, no speech-to-text, no vision, no memory, no voice. Put them in `.env` on the laptop **and**
+on the Vultr VM (template: `.env.example`; `.env` is git-ignored, never commit it).
+Check with `curl https://<cloud>/health` → `"keys": {"vultr": true, "elevenlabs": true}`.
+
+- [ ] 🔴 **A: Vultr Serverless Inference key** → `VULTR_INFERENCE_KEY`. Powers the brain
+      (`glm-5.3-flash`), speech-to-text (`whisper-large-v3-turbo`), vision (`qwen3.8-27b`:
+      locate / read / solve / describe) and memory embeddings (`qwen3-embedding-4b`)
+- [ ] 🔴 **A: ElevenLabs API key + voice ID** → `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`
+      (the Jarvis voice). Without it: Vultr `chatterbox` TTS, then text only
+- [ ] 🔴 **A: Vultr account/credits for a VM** (cloud app + dashboard) and a **domain** pointing
+      at it (phones need HTTPS for the mic). Steps: [cloud/deploy.md](../cloud/deploy.md)
+- [ ] 🔴 **A: `STATION_TOKEN`**: a long random string, the same on the laptop and the VM
+- [ ] **A: check the models on the real key**: vision model returns usable boxes on real C270
+      frames; STT latency; ElevenLabs vs chatterbox (models.md "Still to test")
 
 ## Now: before anything flies
 
@@ -37,16 +57,27 @@ here as they're done.
 
 ## Then: make it smart (Vultr)
 
-- [ ] **A + B: decide the models** (PRD "Still to decide"): check `GET https://api.vultrinference.com/v1/models`, GPU credits
-- [ ] **A: LLM command schema**: tool definitions for `mission(where, what, after)` → protocol primitives
-- [ ] **A: planner** (`station/planner.py`): mission → primitives, scan-until-found, approach 1 m short, come back. Uses a stub `locate()` until B's lands
-- [ ] **A: Vultr VM**: faster-whisper STT (D8), LLM brain, ElevenLabs TTS (D9), Caddy + HTTPS
-- [ ] **A: laptop ↔ Vultr WSS link** (ping every 15–20 s, reconnect with backoff)
-- [ ] **A: phone dashboard**: push-to-talk, live video, telemetry, command box, flight log
-- [ ] **A: audio out**: test the Nest Mini as a Windows Bluetooth speaker early; laptop speaker as the fallback
-- [ ] **B: `locate(name, jpeg, pose, K)`**: open-vocabulary detector → bearing → range → NED goal. Test on the sim room (`python -m edge --sim`, `/forward.jpg`)
-- [ ] **B: VLM tasks**: read / solve / describe / photo
-- [ ] **B: visual memory**: ingest pose-tagged frames, `POST /memory/search`
+Code done 2026-11-21 (`station/`, `cloud/`, 27 tests in `tests/test_station.py`, smoke-tested end
+to end on the sim with no keys). Still to do with real keys / hardware:
+
+- [x] **A: models + LLM command schema**: tools `takeoff / land / stop / home / move / mission /
+      look / recall` (`station/brain.py`), rule-based fallback without a key
+- [x] **A: planner** (`station/planner.py`): scan until found, approach 1 m short (fence-clamped,
+      3 m legs), face it, photo / read / solve / describe, stay / come back / land; recall
+- [x] **A: `locate()`** (`station/localize.py`): VLM box (0–1000) → bearing → range (size prior or
+      floor contact) → NED; sim ground-truth stub `station/localize_stub.py`
+- [x] **A: VLM tasks** (`station/vision.py`) and **visual memory** (`cloud/memory.py`: caption +
+      embedding + pose in SQLite, numpy search, `/memory/search`)
+- [x] **A: cloud app + phone dashboard** (`cloud/app.py`, `cloud/static/index.html`): push-to-talk,
+      live video, telemetry, STOP/LAND for anyone, one viewer has the controls, flight log,
+      photos, memory search
+- [x] **A: laptop ↔ cloud WSS** (`station/station.py`: dials out, ping 15 s, backoff to 15 s)
+- [ ] 🔴 **A: deploy to the Vultr VM** with Caddy + HTTPS ([cloud/deploy.md](../cloud/deploy.md))
+- [ ] **A: measure the size prior and HFOV on the real C270** (`edge/video.py:HFOV_DEG`,
+      `station/localize.py:SIZE_PRIOR`) and test `locate()` on real frames
+- [ ] **A: audio out**: test the Nest Mini as a Windows Bluetooth speaker early; laptop speaker as
+      the fallback (`station/audio.py` plays on the default output; install ffmpeg)
+- [ ] **A: voice latency** under 3 s end to end (`/health`, `AI.last_latency`)
 
 ## Then: the QNX demo (review D)
 
@@ -64,4 +95,4 @@ here as they're done.
 - [ ] Feature freeze
 - [ ] Rehearse the 60-second QNX demo and the Vultr demo 3×
 - [ ] Record a backup video
-- [ ] Devpost: A writes up real-time + dashboard; B writes up on-board AI + memory
+- [ ] Devpost: A writes up real-time, voice, dashboard and memory; B writes up on-board AI
