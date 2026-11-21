@@ -8,6 +8,15 @@ A voice-controlled indoor drone assistant with a personality, a bit like Jarvis.
 
 Target tracks: **Best Use of QNX** and **Best Use of Vultr**.
 
+**Plan and split:** [docs/PRD.md](docs/PRD.md). **Progress:** [docs/STATUS.md](docs/STATUS.md).
+
+```sh
+uv venv --python 3.11 .venv && uv pip install --python .venv -e '.[dev]'
+.venv/bin/python -m edge --sim     # simulated drone: protocol on :7000, video on :8080
+.venv/bin/python -m tools.cmd      # type: takeoff alt=1, move_body fwd=1, t, land
+.venv/bin/python -m pytest -q
+```
+
 ## What it does
 
 - **Voice commands, one task at a time:** "turn around", "move back", "tell me what's written
