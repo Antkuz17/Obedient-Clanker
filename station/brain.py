@@ -324,8 +324,17 @@ def fast_parse(text: str, telemetry: dict | None = None) -> BrainResult | None:
     return BrainResult(reply, actions, "fast")
 
 
+_CM = re.compile(_NUM + r" ?(?:cm|centimet(?:re|er)s?)\b")
+
+
+def _cm_to_m(t: str) -> str:
+    """'forward 50 cm' -> 'forward 0.5 m': the patterns below only know metres, and read a bare
+    number as metres ("50 cm" was a 50 m move; the gate caught it)."""
+    return _CM.sub(lambda m: f"{_n(m.group(1), 0.0) / 100:g} m", t)
+
+
 def rule_parse(text: str, telemetry: dict | None = None) -> BrainResult:
-    t = text.lower().strip(" .!?")
+    t = _cm_to_m(text.lower().strip(" .!?"))
     if re.search(r"crash|flip|kamikaze|attack|chase|ram |hit (him|her|them|me)|out the window", t):
         return BrainResult("Absolutely not. I'd like to keep my propellers.", source="rules")
     if re.search(r"\b(stop|freeze|hold on|wait)\b", t):
