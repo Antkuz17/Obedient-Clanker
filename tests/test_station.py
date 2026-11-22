@@ -1181,3 +1181,49 @@ async def test_rng_land_said_in_the_middle_of_the_360(rig):
     p.submit(fast_parse("land").actions)
     await until(lambda: not sim.state().armed, 30)
     assert not any("pilot" in x or "went wrong" in x for x in said)
+
+
+async def test_rng_test4_person_ahead_refuses_the_forward_move():
+    """Test 4: hovering, a person ~2.5 m in front of the camera, 'fly forward 2 metres' would
+    end within 1 m of them: the edge's gate refuses it, nothing moves, it keeps hovering, and a
+    later 'land' still lands it. The person detector's stream is faked (UDP, like edge/vision)."""
+    cfg = SafetyConfig()
+    sim = SimVehicle(cfg, speedup=10.0)
+    srv = EdgeServer(sim, cfg, WatchdogConfig(hover_after_s=0.6, land_after_s=2.0),
+                     host="127.0.0.1", port=0, perception_port=free_port(), flow_port=None)
+    await srv.start()
+    edge = await EdgeClient("127.0.0.1", srv.port).connect()
+    await asyncio.sleep(0.3)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    seen = {"m": None}
+
+    async def detector():  # ~10 Hz, like edge/vision
+        while True:
+            sock.sendto(json.dumps({"person_m": seen["m"], "palm": False}).encode(),
+                        ("127.0.0.1", srv.perception_port))
+            await asyncio.sleep(0.1)
+    d = asyncio.ensure_future(detector())
+    try:
+        p, said = rng_planner(sim, edge)
+        await run_plan(p, fast_parse("hey drone, rise").actions)
+        here = sim.state()
+        seen["m"] = 2.5                                   # someone steps in front
+        await asyncio.sleep(0.5)
+        await run_plan(p, fast_parse("fly forward 2 metres").actions)
+        assert said[-1].startswith("Safety says no: person 2.5 m ahead")
+        await asyncio.sleep(2)
+        s = sim.state()
+        assert s.armed and math.hypot(s.n - here.n, s.e - here.e) < 0.15  # never moved
+        assert s.alt == pytest.approx(0.5, abs=0.15)
+        assert any(e["kind"] == "safety_reject" and "person" in e["detail"] for e in edge.events)
+        seen["m"] = None                                  # they step away: now it's allowed
+        await asyncio.sleep(0.5)
+        await run_plan(p, fast_parse("fly forward 1 metre").actions)
+        assert math.hypot(sim.state().n - here.n, sim.state().e - here.e) > 0.6  # moved (arrival tolerance)
+        p.submit(fast_parse("land").actions)
+        await until(lambda: not sim.state().armed, 30)
+        assert not any("sinking" in x or "on my own" in x or "pilot" in x for x in said)
+    finally:
+        d.cancel()
+        await edge.close()
+        await srv.close()

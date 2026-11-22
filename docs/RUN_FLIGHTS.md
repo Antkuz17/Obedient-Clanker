@@ -98,6 +98,19 @@ Open **http://127.0.0.1:8100**: hold Space (or the pink button) and talk, or "Ty
 `--rng` takes off by the rangefinder like `auto_hover --rng` (0.5 m), holds from it, lands if it's
 lost or above 1.2 m. Run the preflight above first. STOP / Esc always works.
 
+### The four filming tests from the dashboard (station `--rng`)
+1. "Hey drone, rise" ... "land".
+2. "Hey drone, rise and do a 360" (no land): one full turn, then it hovers. Say "land" while it
+   hovers (or mid-turn) to show it listens mid-flight.
+3. "Hey drone, rise, go left 5 metres, then right 5 metres, then come down" (2 m legs).
+4. Person ahead: "Hey drone, rise"; a person stands ~2.5 m in front of the camera; "fly forward
+   2 metres" must be refused by the gate ("Safety says no: person 2.5 m ahead"), dashboard
+   shows Refused, the drone doesn't move. Then "land".
+   **Before test 4, prove the detector on the ground** (drone disarmed): the person walks in front
+   of the camera and `logs/vision.log` on the Pi must show their distance. The detector has never
+   run with the real model on the Pi before; if it doesn't see the person, a forward move WOULD
+   fly toward them. Never stand inside the 2 m path during the flight; stand at ~2.5 m.
+
 ### Without voice
 ```sh
 python -m tools.auto_hover --host <pi> --rng --test hover       # then spin, then leftright
