@@ -21,8 +21,18 @@ REMOTE = "/data/home/qnxuser/hope"
 PYPATH = f"PYTHONPATH={REMOTE}:/data/home/qnxuser/.local/lib/python3.14/site-packages"
 
 
-def main() -> None:
+def ssh(host: str, timeout: float = 10.0):
+    """An SSH session on the Pi with the QNX login (QNX_USER / QNX_PASS, see the docstring)."""
     import paramiko
+    c = paramiko.SSHClient()
+    c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    c.connect(host, username=os.environ.get("QNX_USER", "qnxuser"),
+              password=os.environ.get("QNX_PASS", "qnxuser"), look_for_keys=False,
+              allow_agent=False, timeout=timeout)
+    return c
+
+
+def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default=os.environ.get("QNX_HOST", "192.168.68.131"))
     ap.add_argument("--build", action="store_true", help="rebuild camgrab, hbwd and slog2d on the Pi")
@@ -38,12 +48,13 @@ def main() -> None:
     ap.add_argument("--demo", action="store_true",
                     help="with --stations: run the edge in no-fly demo mode (edge/demo.py); "
                          "rerun --stations without it to fly again")
+    ap.add_argument("--restart", action="store_true",
+                    help="restart the whole drone stack (after --stations / --build)")
+    ap.add_argument("--reboot-fc", action="store_true",
+                    help="reboot the flight controller (clears a latched battery failsafe; only "
+                         "while disarmed). The relay reconnects by itself")
     a = ap.parse_args()
-    c = paramiko.SSHClient()
-    c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    c.connect(a.host, username=os.environ.get("QNX_USER", "qnxuser"),
-              password=os.environ.get("QNX_PASS", "qnxuser"), look_for_keys=False,
-              allow_agent=False, timeout=10)
+    c = ssh(a.host)
     sf = c.open_sftp()
 
     def mkdirs(path: str) -> None:
@@ -126,6 +137,14 @@ def main() -> None:
         run("cc -O2 -o edge/camgrab/camgrab edge/camgrab/camgrab.c -lcamapi && echo camgrab ok;"
             " [ -f edge/hbwd/hbwd.c ] && cc -O2 -o edge/hbwd/hbwd edge/hbwd/hbwd.c -lsocket && echo hbwd ok;"
             " cc -O2 -o edge/slog2d/slog2d edge/slog2d/slog2d.c /usr/lib/libslog2.so.1 -lsocket && echo slog2d ok")
+    if a.reboot_fc:  # MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN; ArduPilot refuses it while armed
+        run(f"env {PYPATH} python3 -c \"from tools import fclink; m = fclink.connect(fclink.TAP); "
+            "m.mav.command_long_send(1, 1, 246, 0, 1, 0, 0, 0, 0, 0, 0); print('FC reboot sent')\"")
+    if a.restart:
+        pw = os.environ.get("QNX_PASS", "qnxuser")
+        run(f"echo {pw} | sudo -S sh -c 'slay -f camgrab; slay -f hbwd; slay -f slog2d; "
+            f"slay -f python3; sleep 1; nohup {REMOTE}/start_sup.sh >/dev/null 2>&1 </dev/null &' "
+            "2>&1 | grep -v Password; echo stack restarting")
     if a.run:
         run(f"env {PYPATH} {a.run}")
 
