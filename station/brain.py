@@ -271,6 +271,8 @@ def _fdist(num: str, unit: str) -> float:
 def fast_parse(text: str, telemetry: dict | None = None) -> BrainResult | None:
     """The whole utterance as simple flying clauses, or None (then the LLM decides)."""
     t = text.lower().replace("°", " degrees").replace("-", " ")
+    # wake words before punctuation turns into "and": Whisper writes "Hey, drone. Rise and ..."
+    t = re.sub(r"^\W*(?:(?:hey|ok|okay|alright|all right|yo)\W+)?(?:(?:jarvis|drone)\b\W*)?", "", t)
     t = re.sub(r"(?<!\d)\.|\.(?!\d)", " ", t)          # sentence dots, not "1.5"
     t = re.sub(r"[,;:!?]", " and ", t)
     t = re.sub(r"[^a-z0-9. ]+", " ", t)

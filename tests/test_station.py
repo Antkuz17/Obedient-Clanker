@@ -1227,3 +1227,18 @@ async def test_rng_test4_person_ahead_refuses_the_forward_move():
         d.cancel()
         await edge.close()
         await srv.close()
+
+
+@pytest.mark.parametrize("text, kinds", [
+    ("Hey, drone. Rise and do a 360.", ["takeoff", "move"]),      # Whisper's punctuation
+    ("Hey, drone, rise and do a 360!", ["takeoff", "move"]),
+    ("Okay drone, rise and do a three sixty.", ["takeoff", "move"]),
+    ("Hey, drone, land now.", ["land"]),
+    ("Okay, land.", ["land"]),
+    ("Drone, land.", ["land"]),
+])
+def test_test2_phrases_as_whisper_writes_them(text, kinds):
+    r = fast_parse(text)
+    assert r and [a["kind"] for a in r.actions] == kinds
+    if kinds[-1] == "move":
+        assert r.actions[-1]["yaw_deg"] == 360
