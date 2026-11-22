@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0E0E14">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='12' fill='%23EA4B71'/%3E%3C/svg%3E">
+<title>Hope Voice</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300..600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* tokens: the same as the dashboard (cloud/static/index.html) */
+:root{
+  --bg:#0E0E14; --panel:#15151C; --node:#17171F; --raise:#1C1C25; --raise2:#22222E;
+  --line:#2E2E3E; --div:#262632; --btn:#3A3A4A;
+  --text:#EDEDF2; --soft:#C4C4D0; --t2:#9A9AAA; --t3:#8A8A98; --t4:#6A6A78;
+  --pink:#EA4B71; --amber:#F2A73B; --green:#3DC99A; --rose:#C02A52;
+  --sans:'Geist',system-ui,sans-serif; --mono:'Geist Mono',ui-monospace,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{min-height:100dvh;color:var(--text);font-family:var(--sans);font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;
+  background-color:var(--bg);
+  background-image:radial-gradient(rgba(255,255,255,.07) 1px,transparent 1px),radial-gradient(60% 50% at 18% 0%,rgba(234,75,113,.10),transparent 70%);
+  background-size:22px 22px,100% 100%;background-attachment:fixed}
+button,input{font:inherit;color:inherit}
+button{cursor:pointer}
+.mono{font-family:var(--mono)}
+
+.app{max-width:1280px;margin:0 auto;padding:0 16px 16px;display:grid;gap:14px;
+  grid-template-columns:minmax(0,1fr);grid-template-areas:"head" "cam" "pipe" "dock"}
+header{grid-area:head;display:flex;align-items:center;gap:10px;min-height:58px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:10px;font-size:17px;font-weight:600;letter-spacing:-.02em;margin-right:auto}
+.brand i{width:12px;height:12px;border-radius:50%;background:var(--pink);box-shadow:0 0 14px rgba(234,75,113,.6)}
+.brand span{color:var(--t2);font-weight:400}
+.chip{display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 12px;border-radius:8px;border:1px solid var(--line);background:#16161E;color:var(--soft);font-size:12.5px}
+.chip b{font-weight:500;color:var(--text)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--t4)}
+.dot.on{background:var(--green)} .dot.warn{background:var(--amber)} .dot.bad{background:var(--pink)}
+
+.cam{grid-area:cam;position:relative;aspect-ratio:4/3;max-height:62vh;border-radius:14px;overflow:hidden;border:1px solid var(--line);background:#1A1A22}
+.cam img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
+.cam .empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--t3);font-size:14px}
+.cam .shade{position:absolute;inset:0;pointer-events:none;background:linear-gradient(rgba(14,14,20,.55),rgba(14,14,20,0) 22%,rgba(14,14,20,0) 62%,rgba(14,14,20,.85))}
+.hud{position:absolute;left:16px;right:16px;bottom:14px;display:flex;align-items:flex-end;gap:22px}
+.hud .big{font-size:44px;font-weight:300;letter-spacing:-.03em;line-height:1}
+.hud .big small{font-size:16px;color:var(--t2);margin-left:4px}
+.hud .lab{font-size:11.5px;color:var(--t2);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px}
+.hud .stat{font-size:15px;color:var(--soft)}
+.tag{position:absolute;left:16px;top:14px;display:flex;gap:8px}
+.tag span{height:26px;padding:0 10px;border-radius:7px;background:rgba(14,14,20,.7);border:1px solid var(--line);font-size:12px;display:inline-flex;align-items:center;gap:7px;color:var(--soft)}
+.rec{display:none}
+.flying .rec{display:inline-flex;color:var(--text);border-color:var(--pink)!important}
+.rec i{width:7px;height:7px;border-radius:50%;background:var(--pink);animation:pulse 1.2s infinite}
+@keyframes pulse{50%{opacity:.25}}
+
+/* pipeline: heard -> understood -> jarvis -> flight */
+.pipe{grid-area:pipe;display:flex;flex-direction:column;gap:10px;min-width:0}
+.node{background:var(--node);border:1px solid var(--line);border-radius:12px;padding:12px 14px;min-width:0}
+.node h3{margin:0 0 6px;font-size:11.5px;font-weight:500;color:var(--t2);text-transform:uppercase;letter-spacing:.08em;display:flex;align-items:center;gap:8px}
+.node h3 i{width:6px;height:6px;border-radius:50%;background:var(--t4)}
+.node.live h3 i{background:var(--pink)}
+.node .v{font-size:17px;line-height:1.35;color:var(--text);min-height:23px}
+.node .v.dim{color:var(--t4)}
+.presets{display:flex;gap:8px;flex-wrap:wrap}
+.presets span{padding:6px 10px;border-radius:8px;border:1px solid var(--line);background:var(--raise);font-size:13px;color:var(--t3)}
+.presets span.on{border-color:var(--pink);color:var(--text);background:rgba(234,75,113,.12)}
+.log{font-family:var(--mono);font-size:12px;line-height:1.55;color:var(--soft);max-height:230px;overflow:auto;white-space:pre-wrap;margin:0}
+.log .warn{color:var(--amber)} .log .bad{color:var(--pink)} .log .ok{color:var(--green)}
+
+.dock{grid-area:dock;display:flex;gap:10px;align-items:stretch;flex-wrap:wrap}
+.talk{flex:1 1 320px;height:68px;border-radius:14px;border:0;background:var(--pink);color:#fff;font-size:18px;font-weight:600;letter-spacing:-.01em;
+  display:flex;align-items:center;justify-content:center;gap:12px;user-select:none;touch-action:none;box-shadow:0 8px 30px rgba(234,75,113,.25)}
+.talk.rec{background:#fff;color:var(--rose)}
+.talk.busy{background:var(--btn);color:var(--soft);box-shadow:none}
+.talk kbd{font-family:var(--mono);font-size:12px;font-weight:500;padding:3px 7px;border-radius:6px;background:rgba(255,255,255,.2)}
+.talk.rec kbd{background:rgba(192,42,82,.12)}
+.side{display:flex;gap:10px;flex:0 1 auto}
+.btn{height:68px;padding:0 18px;border-radius:14px;border:1px solid var(--line);background:var(--raise);color:var(--soft);font-size:14px;font-weight:500}
+.btn.go{border-color:var(--green);color:var(--green)}
+.land{height:68px;padding:0 26px;border-radius:14px;border:0;background:var(--rose);color:#fff;font-size:16px;font-weight:600;letter-spacing:.04em}
+.type{flex:1 1 100%;display:flex;gap:8px}
+.type input{flex:1;height:40px;padding:0 12px;border-radius:10px;border:1px solid var(--line);background:#14141B;outline:none}
+.type input:focus{border-color:var(--btn)}
+.type button{height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:var(--raise);color:var(--soft)}
+
+@media (min-width:980px){
+  .app{grid-template-columns:minmax(0,1.6fr) minmax(320px,1fr);grid-template-areas:"head head" "cam pipe" "dock dock"}
+  .cam{max-height:none;height:100%;min-height:420px}
+}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <header>
+    <div class="brand"><i></i>Hope <span>· voice flight</span></div>
+    <span class="chip"><span class="dot" id="linkDot"></span><span id="linkTxt">drone</span></span>
+    <span class="chip"><span class="dot" id="pfDot"></span><span id="pfTxt">preflight not run</span></span>
+    <span class="chip">battery <b id="batt">–</b></span>
+  </header>
+
+  <section class="cam" id="cam">
+    <div class="empty" id="camEmpty">connecting to the drone's camera…</div>
+    <img id="video" alt="" hidden>
+    <div class="shade"></div>
+    <div class="tag"><span class="rec"><i></i>FLYING</span><span id="modeTag">mode –</span></div>
+    <div class="hud">
+      <div><div class="lab">height · rangefinder</div><div class="big" id="height">–<small>m</small></div></div>
+      <div><div class="lab">state</div><div class="stat" id="stateTxt">–</div></div>
+    </div>
+  </section>
+
+  <section class="pipe">
+    <div class="node" id="nHeard"><h3><i></i>Heard</h3><div class="v dim" id="heard">Hold the button and talk to the drone</div></div>
+    <div class="node" id="nPick"><h3><i></i>Understood</h3>
+      <div class="presets"><span data-p="hover">Rise · hover · land</span><span data-p="spin">Rise · 360° · land</span><span data-p="leftright">Rise · left · right · land</span></div>
+    </div>
+    <div class="node" id="nJarvis"><h3><i></i>Jarvis</h3><div class="v dim" id="reply">–</div></div>
+    <div class="node" id="nFlight"><h3><i></i>Flight</h3><pre class="log" id="log"></pre></div>
+  </section>
+
+  <section class="dock">
+    <button class="talk" id="talk"><span id="talkTxt">Hold to talk</span><kbd>Space</kbd></button>
+    <div class="side">
+      <button class="btn" id="pf">Preflight</button>
+      <button class="land" id="land">LAND</button>
+    </div>
+    <form class="type" id="typeForm"><input id="typeIn" placeholder="…or type a command (e.g. rise and turn around)" autocomplete="off"><button>Send</button></form>
+  </section>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+let since = 0, flying = false, preset = null, videoSet = false;
+const audioQ = []; let playing = false;
+
+function playNext() {
+  if (playing || !audioQ.length) return;
+  playing = true;
+  const a = new Audio('data:audio/mpeg;base64,' + audioQ.shift());
+  a.onended = a.onerror = () => { playing = false; playNext(); };
+  a.play().catch(() => { playing = false; });
+}
+function logLine(text) {
+  const el = document.createElement('div');
+  if (/ABORT|failed|error|didn't|NO-GO|!!/i.test(text)) el.className = 'bad';
+  else if (/ALL GO|done|reached|Back on the ground|-> \{.*'ok'/i.test(text)) el.className = 'ok';
+  else if (/refused|lost|took over/i.test(text)) el.className = 'warn';
+  el.textContent = text;
+  const log = $('log'); log.appendChild(el); log.scrollTop = log.scrollHeight;
+}
+function setPreset(p) {
+  document.querySelectorAll('.presets span').forEach((s) => s.classList.toggle('on', s.dataset.p === p));
+  $('nPick').classList.toggle('live', !!p);
+}
+async function poll() {
+  try {
+    const r = await fetch('/api/state?since=' + since); const s = await r.json();
+    for (const e of s.events) {
+      if (e.kind === 'heard') { $('heard').textContent = '“' + e.text + '”'; $('heard').classList.remove('dim'); $('nHeard').classList.add('live'); }
+      else if (e.kind === 'reply') { $('reply').textContent = e.text; $('reply').classList.remove('dim'); $('nJarvis').classList.add('live'); if (e.mp3) { audioQ.push(e.mp3); playNext(); } }
+      else if (e.kind === 'log') logLine(e.text);
+      else if (e.kind === 'state' && e.text.startsWith('flying:')) { setPreset(e.text.slice(7)); $('log').textContent = ''; }
+    }
+    since = s.next;
+    flying = s.flying;
+    $('app').classList.toggle('flying', flying);
+    $('nFlight').classList.toggle('live', flying);
+    $('linkDot').className = 'dot ' + (s.link ? 'on' : 'bad');
+    $('linkTxt').textContent = s.link ? 'drone connected' : 'drone not connected';
+    const pf = s.preflight;
+    $('pfDot').className = 'dot ' + (pf.running ? 'warn' : s.preflight_fresh ? 'on' : pf.t ? 'bad' : '');
+    $('pfTxt').textContent = pf.running ? 'preflight running…' : s.preflight_fresh ? 'preflight GO' : pf.t ? 'preflight needed' : 'preflight not run';
+    $('pf').classList.toggle('go', s.preflight_fresh);
+    const t = s.tel;
+    $('height').innerHTML = (t.height == null ? '–' : t.height.toFixed(2)) + '<small>m</small>';
+    $('batt').textContent = t.battery ? t.battery.toFixed(2) + ' V' : '–';
+    $('modeTag').textContent = 'mode ' + (t.mode || '–');
+    $('stateTxt').textContent = (t.state || '–') + (t.armed ? ' · armed' : '');
+    if (!videoSet && s.link) { const v = $('video'); v.src = s.video; v.onload = () => { v.hidden = false; $('camEmpty').hidden = true; }; videoSet = true; }
+    $('talk').classList.toggle('busy', !recording && flying);
+    $('talkTxt').textContent = recording ? 'Listening… release to send' : flying ? 'Flying · hold to say “land”' : 'Hold to talk';
+  } catch (e) { /* server restarting */ }
+  setTimeout(poll, 300);
+}
+
+/* push-to-talk: record PCM in the page and send 16 kHz WAV (no ffmpeg needed anywhere) */
+let ctx, stream, node, chunks = [], recording = false;
+async function startRec() {
+  if (recording) return;
+  recording = true; $('talk').classList.add('rec');
+  stream = stream || await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+  ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
+  await ctx.resume();
+  const src = ctx.createMediaStreamSource(stream);
+  node = ctx.createScriptProcessor(4096, 1, 1);
+  chunks = [];
+  node.onaudioprocess = (ev) => chunks.push(new Float32Array(ev.inputBuffer.getChannelData(0)));
+  src.connect(node); node.connect(ctx.destination);
+  node._src = src;
+}
+function toWav16k(parts, rate) {
+  const n = parts.reduce((a, p) => a + p.length, 0), all = new Float32Array(n);
+  let o = 0; for (const p of parts) { all.set(p, o); o += p.length; }
+  const ratio = rate / 16000, m = Math.floor(n / ratio), pcm = new Int16Array(m);
+  for (let i = 0; i < m; i++) { const s = Math.max(-1, Math.min(1, all[Math.floor(i * ratio)])); pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff; }
+  const buf = new ArrayBuffer(44 + pcm.length * 2), v = new DataView(buf);
+  const w = (off, str) => [...str].forEach((c, i) => v.setUint8(off + i, c.charCodeAt(0)));
+  w(0, 'RIFF'); v.setUint32(4, 36 + pcm.length * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, 16000, true);
+  v.setUint32(28, 32000, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, pcm.length * 2, true);
+  new Int16Array(buf, 44).set(pcm);
+  return new Blob([buf], { type: 'audio/wav' });
+}
+async function stopRec() {
+  if (!recording) return;
+  recording = false; $('talk').classList.remove('rec');
+  node.disconnect(); node._src.disconnect();
+  const secs = chunks.reduce((a, p) => a + p.length, 0) / ctx.sampleRate;
+  if (secs < 0.4) return;  // a tap, not speech
+  $('heard').textContent = 'transcribing…';
+  await fetch('/api/voice', { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: toWav16k(chunks, ctx.sampleRate) });
+}
+const talk = $('talk');
+talk.addEventListener('pointerdown', (e) => { e.preventDefault(); startRec(); });
+talk.addEventListener('pointerup', stopRec);
+talk.addEventListener('pointerleave', stopRec);
+addEventListener('keydown', (e) => { if (e.code === 'Space' && !e.repeat && document.activeElement !== $('typeIn')) { e.preventDefault(); startRec(); } });
+addEventListener('keyup', (e) => { if (e.code === 'Space' && document.activeElement !== $('typeIn')) { e.preventDefault(); stopRec(); } });
+$('land').onclick = () => fetch('/api/land', { method: 'POST' });
+$('pf').onclick = () => fetch('/api/preflight', { method: 'POST' });
+$('typeForm').onsubmit = (e) => { e.preventDefault(); const t = $('typeIn').value.trim(); if (!t) return; $('typeIn').value = '';
+  fetch('/api/text', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: t }) }); };
+poll();
+</script>
+</body>
+</html>
