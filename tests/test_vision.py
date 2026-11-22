@@ -216,3 +216,31 @@ async def test_wall_ahead_stops_a_running_forward_move():
     finally:
         await edge.close()
         await srv.close()
+
+
+# --- person boxes for the dashboard overlay ---------------------------------------------------
+def test_loop_sends_person_boxes_for_the_dashboard():
+    it = FakeInterpreter([[0.1, 0.3, 0.9, 0.6]], [0], [0.9])   # SSD order: ymin, xmin, ymax, xmax
+    sent = []
+    calls = {"n": 0}
+
+    def stop():
+        calls["n"] += 1
+        return calls["n"] > 1
+    run(FakeReader([FakeFrame(1)]), PersonDetector(it), sent.append, hz=0, hfov=45.0, stop=stop)
+    (box,) = sent[0]["boxes"]
+    assert box[:5] == pytest.approx([0.3, 0.1, 0.6, 0.9, 0.9], abs=1e-3)
+    assert box[5] == pytest.approx(sent[0]["person_m"], abs=0.01)
+
+
+def test_telemetry_carries_fresh_person_boxes_only():
+    cfg = SafetyConfig()
+    srv = EdgeServer(SimVehicle(cfg), cfg, WatchdogConfig(), host="127.0.0.1", port=0,
+                     perception_port=None, flow_port=None)
+    assert srv.telemetry()["people"] == []
+    srv.on_perception({"person_m": 2.5, "boxes": [[0.3, 0.1, 0.6, 0.9, 0.9, 2.5]]})
+    assert srv.telemetry()["people"] == [[0.3, 0.1, 0.6, 0.9, 0.9, 2.5]]
+    srv._perception_t -= 1.0                                     # detector went quiet
+    assert srv.telemetry()["people"] == []
+    srv.on_perception({"person_m": None})                       # an old detector: no boxes key
+    assert srv.telemetry()["people"] == []

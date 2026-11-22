@@ -54,6 +54,12 @@ header{grid-area:head;display:flex;align-items:center;gap:9px;min-height:54px;pa
 .cam .shade{position:absolute;inset:0;pointer-events:none;background:linear-gradient(rgba(14,14,20,.55),rgba(14,14,20,0) 22%,rgba(14,14,20,0) 66%,rgba(14,14,20,.82))}
 .ceiling{position:absolute;left:0;right:0;top:30%;border-top:1px dashed var(--amber)}
 .ceiling span{position:absolute;right:14px;bottom:6px;font-size:11.5px;color:var(--amber)}
+/* person boxes from the drone's on-board detector (telemetry.people) */
+.people{position:absolute;inset:0;pointer-events:none}
+.pbox{position:absolute;border:2px solid #FF3B4E;border-radius:4px}
+.pbox span{position:absolute;left:-2px;bottom:100%;margin-bottom:4px;white-space:nowrap;padding:3px 8px;border-radius:6px;
+  background:#FF3B4E;color:#FFFFFF;font-size:12px;font-weight:500;line-height:1.3}
+.pbox.low span{bottom:auto;top:4px;left:4px}
 .reticle{position:absolute;left:50%;top:54%;width:0;height:0;pointer-events:none}
 .reticle i{position:absolute;display:block;background:rgba(237,237,242,.7)}
 .reticle .o{left:-11px;top:-11px;width:22px;height:22px;border-radius:50%;background:none;border:1px solid rgba(237,237,242,.8)}
@@ -300,6 +306,7 @@ td.no{color:var(--amber)}
     <div class="empty" id="camEmpty">Waiting for the camera…</div>
     <div class="shade"></div>
     <div class="ceiling" id="ceiling" hidden><span id="ceilingLabel">5 m ceiling</span></div>
+    <div class="people" id="people" aria-live="polite"></div>
     <div class="reticle" aria-hidden="true"><i class="o"></i><i class="l"></i><i class="r"></i></div>
     <div class="live off" id="liveTag"><i></i><span>Live<span class="full"> · forward camera</span></span></div>
     <div class="banner" id="banner" role="alert" hidden></div>
@@ -740,6 +747,7 @@ function sameLine(a, b) { const n = (x) => (x || '').trim().replace(/\.$/, '').t
    ========================================================= */
 function onTelemetry(tm) {
   S.telem = tm; S.lastTelemAt = Date.now();
+  renderPeople();
   let word = STATE_WORDS[tm.state] || (tm.state ? String(tm.state).toLowerCase() : '—');
   if (tm.state === 'BUSY' && tm.active_cmd) word = `Doing: ${tm.active_cmd}`;
   $('#state').textContent = word;
@@ -781,12 +789,36 @@ function renderFlight() {
   $('#nChecked').textContent = S.gate.checked; $('#nRefused').textContent = S.gate.refused;
 }
 
+// Red boxes around people the drone's detector sees. Boxes are normalised to the camera frame;
+// the <img> is object-fit: cover, so map through the same crop.
+function renderPeople() {
+  const box = $('#people'), img = $('#frame');
+  const ppl = (Date.now() - S.lastTelemAt < 1000 && Array.isArray(S.telem.people)) ? S.telem.people : [];
+  if (!ppl.length || img.hidden || !img.naturalWidth) { if (box.childElementCount) box.replaceChildren(); return; }
+  const cw = box.clientWidth, ch = box.clientHeight, nw = img.naturalWidth, nh = img.naturalHeight;
+  const k = Math.max(cw / nw, ch / nh), dw = nw * k, dh = nh * k, ox = (cw - dw) / 2, oy = (ch - dh) / 2;
+  box.replaceChildren(...ppl.slice(0, 5).map((p) => {
+    const [x0, y0, x1, y1, , dist] = p;
+    // clip to what's visible (the crop can hide the top/bottom of a tall person)
+    const L = Math.max(0, ox + x0 * dw), R = Math.min(cw, ox + x1 * dw);
+    const T = Math.max(0, oy + y0 * dh), B = Math.min(ch, oy + y1 * dh);
+    const d = el('div', 'pbox' + (T < 28 ? ' low' : ''));
+    d.style.left = `${L}px`; d.style.top = `${T}px`;
+    d.style.width = `${Math.max(0, R - L - 4)}px`; d.style.height = `${Math.max(0, B - T - 4)}px`;
+    d.append(el('span', '', `Person detected${typeof dist === 'number' ? ` · ${dist.toFixed(1)} m` : ''}`));
+    return d;
+  }));
+}
+setInterval(renderPeople, 500);   // clears stale boxes if telemetry stops
+addEventListener('resize', renderPeople);
+
 function onFrame(f) {
   const img = $('#frame');
   img.src = 'data:image/jpeg;base64,' + f.jpeg;
   if (img.hidden) { img.hidden = false; $('#camEmpty').hidden = true; }
   $('#liveTag').classList.remove('off');
   S.lastFrameAt = Date.now();
+  renderPeople();
 }
 
 // Only show a problem when there is one. Most serious wins.

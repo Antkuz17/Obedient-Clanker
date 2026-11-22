@@ -79,6 +79,7 @@ class EdgeServer:
         self._writer: asyncio.StreamWriter | None = None
         self._last_hb: float | None = None
         self._perception_t = 0.0
+        self._people: list = []  # latest person boxes from edge/vision (dashboard overlay)
         self._obstacle_t = 0.0
         self._palm_latched = False
         self._pos_bad_since: float | None = None
@@ -202,7 +203,10 @@ class EdgeServer:
                 "ve": round(s.ve, 3), "vd": round(s.vd, 3), "battery_v": round(s.battery_v, 2),
                 "flow_quality": s.flow_quality,
                 "range_m": None if s.range_m is None else round(s.range_m, 3),
-                "active_cmd": self.exec.active_cmd}
+                "active_cmd": self.exec.active_cmd,
+                # optional, additive (not in P.TELEMETRY_FIELDS): person boxes for the dashboard,
+                # [] once the detector goes quiet
+                "people": self._people if time.monotonic() - self._perception_t <= 0.5 else []}
 
     async def _safety_loop(self, hz: float = 50.0) -> None:
         period = 1.0 / hz
@@ -377,6 +381,8 @@ class EdgeServer:
         ex.perception.person_t = self._perception_t
         pm = msg.get("person_m")
         ex.perception.person_m = float(pm) if isinstance(pm, (int, float)) else None
+        b = msg.get("boxes")  # dashboard overlay only (telemetry "people"); the gate never reads it
+        self._people = b if isinstance(b, list) else []
         # react now rather than on the next tick: every ms counts for the stop latency demo
         if (why := ex.revalidate(self.v.state(), self.safety_cfg)) is not None:
             ex.stop(why)

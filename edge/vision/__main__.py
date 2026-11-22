@@ -6,7 +6,8 @@
   # laptop: python -m tools.fake_camgrab --name camgrab_fwd --webcam 0   then the same command
 
 Sends one message per processed frame:
-  {"person_m": float | null, "palm": false, "t": <frame capture time>, "infer_ms": float}
+  {"person_m": float | null, "palm": false, "t": <frame capture time>, "infer_ms": float,
+   "boxes": [[x0, y0, x1, y1, score, metres], ...]}   (boxes: dashboard overlay only)
 `t` is the camera's capture time, so the dashboard's stop-latency tile shows frame -> stop.
 Nothing is sent while frames aren't arriving: the edge then marks the detector dead after 1 s
 and refuses forward moves, which is the point.
@@ -22,7 +23,7 @@ import time
 
 from edge.camera import ShmFrameReader
 from edge.vision import (C270_HFOV_DEG, DEFAULT_MODEL, PERSON_CLASS, PersonDetector,
-                         load_interpreter, nearest_person)
+                         load_interpreter, nearest_person, person_distance)
 
 log = logging.getLogger("vision")
 
@@ -49,8 +50,12 @@ def run(reader, detector: PersonDetector, send, hz: float, hfov: float,
         people = detector.detect(frame.bgr())
         infer_ms = (time.perf_counter() - t0) * 1000
         dist = nearest_person(people, frame.width, frame.height, hfov)
+        # boxes for the dashboard overlay (normalised x0, y0, x1, y1, score, metres); additive:
+        # the gate only reads person_m
+        boxes = [[round(d.x0, 3), round(d.y0, 3), round(d.x1, 3), round(d.y1, 3), round(d.score, 2),
+                  round(person_distance(d, frame.width, frame.height, hfov), 2)] for d in people[:5]]
         send({"person_m": None if dist is None else round(dist, 2), "palm": False,
-              "t": frame.t, "infer_ms": round(infer_ms, 1)})
+              "t": frame.t, "infer_ms": round(infer_ms, 1), "boxes": boxes})
         n += 1
         sum_ms += infer_ms
         seen += dist is not None

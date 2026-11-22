@@ -153,6 +153,16 @@ position (altitude used to sag about 0.1 m per command).
   refused "go up 2 m", land). **Not flown yet**: first real flight = "take off", then "land", pilot on SwA.
   Fallback: `tools.voice_flights` (8200).
 
+## Person boxes on the dashboard (2026-11-21 night, cloud lead with Claude; **drone lead: small additive change in `edge/`**)
+
+- `edge/vision` now also sends `boxes: [[x0, y0, x1, y1, score, metres], ...]` (normalised, up to 5)
+  with each detection; `edge/server.py` keeps the latest and adds an optional telemetry field
+  `people` (`[]` once the detector is quiet > 0.5 s). The gate still reads only `person_m`; nothing
+  else changed. `people` is not in `P.TELEMETRY_FIELDS` (protocol file untouched; add it if you agree).
+- Dashboard draws a red box + "Person detected · 2.5 m" over the camera (same `camgrab_fwd` frames).
+- Needs a sync to the Pi (`field_setup` / `deploy_pi`) and a stack restart. Detector still never
+  run with the real model on the Pi: check `logs/vision.log` before test 4.
+
 ## First outdoor dashboard flights, GPS (2026-11-21 night, cloud lead with Claude; **drone lead: please read**)
 
 - Reached the drone over an SSH tunnel on the Pi's IPv6 link-local address (the iPhone hotspot gave
