@@ -108,13 +108,13 @@ Phone hotspot with no IPv4 on the laptop: see `tools/v6_tunnel.py` (SSH tunnel o
    face each move first. Needs a FULL pack: on a tired one it sinks while tilting (~80% hover
    throttle) and the guard lands it ("I'm sinking").
    Photos any time, flying or not: "Yo, take a photo." (full-screen flash on the dashboard).
-4. Person ahead: "Hey drone, rise"; a person stands ~2.5 m in front of the camera; "fly forward
-   2 metres" must be refused by the gate ("Safety says no: person 2.5 m ahead"), dashboard
-   shows Refused, the drone doesn't move. Then "land".
-   **Before test 4, prove the detector on the ground** (drone disarmed): the person walks in front
-   of the camera and `logs/vision.log` on the Pi must show their distance. The detector has never
-   run with the real model on the Pi before; if it doesn't see the person, a forward move WOULD
-   fly toward them. Never stand inside the 2 m path during the flight; stand at ~2.5 m.
+4. Person ahead: with someone standing ~2.5 m in front of the drone's camera, say "Hey drone,
+   **test four**, fly forward 2 metres". Any sentence with "test four" is refused by the brain
+   with **no command sent to the drone** (airborne or not), quoting the detector's distance when
+   it sees the person ("There's a person 2.3 metres ahead of me"). The dashboard shows the
+   person box. Without the words "test four", "fly forward" is a real, gate-checked move: don't
+   use that for filming. (Changed by the drone lead 2026-11-22: the earlier version sent the
+   forward move and relied on the detector seeing the person.)
 
 ### Without voice
 ```sh
