@@ -1154,3 +1154,30 @@ async def test_rng_test3_left_right_and_back(rig):
     legs = [l for l in p.log if l.startswith("move_body") and "right" in l]
     assert len(legs) == 6 and abs(sim.state().e) < 0.35 and not sim.state().armed
     assert not any("sinking" in s or "on my own" in s or "pilot" in s for s in said)
+
+
+async def test_rng_test2_rise_360_then_hover_until_told_to_land(rig):
+    """Test 2 as filmed: 'rise, do a 360' (no land), it keeps hovering; 'land' said later lands it."""
+    sim, edge = rig
+    p, said = rng_planner(sim, edge)
+    r = fast_parse("Hey drone, rise and do a 360")
+    assert [a["kind"] for a in r.actions] == ["takeoff", "move"] and r.actions[1]["yaw_deg"] == 360
+    await run_plan(p, r.actions, 90)
+    assert "scan {'rate_dps': 30.0}" in p.log
+    await asyncio.sleep(3)  # hovering, nobody has said land
+    s = sim.state()
+    assert s.armed and s.alt == pytest.approx(0.5, abs=0.15) and not p._guard.done()
+    p.submit(fast_parse("land").actions)                     # said mid-flight
+    await until(lambda: not sim.state().armed, 30)
+    assert not any("sinking" in x or "on my own" in x or "pilot" in x for x in said)
+
+
+async def test_rng_land_said_in_the_middle_of_the_360(rig):
+    sim, edge = rig
+    p, said = rng_planner(sim, edge)
+    p.submit(fast_parse("rise and do a 360").actions)
+    await until(lambda: any(l.startswith("scan") for l in p.log), 30)
+    await asyncio.sleep(1.0)                                 # part way round
+    p.submit(fast_parse("land").actions)
+    await until(lambda: not sim.state().armed, 30)
+    assert not any("pilot" in x or "went wrong" in x for x in said)
