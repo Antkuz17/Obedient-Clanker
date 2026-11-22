@@ -39,7 +39,7 @@ dry, witty and a little sarcastic, but helpful. Replies are spoken aloud: one sh
 no emoji, no markdown.
 
 Turn the user's request into tool calls, in order. Rules:
-- Distances in metres, angles in degrees. "a bit" = 0.5 m. "turn around" = 180 degrees.
+- Distances in metres, angles in degrees. "a bit" = 0.5 m. "turn around", "spin around", "do a 360", "a full turn" = yaw_deg 360 (one full turn); "face the other way" / "turn back" = 180.
 - Positive fwd = forward, positive right = right, positive up = up, positive yaw = clockwise.
 - Flying to a named thing ("the door", "the red poster") is a mission, not a move.
 - "Fly to where I'm pointing" / "go to that" while pointing is a mission with target \
@@ -244,12 +244,13 @@ _FNUM = (r"(\d+(?:\.\d+)?|" + "|".join(sorted((re.escape(k) for k in _FWORDS), k
 _FUNIT = r" ?(m|metres?|meters?|cm|centimetres?|centimeters?)"
 _FDIR = r"(forwards?|ahead|backwards?|back|left|right|up|down)"
 _FVERB = r"(?:(?:move|go|fly|head|drift|slide|climb|drop|descend|rise) )?"
-_F_TAKEOFF = re.compile(r"(?:take ?off|lift off|launch)(?: (?:to )?" + _FNUM + _FUNIT + r")?")
+_F_TAKEOFF = re.compile(r"(?:take ?off|lift off|launch|rise|go up and hover|hover)(?: (?:to )?" + _FNUM + _FUNIT + r")?")
 _F_MOVE1 = re.compile(_FVERB + _FDIR + r" (?:by )?" + _FNUM + _FUNIT)        # forward 1 metre
 _F_MOVE2 = re.compile(_FVERB + _FNUM + _FUNIT + " " + _FDIR)                   # 1 metre forward
 _F_TURN = re.compile(r"(?:turn|rotate|spin|yaw) (?:to the )?(left|right)"
                      r"(?: (?:by )?" + _FNUM + r"(?: ?degrees?)?)?")
-_F_AROUND = re.compile(r"(?:turn|spin) around")
+_F_AROUND = re.compile(r"(?:(?:turn|spin|rotate)(?: all the way)? around|(?:do )?(?:a )?(?:full )?(?:360|three sixty)(?: degrees?)?(?: turn| spin)?|(?:do )?a full (?:turn|spin|circle)|spin)")
+_F_BACK = re.compile(r"(?:turn back|face the other way|turn 180|do a 180|one eighty)")
 _F_HOME = re.compile(r"come back|come home|go home|fly home|return home|go back home")
 _F_LAND = re.compile(r"land(?: now)?")
 _F_SPLIT = re.compile(r" (?:and then|then|and|after that) ")
@@ -272,7 +273,7 @@ def fast_parse(text: str, telemetry: dict | None = None) -> BrainResult | None:
     t = re.sub(r"[,;:!?]", " and ", t)
     t = re.sub(r"[^a-z0-9. ]+", " ", t)
     t = " ".join(t.split())
-    t = re.sub(r"^(?:(?:hey |ok |okay )?jarvis )?(?:please )?(?:and )?", "", t)
+    t = re.sub(r"^(?:(?:hey |ok |okay )?(?:jarvis|drone) )?(?:please )?(?:and )?", "", t)
     t = re.sub(r"(?: and)? please$", "", t).strip()
     clauses = [c for c in _F_SPLIT.split(t) if c and c != "and"]
     if not clauses or len(clauses) > 4:
@@ -293,6 +294,8 @@ def fast_parse(text: str, telemetry: dict | None = None) -> BrainResult | None:
             actions.append({"kind": "land"})
             continue
         if _F_AROUND.fullmatch(c):
+            mv["yaw_deg"] = 360.0
+        elif _F_BACK.fullmatch(c):
             mv["yaw_deg"] = 180.0
         elif m := _F_TURN.fullmatch(c):
             deg = _fnum(m.group(2), 90.0)
@@ -391,7 +394,9 @@ def rule_parse(text: str, telemetry: dict | None = None) -> BrainResult:
                 mv["up"] += d
             elif word == "down":
                 mv["up"] -= d
-        if re.search(r"turn around|spin around|180", t):
+        if re.search(r"turn around|spin around|360|three sixty|full (?:turn|spin|circle)", t):
+            mv["yaw_deg"] = 360.0
+        elif re.search(r"turn back|other way|180|one eighty", t):
             mv["yaw_deg"] = 180.0
         elif m := re.search(r"(?:turn|rotate|spin|yaw) (left|right)(?: by)?(?: " + _NUM + r")?", t):
             deg = _n(m.group(2), 90.0)

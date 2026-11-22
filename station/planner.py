@@ -47,6 +47,7 @@ OnPhoto = Callable[[Frame, str], Awaitable[None]]
 POINTING = re.compile(r"point")
 # plans starting with one of these send a flight step first: the reply waits for its verdict
 DEFER_REPLY = ("takeoff", "move", "home", "stop", "land")
+SPIN_DPS = 30.0  # deg/s for a full turn: what tools/auto_hover --test spin flew
 
 
 class PlanAborted(Exception):
@@ -466,7 +467,7 @@ class Planner:
         if fwd or right or up:
             await self._prim("move_body", fwd=fwd, right=right, up=up)
         if a.get("yaw_deg"):
-            await self._prim("yaw", deg=a["yaw_deg"], relative=True)
+            await self._turn(a["yaw_deg"])
 
     async def _rng_move(self, a: dict) -> None:
         """rng: height changes move the held target (within the rangefinder's limit); sideways
@@ -491,7 +492,15 @@ class Planner:
             fwd, right = fwd * (1 - f), right * (1 - f)
             dist = math.hypot(fwd, right)
         if a.get("yaw_deg"):
-            await self._prim("yaw", deg=a["yaw_deg"], relative=True)
+            await self._turn(a["yaw_deg"])
+
+    async def _turn(self, deg: float) -> None:
+        """A full turn ("do a 360") is the edge's scan primitive (tools/auto_hover --test spin):
+        a relative yaw of 360 would end where it started and do nothing."""
+        if abs(deg) >= 359:
+            await self._prim("scan", rate_dps=SPIN_DPS)
+        else:
+            await self._prim("yaw", deg=deg, relative=True)
 
     async def look_for(self, target: str, K: dict) -> tuple[dict, Frame] | None:
         """One look. A shaky sighting (conf < confirm_below) must be seen again, in about the

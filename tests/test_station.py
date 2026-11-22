@@ -20,7 +20,7 @@ from edge.video import SIM_WORLD, intrinsics
 from shared.client import EdgeClient
 from station import localize_stub
 from station.ai import AI
-from station.brain import Brain, rule_parse
+from station.brain import Brain, fast_parse, rule_parse
 from station.camera import Frame, Pose
 from station.config import MissingKey, Settings
 from station.localize import box_to_goal, locate, parse_box
@@ -99,7 +99,7 @@ def test_rule_parse(text, kinds):
 def test_rule_parse_details():
     mv = rule_parse("move back 1 metre", {"armed": True}).actions[0]
     assert mv["fwd"] == -1.0 and mv["yaw_deg"] == 0
-    assert rule_parse("turn around", {"armed": True}).actions[0]["yaw_deg"] == 180
+    assert rule_parse("turn around", {"armed": True}).actions[0]["yaw_deg"] == 360  # a full turn (filming preset)
     assert rule_parse("go up half a metre", {"armed": True}).actions[0]["up"] == 0.5
     m = rule_parse("fly to the door and take a photo, then come back", {"armed": True}).actions[0]
     assert (m["target"], m["action"], m["after"]) == ("door", "photo", "come_back")
@@ -162,7 +162,7 @@ async def test_sentences_still_go_to_the_llm(text):
     ("Take off to 1.2 metres.", [("takeoff", 1.2)]),
     ("Move forward one meter and turn left 90 degrees.", [("fwd", 1.0), ("yaw_deg", -90.0)]),
     ("Jarvis, go back 50 centimetres please.", [("fwd", -0.5)]),
-    ("Go up half a metre and turn around.", [("up", 0.5), ("yaw_deg", 180.0)]),
+    ("Go up half a metre and turn around.", [("up", 0.5), ("yaw_deg", 360.0)]),
     ("1 metre left, then come back", [("right", -1.0), ("home", None)]),
     ("turn right 45°", [("yaw_deg", 45.0)]),
     ("forward 1 metre then land", [("fwd", 1.0), ("land", None)])])
@@ -1081,3 +1081,24 @@ async def test_rng_refuses_takeoff_when_the_rangefinder_isnt_on_the_floor(rig):
     await asyncio.sleep(0.3)
     await run_plan(p, [{"kind": "takeoff"}])
     assert "isn't pointing at the floor" in said[-1] and not sim.state().armed
+
+
+async def test_rng_rise_turn_around_land_does_one_full_turn(rig):
+    """'rise, turn around, land' (the filming preset): takeoff, one full scan turn, land.
+    In rng mode the turn used to be dropped; a relative yaw of 360 would do nothing."""
+    sim, edge = rig
+    p, said = rng_planner(sim, edge)
+    r = fast_parse("hey drone, rise, turn around, land")
+    assert [a["kind"] for a in r.actions] == ["takeoff", "move", "land"] and r.actions[1]["yaw_deg"] == 360
+    yaws = []
+
+    async def watch():
+        while True:
+            yaws.append(sim.state().yaw)
+            await asyncio.sleep(0.05)
+    w = asyncio.ensure_future(watch())
+    await run_plan(p, r.actions, 90)
+    w.cancel()
+    assert "scan {'rate_dps': 30.0}" in p.log
+    turned = sum(abs((b - a + 180) % 360 - 180) for a, b in zip(yaws, yaws[1:]))
+    assert turned > 330 and not sim.state().armed
