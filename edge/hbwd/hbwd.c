@@ -12,7 +12,9 @@
  *     waiting ~2 s for the FC failsafe. If the pilot has another mode it does NOT touch the mode
  *     (the pilot always wins, review2 #1); the FC failsafe is still the backstop;
  *   - prints one JSON line per event and a stats line every -s seconds with its own wake-up
- *     lateness (p-buckets, max): the jitter graph of the actual safety loop.
+ *     lateness (p-buckets, max): the jitter graph of the actual safety loop. The loop never does
+ *     I/O itself: lines go through a lock-free ring to a normal-priority logger thread (a busy
+ *     SD card once stalled the loop 433 ms when it printed directly).
  *
  * MAVLink goes to the USB relay's aux port (tools/usb_relay.py --aux 127.0.0.1:14556), which
  * writes it to the FC. MAVLink v1 frames, sysid 255 (the GCS id ArduPilot's failsafe watches).
@@ -29,6 +31,7 @@
 #include <pthread.h>
 #include <sched.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -131,7 +134,7 @@ static double wall_s(void) {
 static int set_fifo(int prio) {
     if (prio <= 0) return 0;
     struct sched_param sp = {.sched_priority = prio};
-    return pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) == 0; /* the only thread */
+    return pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) == 0; /* the loop thread only */
 }
 
 static int pin_cpu(int cpu) {
@@ -167,13 +170,58 @@ static void hist_add(hist_t *h, double ms) {
     if (ms > h->max_ms) h->max_ms = ms;
 }
 
+/* --- logging without blocking the loop -------------------------------------------------- */
+/* The loop never does I/O. stdout is a log file on the SD card, and a write there can block
+ * for hundreds of ms while the card is busy (measured on the Pi, 2026-11-22: 433 ms loop
+ * stalls while other processes hit the card). So the loop formats each line into this ring
+ * (single producer: the loop; single consumer: the logger thread) and a normal-priority
+ * thread writes them. A full ring drops the line and counts it; the loop never waits. */
+#define LOGQ 64
+#define LOGLEN 512
+static char g_logq[LOGQ][LOGLEN];
+static unsigned g_head, g_tail;          /* accessed with __atomic builtins */
+static unsigned long g_log_dropped;
+static volatile sig_atomic_t g_log_done;
+
+static void logq(const char *fmt, ...) {
+    unsigned h = __atomic_load_n(&g_head, __ATOMIC_RELAXED);
+    if (h - __atomic_load_n(&g_tail, __ATOMIC_ACQUIRE) >= LOGQ) {
+        g_log_dropped++;
+        return;
+    }
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(g_logq[h % LOGQ], LOGLEN, fmt, ap);
+    va_end(ap);
+    __atomic_store_n(&g_head, h + 1, __ATOMIC_RELEASE);
+}
+
+static void *logger(void *arg) {
+    (void)arg;
+    for (;;) {
+        unsigned t = __atomic_load_n(&g_tail, __ATOMIC_RELAXED);
+        unsigned h = __atomic_load_n(&g_head, __ATOMIC_ACQUIRE);
+        while (t != h) {
+            fputs(g_logq[t % LOGQ], stdout);
+            t++;
+            __atomic_store_n(&g_tail, t, __ATOMIC_RELEASE);
+        }
+        fflush(stdout);
+        if (g_log_done && t == __atomic_load_n(&g_head, __ATOMIC_ACQUIRE)) return NULL;
+        usleep(20000);
+    }
+}
+
 static void hist_print(const char *kind, const hist_t *h, const char *extra) {
-    printf("{\"t\": %.3f, \"kind\": \"%s\", \"n\": %llu, \"max_ms\": %.3f, \"over_2ms\": %llu, "
-           "\"edges_ms\": [0.1,0.25,0.5,1,2,5,10,20,50], \"counts\": [",
-           wall_s(), kind, (unsigned long long)h->n, h->max_ms, (unsigned long long)h->over_2ms);
-    for (size_t i = 0; i < NB; i++) printf("%s%llu", i ? "," : "", (unsigned long long)h->counts[i]);
-    printf("]%s}\n", extra);
-    fflush(stdout);
+    char counts[NB * 21 + 1];
+    size_t off = 0;
+    for (size_t i = 0; i < NB && off < sizeof counts; i++)
+        off += (size_t)snprintf(counts + off, sizeof counts - off, "%s%llu", i ? "," : "",
+                                (unsigned long long)h->counts[i]);
+    logq("{\"t\": %.3f, \"kind\": \"%s\", \"n\": %llu, \"max_ms\": %.3f, \"over_2ms\": %llu, "
+         "\"edges_ms\": [0.1,0.25,0.5,1,2,5,10,20,50], \"counts\": [%s]%s, \"log_dropped\": %lu}\n",
+         wall_s(), kind, (unsigned long long)h->n, h->max_ms, (unsigned long long)h->over_2ms,
+         counts, extra, g_log_dropped);
 }
 
 /* --- main ------------------------------------------------------------------------------ */
@@ -230,12 +278,16 @@ int main(int argc, char **argv) {
     signal(SIGINT, on_sig);
     signal(SIGTERM, on_sig);
 
+    /* the logger starts before this thread goes real-time and gets pinned, so it inherits a
+     * normal priority and no CPU pin: its writes can block without touching the loop */
+    pthread_t log_th;
+    int log_ok = pthread_create(&log_th, NULL, logger, NULL) == 0;
     int fifo_ok = set_fifo(prio), pin_ok = pin_cpu(cpu);
-    printf("{\"t\": %.3f, \"kind\": \"start\", \"pid\": %d, \"hz\": %d, \"prio\": %d, "
-           "\"prio_applied\": %s, \"cpu\": %d, \"pinned\": %s, \"pet_timeout_ms\": %d}\n",
-           wall_s(), (int)getpid(), hz, prio, fifo_ok ? "true" : "false", cpu,
-           pin_ok ? "true" : "false", timeout_ms);
-    fflush(stdout);
+    logq("{\"t\": %.3f, \"kind\": \"start\", \"pid\": %d, \"hz\": %d, \"prio\": %d, "
+         "\"prio_applied\": %s, \"cpu\": %d, \"pinned\": %s, \"pet_timeout_ms\": %d, "
+         "\"logger\": %s}\n",
+         wall_s(), (int)getpid(), hz, prio, fifo_ok ? "true" : "false", cpu,
+         pin_ok ? "true" : "false", timeout_ms, log_ok ? "true" : "false");
 
     const int64_t period = 1000000000LL / hz, timeout = (int64_t)timeout_ms * 1000000LL;
     const int64_t hb_period = 500000000LL, land_gap = 100000000LL;
@@ -268,9 +320,8 @@ int main(int argc, char **argv) {
                 last_pet = t;
                 pets++;
                 if (lost) {
-                    printf("{\"t\": %.3f, \"kind\": \"core_back\", \"gap_ms\": %.1f}\n", wall_s(),
-                           (t - lost_at) / 1e6 + timeout_ms);
-                    fflush(stdout);
+                    logq("{\"t\": %.3f, \"kind\": \"core_back\", \"gap_ms\": %.1f}\n", wall_s(),
+                         (t - lost_at) / 1e6 + timeout_ms);
                     lost = 0;
                     land_left = 0;
                 }
@@ -282,12 +333,11 @@ int main(int argc, char **argv) {
             lost = 1;
             lost_at = t;
             land_left = (armed && ours) ? 3 : 0;
-            printf("{\"t\": %.3f, \"kind\": \"core_lost\", \"gap_ms\": %.1f, \"armed\": %s, "
-                   "\"ours\": %s, \"action\": \"%s\"}\n",
-                   wall_s(), (t - last_pet) / 1e6, armed ? "true" : "false",
-                   ours ? "true" : "false",
-                   land_left ? "land" : (armed ? "none (pilot mode): FC failsafe" : "none (disarmed)"));
-            fflush(stdout);
+            logq("{\"t\": %.3f, \"kind\": \"core_lost\", \"gap_ms\": %.1f, \"armed\": %s, "
+                 "\"ours\": %s, \"action\": \"%s\"}\n",
+                 wall_s(), (t - last_pet) / 1e6, armed ? "true" : "false",
+                 ours ? "true" : "false",
+                 land_left ? "land" : (armed ? "none (pilot mode): FC failsafe" : "none (disarmed)"));
         }
         if (have_pet && !lost && t - last_hb >= hb_period) {
             size_t n = mav_heartbeat(frame);
@@ -301,9 +351,8 @@ int main(int argc, char **argv) {
             last_land = t;
             lands++;
             land_left--;
-            printf("{\"t\": %.3f, \"kind\": \"land_sent\", \"after_lost_ms\": %.1f}\n", wall_s(),
-                   (t - lost_at) / 1e6);
-            fflush(stdout);
+            logq("{\"t\": %.3f, \"kind\": \"land_sent\", \"after_lost_ms\": %.1f}\n", wall_s(),
+                 (t - lost_at) / 1e6);
         }
         if ((t - last_stats) / 1e9 >= stats_s) {
             char extra[160];
@@ -316,5 +365,7 @@ int main(int argc, char **argv) {
         }
     }
     hist_print("final", &total, "");
+    g_log_done = 1;
+    if (log_ok) pthread_join(log_th, NULL);
     return 0;
 }
