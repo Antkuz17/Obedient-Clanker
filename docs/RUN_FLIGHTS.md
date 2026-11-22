@@ -138,14 +138,15 @@ python -m tools.field_setup --demo                  # deploys this laptop's code
 python -m tools.voice_flights --edge <pi> --demo    # http://127.0.0.1:8200 (no preflight needed)
 ```
 
-**Test 4: a person stops it.** Point the drone's forward camera along an empty stretch (3+ m of
-open space in front of it). Hold Space: "Hey drone, fly forward". The edge runs a pretend forward
-move (10 m in 2 m legs at 0.5 m/s; the FC never gets anything) with the *real* person check
-every tick. Walk into the camera's view from ~4 m away toward the drone: the page draws a box
-around you with your distance, and at ~2 m the edge stops the move (`person 1.8 m ahead:
-stopped`): red PERSON AHEAD banner, Jarvis says so. If you're already in view when you say it,
-it refuses up front ("someone right in front of me"). Stay out of view for a clean run: with the
-path clear it finishes and says so.
+**Test 4: the person-safety refusal (works outdoors, any mode).** Say "test four" or "hey
+drone, fly forward" on the voice page. **Nothing is sent to the drone** (no takeoff, no move), in
+any mode, even mid-flight, so it cannot move; `tests/test_voice_flights.py` proves zero commands
+reach a connected drone in normal flying mode. Jarvis: "I'm not flying forward. There's a person
+in my path. Safety first." with a red PERSON AHEAD banner. If the on-board detector sees someone
+at that moment it quotes the real distance ("2.3 metres ahead") and the page draws the live box,
+so have a person stand in front of the drone for the clip. (The table-only variant with the
+edge in `--demo` mode, where the pretend move is stopped by a person walking in, is in
+`edge/executor.py _demo_forward`.)
 
 **QNX clip: break things.** The QNX panel on the same page (needs the drone disarmed):
 - *Kill person detector*: SIGKILL; the supervisor respawns it (~30-60 ms). Forward moves are
