@@ -72,11 +72,14 @@ class PlannerConfig:
     # the rangefinder reads the target, keep correcting from it, land if it's lost or too high.
     rng: bool = False
     rng_alt: float = 0.5           # m above the floor: default hover height
-    rng_ceiling: float = 1.2       # takeoff target handed to the FC so it keeps climbing
+    rng_ceiling: float = 0.9       # takeoff target handed to the FC so it keeps climbing (1.2 overshot to ~1.0 m)
     rng_max_alt: float = 1.2       # land if the rangefinder reads above this
     rng_no_echo: float = 1.9       # readings above this are "no echo" (the sensor reports ~2.0)
     rng_tol: float = 0.12          # correct the height when it's off by more than this
     max_leg: float = 2.0           # rng: longest single sideways move (the Pi's gate caps it)
+    rng_max_side: float = 2.0      # rng: a sideways command flies at most this far (field: 5 m
+                                   # in 2 m legs turned to face each leg and wandered off)
+    rng_fix_max: float = 0.15      # m per height correction (0.3 knocked it from 0.8 m to the floor)
     rng_stop_lead: float = 0.5     # s: stop the climb this far ahead (rangefinder + link lag)
     rng_sink_m: float = 0.25       # land if this far below the target ...
     rng_sink_s: float = 3.0        # ... for this long (not holding height)
@@ -411,7 +414,7 @@ class Planner:
             if (h is not None and self._target is not None and idle and (fix is None or fix.done())
                     and now - last_fix >= 1.0 and abs(self._target - h) > c.rng_tol):
                 last_fix = now
-                up = round(max(-0.3, min(0.3, self._target - h)), 2)
+                up = round(max(-c.rng_fix_max, min(c.rng_fix_max, self._target - h)), 2)
                 # in the background: the checks above must keep running while it flies
                 fix = asyncio.ensure_future(self._correct(up))
 
@@ -539,6 +542,11 @@ class Planner:
                 self._vertical_busy = False
             self._target = want
         dist = math.hypot(fwd, right)
+        if dist > c.rng_max_side:
+            f = c.rng_max_side / dist
+            fwd, right = fwd * f, right * f
+            await self.say(f"I'll keep it to {c.rng_max_side:.0f} metres at a time out here.")
+            dist = c.rng_max_side
         while dist > 0.01:
             f = min(1.0, c.max_leg / dist)
             await self._prim("move_body", fwd=round(fwd * f, 3), right=round(right * f, 3))

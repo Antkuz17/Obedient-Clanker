@@ -1031,7 +1031,7 @@ async def test_rng_takeoff_holds_at_the_rangefinder_height(rig):
     sim, edge = rig
     p, said = rng_planner(sim, edge)
     await run_plan(p, [{"kind": "takeoff", "alt": 1.0}])  # the brain always says 1.0
-    assert p.log[0] == "takeoff {'alt': 1.2}" and "stop" in p.log
+    assert p.log[0] == "takeoff {'alt': 0.9}" and "stop" in p.log
     assert p._target == pytest.approx(0.5)
     await asyncio.sleep(2.5)
     assert sim.state().alt == pytest.approx(0.5, abs=0.15) and sim.state().armed
@@ -1043,7 +1043,7 @@ async def test_rng_takeoff_holds_at_the_rangefinder_height(rig):
 
 async def test_rng_sideways_moves_go_in_legs_and_height_stays_in_range(rig):
     sim, edge = rig
-    p, said = rng_planner(sim, edge)
+    p, said = rng_planner(sim, edge, rng_max_side=5.0)  # legs; the field default caps at 2 m
     await run_plan(p, [{"kind": "takeoff"}])
     await run_plan(p, [{"kind": "move", "fwd": 0.0, "right": -5.0, "up": 0.0, "yaw_deg": 0.0}], 90)
     legs = [l for l in p.log if l.startswith("move_body")]
@@ -1152,7 +1152,10 @@ async def test_rng_test3_left_right_and_back(rig):
     r = fast_parse("Hey drone, rise, go left 5 metres, then right 5 metres, then come down")
     await run_plan(p, r.actions, 120)
     legs = [l for l in p.log if l.startswith("move_body") and "right" in l]
-    assert len(legs) == 6 and abs(sim.state().e) < 0.35 and not sim.state().armed
+    # capped at 2 m per command in the field (5 m in legs wandered off): one leg each way
+    assert legs == ["move_body {'fwd': 0.0, 'right': -2.0}", "move_body {'fwd': 0.0, 'right': 2.0}"]
+    assert abs(sim.state().e) < 0.35 and not sim.state().armed
+    assert any("2 metres at a time" in s for s in said)
     assert not any("sinking" in s or "on my own" in s or "pilot" in s for s in said)
 
 
@@ -1259,11 +1262,12 @@ async def test_rng_take_a_photo_mid_flight(rig):
 
 
 @pytest.mark.parametrize("text", [
+    "Hey drone, rise and then go five meters to the left, take a photo and then come back five meters to the right.",
     "Hey, rise, go five meters to the left and then five meters to the right.",   # field 00:21
     "Hey drone, rise, go to the left 5 meters, then to the right 5 meters, then land.",
     "rise, fly 5 metres to your left, then 5 metres to your right",
 ])
 def test_test3_phrasings_skip_the_llm(text):
     r = fast_parse(text)
-    assert r and [a["kind"] for a in r.actions][:3] == ["takeoff", "move", "move"]
-    assert [r.actions[1]["right"], r.actions[2]["right"]] == [-5.0, 5.0]
+    assert r and r.actions[0]["kind"] == "takeoff"
+    assert [a["right"] for a in r.actions if a["kind"] == "move"] == [-5.0, 5.0]
