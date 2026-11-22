@@ -251,8 +251,10 @@ _F_TURN = re.compile(r"(?:turn|rotate|spin|yaw) (?:to the )?(left|right)"
                      r"(?: (?:by )?" + _FNUM + r"(?: ?degrees?)?)?")
 _F_AROUND = re.compile(r"(?:(?:turn|spin|rotate)(?: all the way)? around|(?:do )?(?:a )?(?:full )?(?:360|three sixty)(?: degrees?)?(?: turn| spin)?|(?:do )?a full (?:turn|spin|circle)|spin)")
 _F_BACK = re.compile(r"(?:turn back|face the other way|turn 180|do a 180|one eighty)")
+_F_BARE = re.compile(_FVERB + r"(?:to the )?" + _FDIR)  # no distance
+BARE_MOVE_M = 2.0  # m for "go left" with no distance (one leg; the Pi's gate caps a move at 2 m)
 _F_HOME = re.compile(r"come back|come home|go home|fly home|return home|go back home")
-_F_LAND = re.compile(r"land(?: now)?")
+_F_LAND = re.compile(r"(?:land|come down|touch down|set down)(?: now)?")
 _F_SPLIT = re.compile(r" (?:and then|then|and|after that) ")
 
 
@@ -274,7 +276,13 @@ def fast_parse(text: str, telemetry: dict | None = None) -> BrainResult | None:
     t = re.sub(r"[^a-z0-9. ]+", " ", t)
     t = " ".join(t.split())
     t = re.sub(r"^(?:(?:hey |ok |okay )?(?:jarvis|drone) )?(?:please )?(?:and )?", "", t)
+    # conversational openers: "I want you to rise, turn around and land" (field 2026-11-21: this
+    # went to the LLM, which dropped the turn and the landing)
+    t = re.sub(r"^(?:(?:i want you to|i'?d like you to|i would like you to|i need you to|can you|"
+               r"could you|would you|will you|go ahead and|let'?s|now|just|please) )+", "", t)
     t = re.sub(r"(?: and)? please$", "", t).strip()
+    t = re.sub(r"\b(?:and )+", "and ", t)              # "turn around, and land" -> one "and"
+    t = re.sub(r"^and |(?: and)+$", "", t).strip()
     clauses = [c for c in _F_SPLIT.split(t) if c and c != "and"]
     if not clauses or len(clauses) > 4:
         return None
@@ -302,6 +310,19 @@ def fast_parse(text: str, telemetry: dict | None = None) -> BrainResult | None:
             if not 0 < deg <= 360:
                 return None
             mv["yaw_deg"] = deg if m.group(1) == "right" else -deg
+        elif (m := _F_BARE.fullmatch(c)) and len(clauses) > 1:  # "rise, go left, then right": one leg
+            word = m.group(1)
+            d = BARE_MOVE_M
+            if word.startswith(("forward", "ahead")):
+                mv["fwd"] = d
+            elif word.startswith("back"):
+                mv["fwd"] = -d
+            elif word in ("left", "right"):
+                mv["right"] = d if word == "right" else -d
+            elif word == "up":
+                mv["up"] = 0.5
+            else:
+                mv["up"] = -0.5
         else:
             m = _F_MOVE1.fullmatch(c)
             if m:

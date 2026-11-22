@@ -1102,3 +1102,55 @@ async def test_rng_rise_turn_around_land_does_one_full_turn(rig):
     assert "scan {'rate_dps': 30.0}" in p.log
     turned = sum(abs((b - a + 180) % 360 - 180) for a, b in zip(yaws, yaws[1:]))
     assert turned > 330 and not sim.state().armed
+
+
+# --- field 2026-11-21 (outdoor, GPS): what went wrong, so it can't again ---------------------
+@pytest.mark.parametrize("text, kinds", [
+    ("I want you to rise, turn around, and land.", ["takeoff", "move", "land"]),   # went to the LLM
+    ("Can you rise, go left, then right, then come down?", ["takeoff", "move", "move", "land"]),
+    ("Hey drone, rise, go left 5 metres, then right 5 metres, then come down",
+     ["takeoff", "move", "move", "land"]),
+])
+def test_filming_phrases_skip_the_llm(text, kinds):
+    r = fast_parse(text)
+    assert r and [a["kind"] for a in r.actions] == kinds
+
+
+async def test_rng_lands_when_it_sinks_instead_of_holding(rig):
+    """It sank from 0.5 m to 5 cm while 'holding' and nothing noticed."""
+    sim, edge = rig
+    p, said = rng_planner(sim, edge, rng_sink_s=1.0)
+    await run_plan(p, [{"kind": "takeoff"}])
+    p.rng_height = lambda: 0.05
+    await until(lambda: any(s.startswith("I'm sinking") for s in said), 5)
+    await until(lambda: not sim.state().armed, 20)
+
+
+async def test_rng_lands_when_it_turns_on_its_own(rig):
+    """It then yawed on its own just above the floor; no turn was ever sent."""
+    sim, edge = rig
+    p, said = rng_planner(sim, edge)
+    await run_plan(p, [{"kind": "takeoff"}])
+    await asyncio.sleep(0.6)
+    p._yaw = lambda: (sim.state().yaw + 90) % 360
+    await until(lambda: any("turning on my own" in s for s in said), 5)
+    await until(lambda: not sim.state().armed, 20)
+
+
+async def test_rng_full_turn_is_not_mistaken_for_drift(rig):
+    sim, edge = rig
+    p, said = rng_planner(sim, edge)
+    await run_plan(p, fast_parse("I want you to rise, turn around, and land.").actions, 90)
+    assert "scan {'rate_dps': 30.0}" in p.log and not sim.state().armed
+    assert not any("on my own" in s or "pilot" in s for s in said)  # our LAND isn't the pilot
+
+
+async def test_rng_test3_left_right_and_back(rig):
+    """Test 3: rise, 5 m left and 5 m right in 2 m legs, land back near the start."""
+    sim, edge = rig
+    p, said = rng_planner(sim, edge)
+    r = fast_parse("Hey drone, rise, go left 5 metres, then right 5 metres, then come down")
+    await run_plan(p, r.actions, 120)
+    legs = [l for l in p.log if l.startswith("move_body") and "right" in l]
+    assert len(legs) == 6 and abs(sim.state().e) < 0.35 and not sim.state().armed
+    assert not any("sinking" in s or "on my own" in s or "pilot" in s for s in said)

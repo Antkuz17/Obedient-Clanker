@@ -77,6 +77,10 @@ class PlannerConfig:
     rng_no_echo: float = 1.9       # readings above this are "no echo" (the sensor reports ~2.0)
     rng_tol: float = 0.12          # correct the height when it's off by more than this
     max_leg: float = 2.0           # rng: longest single sideways move (the Pi's gate caps it)
+    rng_stop_lead: float = 0.5     # s: stop the climb this far ahead (rangefinder + link lag)
+    rng_sink_m: float = 0.25       # land if this far below the target ...
+    rng_sink_s: float = 3.0        # ... for this long (not holding height)
+    rng_yaw_drift: float = 45.0    # deg: land if the heading drifts this far with no turn sent
 
 
 def compass(dn: float, de: float) -> str:
@@ -117,6 +121,8 @@ class Planner:
         self._target: float | None = None  # height to hold (m above the floor); None = don't
         self._guard: asyncio.Task | None = None
         self._busy_prims = 0      # primitives in flight: no height corrections meanwhile
+        self._vertical_busy = False  # an up/down move is running: no "sinking" check
+        self._our_land = False    # we sent LAND: the FC leaving GUIDED isn't the pilot
 
     # --- public ------------------------------------------------------------------------------
     def submit(self, actions: list[dict], reply: str | None = None) -> asyncio.Task | None:
@@ -218,7 +224,11 @@ class Planner:
         self.log.append(f"{op} {args}" if args else op)
         if not self.edge.connected:
             raise PlanAborted("I'm not connected to the drone.")
-        cid, ack = await self.edge.send(op, **args)   # = edge.run(), split to report the verdict
+        try:
+            cid, ack = await self.edge.send(op, **args)   # = edge.run(), split to report the verdict
+        except (asyncio.TimeoutError, OSError) as e:
+            raise PlanAborted("The drone didn't answer, so that may not have gone through. If it's "
+                              "flying, it hovers and then lands on its own.") from e
         if not ack["ok"]:
             raise CommandRejected(ack["reason"])
         self._accepted = True
@@ -283,6 +293,7 @@ class Planner:
 
     async def _rng_takeoff(self, alt: float) -> None:
         c = self.cfg
+        self._our_land = False
         if self.tel.get("armed"):  # already flying (FC height said otherwise): just hold here
             self._target = self.rng_height() or alt
             self._start_guard()
@@ -296,7 +307,7 @@ class Planner:
         cid = await self._send("takeoff", alt=c.rng_ceiling)
         # the takeoff is pre-empted by "stop" below; collect its done so it doesn't linger
         asyncio.ensure_future(self._drain(cid))
-        t0, lost = time.monotonic(), None
+        t0, lost, prev, rate = time.monotonic(), None, None, 0.0
         try:
             while True:  # climb until the rangefinder says we're there
                 await asyncio.sleep(0.1)
@@ -308,7 +319,10 @@ class Planner:
                         raise PlanAborted("I lost my height sensor while taking off, so I'm landing.")
                     continue
                 lost = None
-                if h >= target - 0.05:
+                if prev and now > prev[1]:  # climb rate, smoothed: stop early enough not to overshoot
+                    rate = 0.6 * rate + 0.4 * (h - prev[0]) / (now - prev[1])
+                prev = (h, now)
+                if h + max(0.0, rate) * c.rng_stop_lead >= target - 0.05:
                     break
                 if now - t0 > 3 and not self._fc_guided():
                     raise PlanAborted("The flight controller didn't take the takeoff (pilot, "
@@ -319,6 +333,7 @@ class Planner:
             await self._prim("stop")  # hold here
         except BaseException:
             if self._fc_guided():
+                self._our_land = True
                 with _quiet():
                     await self.edge.run("land", timeout=60)
             raise
@@ -333,11 +348,22 @@ class Planner:
         if self._guard is None or self._guard.done():
             self._guard = asyncio.create_task(self._rng_guard())
 
+    def _yaw(self) -> float | None:
+        return self.tel.get("yaw")
+
     async def _rng_guard(self) -> None:
-        """Beside every rng flight: hold the target height from the rangefinder; land if the
-        rangefinder is lost for 1 s or reads above rng_max_alt; let go if the pilot or a failsafe
-        takes the FC out of GUIDED (the edge never fights the pilot)."""
-        c, lost, last_fix = self.cfg, None, time.monotonic()
+        """Beside every rng flight, every 0.2 s (never blocked by a correction):
+        - hold the target height from the rangefinder (corrections run in the background);
+        - land if the rangefinder is lost for 1 s, reads above rng_max_alt, or the drone stays
+          rng_sink_m below its target for rng_sink_s (it isn't holding height: field 2026-11-21,
+          it sank from 0.5 m to 5 cm while "holding");
+        - land if the heading drifts more than rng_yaw_drift deg with no turn commanded (the
+          same flight then yawed on its own just above the floor);
+        - let go if the pilot or a failsafe takes the FC out of GUIDED (the edge never fights
+          the pilot); our own LAND isn't reported as the pilot."""
+        c = self.cfg
+        lost = low_since = yaw_ref = None
+        last_fix, fix = time.monotonic(), None
         while True:
             await asyncio.sleep(0.2)
             now = time.monotonic()
@@ -346,10 +372,12 @@ class Planner:
                 return  # landed (or disarmed)
             if self.tel.get("mode") != "GUIDED":
                 self._target = None
-                self.cancel()
-                await self.say("The pilot or a failsafe has the drone now. I've let go.")
+                if not self._our_land:
+                    self.cancel()
+                    await self.say("The pilot or a failsafe has the drone now. I've let go.")
                 return
             h = self.rng_height()
+            idle = self._busy_prims == 0 and not self._our_land
             why = None
             if h is None:
                 lost = lost or now
@@ -359,19 +387,39 @@ class Planner:
                 lost = None
                 if h > c.rng_max_alt:
                     why = f"I'm {h:.1f} metres up, above the {c.rng_max_alt} metre limit, so I'm landing."
+                elif (self._target is not None and not self._vertical_busy and not self._our_land
+                      and h < self._target - c.rng_sink_m):
+                    low_since = low_since or now
+                    if now - low_since > c.rng_sink_s:
+                        why = (f"I'm sinking: {h:.2f} metres up when I should be at "
+                               f"{self._target:.1f}, so I'm landing.")
+                else:
+                    low_since = None
+            y = self._yaw()
+            if not idle or y is None:
+                yaw_ref = None  # a primitive may turn the drone (scan, yaw, face the move)
+            elif yaw_ref is None:
+                yaw_ref = y
+            elif abs((y - yaw_ref + 180) % 360 - 180) > c.rng_yaw_drift:
+                why = (f"I'm turning on my own ({abs((y - yaw_ref + 180) % 360 - 180):.0f} "
+                       "degrees), so I'm landing.")
             if why:
                 self._target = None
                 self.submit([{"kind": "land"}])
                 await self.say(why)
                 return
-            if (h is not None and self._target is not None and self._busy_prims == 0
+            if (h is not None and self._target is not None and idle and (fix is None or fix.done())
                     and now - last_fix >= 1.0 and abs(self._target - h) > c.rng_tol):
                 last_fix = now
                 up = round(max(-0.3, min(0.3, self._target - h)), 2)
-                try:  # direct: a correction isn't a plan step (no dashboard verdict, no reply)
-                    await self.edge.run("move_body", timeout=10, up=up)
-                except Exception as e:
-                    log.info("height correction %+.2f m: %s", up, e)
+                # in the background: the checks above must keep running while it flies
+                fix = asyncio.ensure_future(self._correct(up))
+
+    async def _correct(self, up: float) -> None:
+        try:  # direct: a correction isn't a plan step (no dashboard verdict, no reply)
+            await self.edge.run("move_body", timeout=10, up=up)
+        except Exception as e:
+            log.info("height correction %+.2f m: %s", up, e)
 
     async def _takeoff(self, alt: float) -> None:
         if self.cfg.rng:
@@ -449,6 +497,7 @@ class Planner:
 
     async def _do_land(self, a: dict) -> None:
         self._target = None  # stop height corrections: they'd fight the descent
+        self._our_land = True
         await self._prim("land")
 
     async def _do_stop(self, a: dict) -> None:
@@ -483,7 +532,11 @@ class Planner:
                                   f"only lets me fly up to {top:.1f}, so I'm staying at {now:.1f}.")
             if want < 0.2:
                 raise PlanAborted("That's too close to the floor. Say land if you want me down.")
-            await self._prim("move_body", up=round(want - (self.rng_height() or now), 2))
+            self._vertical_busy = True
+            try:
+                await self._prim("move_body", up=round(want - (self.rng_height() or now), 2))
+            finally:
+                self._vertical_busy = False
             self._target = want
         dist = math.hypot(fwd, right)
         while dist > 0.01:

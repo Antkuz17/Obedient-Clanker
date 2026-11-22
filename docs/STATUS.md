@@ -153,6 +153,22 @@ position (altitude used to sag about 0.1 m per command).
   refused "go up 2 m", land). **Not flown yet**: first real flight = "take off", then "land", pilot on SwA.
   Fallback: `tools.voice_flights` (8200).
 
+## First outdoor dashboard flights, GPS (2026-11-21 night, cloud lead with Claude; **drone lead: please read**)
+
+- Reached the drone over an SSH tunnel on the Pi's IPv6 link-local address (the iPhone hotspot gave
+  the Mac no IPv4); `--stations 127.0.0.1`. FC on `fc_profile --gps`. GPS detected first try, but
+  arming failed with "GPS 1 still configuring" (u-blox nav-rate config 0x1FF3, every 30 s):
+  **`GPS_AUTO_CONFIG=0` set on the FC** (not in fc_profile yet; set back to 1 to undo).
+- Battery sag: 11.76 V at rest fell to 9.9 V at ~5 A; the edge's 10.2 V / 2 s rule landed it after 5 s.
+  Use a fresh pack.
+- "I want you to rise, turn around, and land" went to the LLM, which sent only `takeoff 2.0`. After
+  the hold at 0.5 m the drone **sank to ~5 cm in GUIDED and yawed on its own**; pilot hit LAND.
+  Root cause of the sink not known yet (blackbox flight at ~03:50 UTC on the Pi not read).
+  Station fixes: filming phrases parse without the LLM; full turn = `scan` 30 deg/s (rng mode used
+  to drop turns); guard never blocks on a correction; lands if 0.25 m below target for 3 s or the
+  heading drifts > 45 deg with no turn sent; takeoff stop leads the climb rate; our own LAND isn't
+  reported as the pilot.
+
 ## Limits removed for flying outdoors (2026-11-21, cloud lead's call; **drone lead: please review**)
 
 `edge/config.py`: `alt_max`, `fence_half`, `max_step`, `max_takeoff_alt` are now `None` (no
