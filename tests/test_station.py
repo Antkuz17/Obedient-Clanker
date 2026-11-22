@@ -1032,10 +1032,10 @@ async def test_rng_takeoff_holds_at_the_rangefinder_height(rig):
     sim, edge = rig
     p, said = rng_planner(sim, edge)
     await run_plan(p, [{"kind": "takeoff", "alt": 1.0}])  # the brain always says 1.0
-    assert p.log[0] == "takeoff {'alt': 0.9}" and "stop" in p.log
-    assert p._target == pytest.approx(0.5)
+    assert p.log[0] == "takeoff {'alt': 1.0}" and "stop" in p.log
+    assert p._target == pytest.approx(0.7)
     await asyncio.sleep(2.5)
-    assert sim.state().alt == pytest.approx(0.5, abs=0.15) and sim.state().armed
+    assert sim.state().alt == pytest.approx(0.7, abs=0.15) and sim.state().armed
     await run_plan(p, [{"kind": "land"}])
     await until(lambda: not sim.state().armed)
     await asyncio.sleep(0.5)
@@ -1051,9 +1051,9 @@ async def test_rng_sideways_moves_go_in_legs_and_height_stays_in_range(rig):
     assert legs == ["move_body {'fwd': 0.0, 'right': -2.0}"] * 2 + ["move_body {'fwd': 0.0, 'right': -1.0}"]
     assert sim.state().e == pytest.approx(-5.0, abs=0.3)
     await run_plan(p, [{"kind": "move", "up": 0.3}])
-    assert p._target == pytest.approx(0.8) and sim.state().alt == pytest.approx(0.8, abs=0.15)
+    assert p._target == pytest.approx(1.0) and sim.state().alt == pytest.approx(1.0, abs=0.15)
     await run_plan(p, [{"kind": "move", "up": 1.0}])  # 1.8 m: past what the rangefinder holds
-    assert "only lets me fly up to 1.0" in said[-1] and p._target == pytest.approx(0.8)
+    assert "only lets me fly up to 1.0" in said[-1] and p._target == pytest.approx(1.0)
     await run_plan(p, [{"kind": "land"}])
 
 
@@ -1170,7 +1170,7 @@ async def test_rng_test2_rise_360_then_hover_until_told_to_land(rig):
     assert "scan {'rate_dps': 30.0}" in p.log
     await asyncio.sleep(3)  # hovering, nobody has said land
     s = sim.state()
-    assert s.armed and s.alt == pytest.approx(0.5, abs=0.15) and not p._guard.done()
+    assert s.armed and s.alt == pytest.approx(0.7, abs=0.15) and not p._guard.done()
     p.submit(fast_parse("land").actions)                     # said mid-flight
     await until(lambda: not sim.state().armed, 30)
     assert not any("sinking" in x or "on my own" in x or "pilot" in x for x in said)
@@ -1218,7 +1218,7 @@ async def test_rng_test4_person_ahead_refuses_the_forward_move():
         await asyncio.sleep(2)
         s = sim.state()
         assert s.armed and math.hypot(s.n - here.n, s.e - here.e) < 0.15  # never moved
-        assert s.alt == pytest.approx(0.5, abs=0.15)
+        assert s.alt == pytest.approx(0.7, abs=0.15)
         assert any(e["kind"] == "safety_reject" and "person" in e["detail"] for e in edge.events)
         seen["m"] = None                                  # they step away: now it's allowed
         await asyncio.sleep(0.5)
@@ -1259,7 +1259,7 @@ async def test_rng_take_a_photo_mid_flight(rig):
     await run_plan(p, r.actions)
     assert photos and sim.state().armed
     # the 10x-speed sim overshoots the takeoff; the guard must bring it back to 0.5 m
-    await until(lambda: abs(sim.state().alt - 0.5) < 0.15, 15)
+    await until(lambda: abs(sim.state().alt - 0.7) < 0.15, 15)
     p.submit(fast_parse("land").actions)
     await until(lambda: not sim.state().armed, 30)
 
@@ -1361,3 +1361,16 @@ def test_test4_switch_endpoint(tmp_path):
         assert c.post("/test4", json={"on": True}).json() == {"test4_armed": True}
         assert app.state.hub.brain.test4_armed
         assert c.post("/test4", json={"on": False}).json() == {"test4_armed": False}
+
+
+async def test_rng_flying_low_is_not_sinking(rig):
+    """Field 02:06: on a fresh pack it flew its 2 m leg steadily 12-20 cm off the ground (under
+    its target); the old guard called that sinking and landed it. Only near-touching lands."""
+    sim, edge = rig
+    p, said = rng_planner(sim, edge)
+    await run_plan(p, [{"kind": "takeoff"}])
+    p.rng_height = lambda: 0.15
+    await asyncio.sleep(4.5)
+    assert sim.state().armed and not any("sinking" in s for s in said)
+    p.rng_height = lambda: 0.05                        # now it really is about to touch
+    await until(lambda: any("sinking" in s for s in said), 6)

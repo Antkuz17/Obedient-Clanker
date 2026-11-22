@@ -71,8 +71,8 @@ class PlannerConfig:
     # takeoff stops before lift-off. With rng on: take off toward rng_ceiling, hold the moment
     # the rangefinder reads the target, keep correcting from it, land if it's lost or too high.
     rng: bool = False
-    rng_alt: float = 0.5           # m above the floor: default hover height
-    rng_ceiling: float = 0.9       # takeoff target handed to the FC so it keeps climbing (1.2 overshot to ~1.0 m)
+    rng_alt: float = 0.7           # m above the floor: hover target (it sags ~0.2-0.4 m while moving)
+    rng_ceiling: float = 1.0       # takeoff target handed to the FC so it keeps climbing
     rng_max_alt: float = 1.2       # land if the rangefinder reads above this
     rng_no_echo: float = 1.9       # readings above this are "no echo" (the sensor reports ~2.0)
     rng_tol: float = 0.12          # correct the height when it's off by more than this
@@ -81,8 +81,9 @@ class PlannerConfig:
                                    # in 2 m legs turned to face each leg and wandered off)
     rng_fix_max: float = 0.15      # m per height correction (0.3 knocked it from 0.8 m to the floor)
     rng_stop_lead: float = 0.5     # s: stop the climb this far ahead (rangefinder + link lag)
-    rng_sink_m: float = 0.25       # land if this far below the target ...
-    rng_sink_s: float = 3.0        # ... for this long (not holding height)
+    rng_sink_floor: float = 0.10   # land if this close to the floor (m of clearance) ...
+    rng_sink_s: float = 3.0        # ... for this long. Not "below target": it flies a 2 m leg
+                                   # steadily 0.3-0.4 m under its target (field 02:06)
     rng_yaw_drift: float = 45.0    # deg: land if the heading drifts this far with no turn sent
 
 
@@ -358,8 +359,8 @@ class Planner:
         """Beside every rng flight, every 0.2 s (never blocked by a correction):
         - hold the target height from the rangefinder (corrections run in the background);
         - land if the rangefinder is lost for 1 s, reads above rng_max_alt, or the drone stays
-          rng_sink_m below its target for rng_sink_s (it isn't holding height: field 2026-11-21,
-          it sank from 0.5 m to 5 cm while "holding");
+          within rng_sink_floor of the floor for rng_sink_s (field 2026-11-21: it sank from 0.5 m
+          to 5 cm while "holding"; but flying low is fine);
         - land if the heading drifts more than rng_yaw_drift deg with no turn commanded (the
           same flight then yawed on its own just above the floor);
         - let go if the pilot or a failsafe takes the FC out of GUIDED (the edge never fights
@@ -391,11 +392,11 @@ class Planner:
                 if h > c.rng_max_alt:
                     why = f"I'm {h:.1f} metres up, above the {c.rng_max_alt} metre limit, so I'm landing."
                 elif (self._target is not None and not self._vertical_busy and not self._our_land
-                      and h < self._target - c.rng_sink_m):
+                      and h < c.rng_sink_floor):
                     low_since = low_since or now
                     if now - low_since > c.rng_sink_s:
-                        why = (f"I'm sinking: {h:.2f} metres up when I should be at "
-                               f"{self._target:.1f}, so I'm landing.")
+                        why = (f"I'm sinking: {h:.2f} metres off the ground, so I'm "
+                               "landing.")
                 else:
                     low_since = None
             y = self._yaw()
