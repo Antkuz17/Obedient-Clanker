@@ -3,6 +3,8 @@
 Voice-controlled indoor drone for Hack Western 13 (Nov 20–22, 2026). Tracks: Best Use of QNX,
 Best Use of Vultr. Two people.
 
+**Flying the real drone (any laptop):** [docs/RUN_FLIGHTS.md](docs/RUN_FLIGHTS.md).
+
 **Read first:** [docs/HANDOVER.md](docs/HANDOVER.md) (current state, how to run everything, gotchas), then [docs/PRD.md](docs/PRD.md) (the plan, the split, the contracts), [docs/TODO.md](docs/TODO.md) (the to-do list), then
 [docs/STATUS.md](docs/STATUS.md) (what's built, what's verified, what's next). Hardware and
 flight details: `docs/hardware.md`, `docs/flight-setup.md`, `docs/qnx.md`.

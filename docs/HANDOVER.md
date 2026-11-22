@@ -1,5 +1,7 @@
 # Handover: drone side (as of 2026-11-21 evening)
 
+**To fly the real drone from any laptop (field setup, GPS, voice flights): [RUN_FLIGHTS.md](RUN_FLIGHTS.md).**
+
 For anyone picking this up cold, human or Claude. Read this, then [TODO.md](TODO.md) and
 [STATUS.md](STATUS.md). The plan and the A↔B contract are in [PRD.md](PRD.md); the end-to-end
 wiring is in [flow.md](flow.md); the QNX facts verified on the board are in [qnx.md](qnx.md).
