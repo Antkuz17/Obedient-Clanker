@@ -26,6 +26,10 @@ PROFILE: dict[str, tuple[float, bool, str]] = {
     "FS_GCS_ENABLE": (5, False, "GCS (edge core) lost -> Land"),
     "FS_GCS_TIMEOUT": (2, False, "seconds without a GCS heartbeat"),
     "FS_EKF_ACTION": (1, False, "EKF failsafe -> Land"),
+    # low battery -> Land below BATT_LOW_VOLT 10.5 V for 10 s, judged on the sag-compensated
+    # voltage: the pack dips to ~10.4 V under ~80% hover throttle and the raw reading landed it
+    # mid-test (pilot's OK, 2026-11-22)
+    "BATT_FS_VOLTSRC": (1, False, "battery failsafe uses sag-compensated voltage"),
     # pilot switch: SwA on channel 5, up = AltHold, down = Land (verified on the board)
     "FLTMODE_CH": (5, False, "SwA"),
     "FLTMODE1": (2, False, "SwA up: AltHold"),
