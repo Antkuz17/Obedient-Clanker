@@ -27,7 +27,7 @@ from .audio import Speaker
 from .brain import Brain
 from .camera import EdgeCamera, Frame
 from .config import MissingKey, Settings
-from .planner import Planner
+from .planner import Planner, PlannerConfig
 
 log = logging.getLogger("station")
 
@@ -44,7 +44,8 @@ QNX_PORT = 7010            # UDP: QNX demo stats from the Pi (supervisor, jitter
 
 class Station:
     def __init__(self, s: Settings, *, local: bool = False, stub_locate: bool = False,
-                 speaker: bool = True, ai: AI | None = None, qnx_port: int | None = QNX_PORT):
+                 speaker: bool = True, ai: AI | None = None, qnx_port: int | None = QNX_PORT,
+                 rng: bool = False):
         self.s = s
         self.local = local
         self.ai = ai or AI(s)
@@ -58,7 +59,8 @@ class Station:
         self.planner = Planner(self.edge, self.camera, locate=locate,
                                ai=self.ai if s.vultr_key else None, memory=self.memory_search,
                                say=self.say, on_photo=self.on_photo,
-                               on_approved=self._on_approved)
+                               on_approved=self._on_approved,
+                               cfg=PlannerConfig(rng=rng))
         self.brain = Brain(self.ai if s.vultr_key else None)
         self.ws = None
         self._req = itertools.count(1)

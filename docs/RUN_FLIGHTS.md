@@ -90,6 +90,14 @@ A new preflight is needed before every flight. The page shows the drone's camera
 which flight it picked, Jarvis's reply, the flight log and live charts (real height vs the FC's
 estimate, the track from above, battery).
 
+### From the dashboard (one page for everything; not flown yet, see STATUS.md)
+```sh
+python -m tools.demo_laptop --edge <pi> --rng
+```
+Open **http://127.0.0.1:8100**: hold Space (or the pink button) and talk, or "Type instead".
+`--rng` takes off by the rangefinder like `auto_hover --rng` (0.5 m), holds from it, lands if it's
+lost or above 1.2 m. Run the preflight above first. STOP / Esc always works.
+
 ### Without voice
 ```sh
 python -m tools.auto_hover --host <pi> --rng --test hover       # then spin, then leftright

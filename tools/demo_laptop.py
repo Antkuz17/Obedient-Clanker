@@ -2,6 +2,7 @@
 
   python -m tools.demo_laptop                 # dashboard http://127.0.0.1:8100
   python -m tools.demo_laptop --edge 192.168.68.131
+  python -m tools.demo_laptop --edge <pi> --rng      # fly it: the rangefinder decides height
 
 Like `python -m station.dev`, but the station drives the drone at EDGE_HOST (put the drone in
 demo mode first if it mustn't fly: `python -m tools.deploy_pi --stations <ips> --demo`).
@@ -28,6 +29,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(prog="tools.demo_laptop")
     ap.add_argument("--edge", help="the Pi (default EDGE_HOST from .env)")
     ap.add_argument("--port", type=int, default=CLOUD, help="dashboard port")
+    ap.add_argument("--rng", action="store_true",
+                    help="station flies with rangefinder height (the real drone)")
     ap.add_argument("--station-audio", action="store_true",
                     help="also play replies from the station (not just the dashboard)")
     a = ap.parse_args()
@@ -48,7 +51,7 @@ def main() -> None:
     if not wait_http(f"http://127.0.0.1:{a.port}/health"):
         print(f"cloud app didn't start; see {logs / 'cloud.log'}")
     start("station", "-m", "station", "--edge", edge, "--cloud", f"ws://127.0.0.1:{a.port}",
-          *([] if a.station_audio else ["--no-audio"]))
+          *([] if a.station_audio else ["--no-audio"]), *(["--rng"] if a.rng else []))
     print(f"\n  dashboard  http://127.0.0.1:{a.port}\n  drone      {edge}  "
           f"(video http://{edge}:8080/forward.mjpg)\n  logs       {logs}\n  Ctrl-C to stop.\n",
           flush=True)

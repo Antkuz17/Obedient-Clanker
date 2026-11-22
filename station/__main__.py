@@ -3,6 +3,7 @@
   python -m station --edge 127.0.0.1:7100 --local --stub-locate   # sim edge (edge --sim --port 7100)
   python -m station --edge <pi ip>                           # real drone, via the Vultr cloud
   python -m station --edge <pi ip> --local --mic             # no cloud, laptop mic
+  python -m station --edge <pi ip> --rng                     # real drone: rangefinder decides height
 
 Keys and URLs come from .env (see .env.example).
 """
@@ -27,6 +28,9 @@ if __name__ == "__main__":
                     help="find objects from the sim room's ground truth (python -m edge --sim)")
     ap.add_argument("--qnx-port", type=int, default=7010,
                     help="UDP port for QNX demo stats from the Pi (0 = off)")
+    ap.add_argument("--rng", action="store_true",
+                    help="rangefinder decides height (real drone: the FC's height drifts on the "
+                         "ground). Same logic as tools/auto_hover --rng")
     ap.add_argument("--no-audio", action="store_true", help="don't play replies")
     ap.add_argument("-v", action="store_true")
     a = ap.parse_args()
@@ -46,7 +50,7 @@ if __name__ == "__main__":
     if not s.vultr_key:
         logging.warning("VULTR_INFERENCE_KEY not set: rule-based brain, no vision or memory")
     st = Station(s, local=a.local, stub_locate=a.stub_locate, speaker=not a.no_audio,
-                 qnx_port=a.qnx_port or None)
+                 qnx_port=a.qnx_port or None, rng=a.rng)
     try:
         asyncio.run(st.run(mic=a.mic))
     except KeyboardInterrupt:

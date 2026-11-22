@@ -17,6 +17,7 @@ The planner is never trusted either: the edge gates every primitive it sends.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import math
 import re
@@ -31,6 +32,11 @@ from . import vision
 from .camera import EdgeCamera, Frame
 
 log = logging.getLogger("planner")
+
+
+def _quiet():
+    """Best effort: a landing or cleanup call must never raise over the real error."""
+    return contextlib.suppress(Exception)
 
 Say = Callable[[str], Awaitable[None]]
 Locate = Callable[..., Awaitable[dict | None]]
@@ -59,6 +65,17 @@ class PlannerConfig:
     confirm_below: float = 0.7     # sightings less confident than this need a second look
     confirm_m: float = 0.6         # ... that lands within this distance of the first
     max_pose_age: float = 0.5      # s; older frame poses (X-Pose-Age) can't place a target
+    # Rangefinder height (the real drone; tools/auto_hover.py --rng is the field-tested original).
+    # The FC's own height estimate drifts up on the ground while the motors spool, so a plain
+    # takeoff stops before lift-off. With rng on: take off toward rng_ceiling, hold the moment
+    # the rangefinder reads the target, keep correcting from it, land if it's lost or too high.
+    rng: bool = False
+    rng_alt: float = 0.5           # m above the floor: default hover height
+    rng_ceiling: float = 1.2       # takeoff target handed to the FC so it keeps climbing
+    rng_max_alt: float = 1.2       # land if the rangefinder reads above this
+    rng_no_echo: float = 1.9       # readings above this are "no echo" (the sensor reports ~2.0)
+    rng_tol: float = 0.12          # correct the height when it's off by more than this
+    max_leg: float = 2.0           # rng: longest single sideways move (the Pi's gate caps it)
 
 
 def compass(dn: float, de: float) -> str:
@@ -94,6 +111,11 @@ class Planner:
         self._reply: str | None = None  # brain reply held until the edge accepts a step
         self.log: list[str] = []  # human-readable trace, for the dashboard and tests
         self.home: tuple[float, float] | None = None  # first takeoff point (the edge's fence)
+        # rng mode
+        self._ground = 0.12       # rangefinder reading on the floor, learned before each takeoff
+        self._target: float | None = None  # height to hold (m above the floor); None = don't
+        self._guard: asyncio.Task | None = None
+        self._busy_prims = 0      # primitives in flight: no height corrections meanwhile
 
     # --- public ------------------------------------------------------------------------------
     def submit(self, actions: list[dict], reply: str | None = None) -> asyncio.Task | None:
@@ -190,11 +212,11 @@ class Planner:
             await asyncio.sleep(0.02)
         return False
 
-    async def _prim(self, op: str, **args) -> dict:
+    async def _send(self, op: str, **args) -> str:
+        """Send one primitive and report the gate's verdict; returns its id (done not awaited)."""
         self.log.append(f"{op} {args}" if args else op)
         if not self.edge.connected:
             raise PlanAborted("I'm not connected to the drone.")
-        timeout = self._timeout(op, args)
         cid, ack = await self.edge.send(op, **args)   # = edge.run(), split to report the verdict
         if not ack["ok"]:
             raise CommandRejected(ack["reason"])
@@ -206,7 +228,15 @@ class Planner:
                 self.on_approved(op)
             except Exception as e:  # reporting must never break a plan
                 log.warning("on_approved failed: %s", e)
-        done = await self.edge.wait_done(cid, timeout)
+        return cid
+
+    async def _prim(self, op: str, **args) -> dict:
+        self._busy_prims += 1
+        try:
+            cid = await self._send(op, **args)
+            done = await self.edge.wait_done(cid, self._timeout(op, args))
+        finally:
+            self._busy_prims -= 1
         if done["status"] != "ok":
             raise PlanAborted(f"That {op.replace('_', ' ')} was {done['status']}"
                               + (f": {done['reason']}." if done.get("reason") else "."))
@@ -234,9 +264,124 @@ class Planner:
         return self.edge.telemetry or {}
 
     def _airborne(self) -> bool:
-        return bool(self.tel.get("armed")) and self.tel.get("alt", 0.0) > 0.2
+        if not self.tel.get("armed"):
+            return False
+        if self.cfg.rng:  # the FC's height drifts on the ground: trust the rangefinder
+            h = self.rng_height()
+            return self._target is not None if h is None else h > 0.15
+        return self.tel.get("alt", 0.0) > 0.2
+
+    # --- rangefinder height (cfg.rng) --------------------------------------------------------
+    def rng_height(self) -> float | None:
+        """Height above the floor by the rangefinder; None = no reading / no echo."""
+        r = self.tel.get("range_m")
+        return None if r is None or r < 0 or r > self.cfg.rng_no_echo else r - self._ground
+
+    def _fc_guided(self) -> bool:
+        return bool(self.tel.get("armed")) and self.tel.get("mode") == "GUIDED"
+
+    async def _rng_takeoff(self, alt: float) -> None:
+        c = self.cfg
+        if self.tel.get("armed"):  # already flying (FC height said otherwise): just hold here
+            self._target = self.rng_height() or alt
+            self._start_guard()
+            return
+        ground = self.tel.get("range_m")
+        if ground is None or ground < 0 or ground > 0.5:
+            raise PlanAborted(f"My height sensor reads {ground} metres on the ground, so it isn't "
+                              "pointing at the floor. Not taking off.")
+        self._ground = ground
+        target = min(alt, c.rng_max_alt - 0.2)
+        cid = await self._send("takeoff", alt=c.rng_ceiling)
+        # the takeoff is pre-empted by "stop" below; collect its done so it doesn't linger
+        asyncio.ensure_future(self._drain(cid))
+        t0, lost = time.monotonic(), None
+        try:
+            while True:  # climb until the rangefinder says we're there
+                await asyncio.sleep(0.1)
+                h = self.rng_height()
+                now = time.monotonic()
+                if h is None:
+                    lost = lost or now
+                    if now - lost > 1.0:
+                        raise PlanAborted("I lost my height sensor while taking off, so I'm landing.")
+                    continue
+                lost = None
+                if h >= target - 0.05:
+                    break
+                if now - t0 > 3 and not self._fc_guided():
+                    raise PlanAborted("The flight controller didn't take the takeoff (pilot, "
+                                      "failsafe or arming), so I've stopped.")
+                if now - t0 > 8:
+                    raise PlanAborted(f"I'm still only {h:.1f} metres up after 8 seconds, so I'm "
+                                      "not lifting properly. Landing.")
+            await self._prim("stop")  # hold here
+        except BaseException:
+            if self._fc_guided():
+                with _quiet():
+                    await self.edge.run("land", timeout=60)
+            raise
+        self._target = target
+        self._start_guard()
+
+    async def _drain(self, cid: str) -> None:
+        with _quiet():
+            await self.edge.wait_done(cid, 120)
+
+    def _start_guard(self) -> None:
+        if self._guard is None or self._guard.done():
+            self._guard = asyncio.create_task(self._rng_guard())
+
+    async def _rng_guard(self) -> None:
+        """Beside every rng flight: hold the target height from the rangefinder; land if the
+        rangefinder is lost for 1 s or reads above rng_max_alt; let go if the pilot or a failsafe
+        takes the FC out of GUIDED (the edge never fights the pilot)."""
+        c, lost, last_fix = self.cfg, None, time.monotonic()
+        while True:
+            await asyncio.sleep(0.2)
+            now = time.monotonic()
+            if not self.tel.get("armed"):
+                self._target = None
+                return  # landed (or disarmed)
+            if self.tel.get("mode") != "GUIDED":
+                self._target = None
+                self.cancel()
+                await self.say("The pilot or a failsafe has the drone now. I've let go.")
+                return
+            h = self.rng_height()
+            why = None
+            if h is None:
+                lost = lost or now
+                if now - lost > 1.0:
+                    why = "I lost my height sensor, so I'm landing."
+            else:
+                lost = None
+                if h > c.rng_max_alt:
+                    why = f"I'm {h:.1f} metres up, above the {c.rng_max_alt} metre limit, so I'm landing."
+            if why:
+                self._target = None
+                self.submit([{"kind": "land"}])
+                await self.say(why)
+                return
+            if (h is not None and self._target is not None and self._busy_prims == 0
+                    and now - last_fix >= 1.0 and abs(self._target - h) > c.rng_tol):
+                last_fix = now
+                up = round(max(-0.3, min(0.3, self._target - h)), 2)
+                try:  # direct: a correction isn't a plan step (no dashboard verdict, no reply)
+                    await self.edge.run("move_body", timeout=10, up=up)
+                except Exception as e:
+                    log.info("height correction %+.2f m: %s", up, e)
 
     async def _takeoff(self, alt: float) -> None:
+        if self.cfg.rng:
+            here = (self.tel.get("n", 0.0), self.tel.get("e", 0.0)) if self.tel else None
+            self._accepted = False
+            try:
+                await self._rng_takeoff(alt)
+            finally:
+                if self._accepted and self.home is None and here is not None:
+                    self.home = here
+            return
         # the edge centres its fence on the first takeoff point and keeps it there (review3
         # #2); remember the same point so our clamp agrees with the edge's fence
         # The edge fixes its fence when it *accepts* the first takeoff; a refused one sets
@@ -296,9 +441,13 @@ class Planner:
     async def _do_takeoff(self, a: dict) -> None:
         if self._airborne():
             return
+        if self.cfg.rng:  # always the field-tested hover height; "go up" from there if wanted
+            await self._takeoff(self.cfg.rng_alt)
+            return
         await self._takeoff(a.get("alt") or self.cfg.takeoff_alt)
 
     async def _do_land(self, a: dict) -> None:
+        self._target = None  # stop height corrections: they'd fight the descent
         await self._prim("land")
 
     async def _do_stop(self, a: dict) -> None:
@@ -308,10 +457,39 @@ class Planner:
         await self._prim("return_home")
 
     async def _do_move(self, a: dict) -> None:
+        if self.cfg.rng:
+            await self._ensure_airborne()
+            await self._rng_move(a)
+            return
         await self._ensure_airborne()
         fwd, right, up = a.get("fwd", 0.0), a.get("right", 0.0), a.get("up", 0.0)
         if fwd or right or up:
             await self._prim("move_body", fwd=fwd, right=right, up=up)
+        if a.get("yaw_deg"):
+            await self._prim("yaw", deg=a["yaw_deg"], relative=True)
+
+    async def _rng_move(self, a: dict) -> None:
+        """rng: height changes move the held target (within the rangefinder's limit); sideways
+        moves go in legs of at most max_leg."""
+        c = self.cfg
+        fwd, right, up = a.get("fwd", 0.0), a.get("right", 0.0), a.get("up", 0.0)
+        if up:
+            now = self._target if self._target is not None else (self.rng_height() or c.rng_alt)
+            want = now + up
+            top = c.rng_max_alt - 0.2
+            if want > top + 1e-6:
+                raise PlanAborted(f"That would take me to {want:.1f} metres. My height sensor "
+                                  f"only lets me fly up to {top:.1f}, so I'm staying at {now:.1f}.")
+            if want < 0.2:
+                raise PlanAborted("That's too close to the floor. Say land if you want me down.")
+            await self._prim("move_body", up=round(want - (self.rng_height() or now), 2))
+            self._target = want
+        dist = math.hypot(fwd, right)
+        while dist > 0.01:
+            f = min(1.0, c.max_leg / dist)
+            await self._prim("move_body", fwd=round(fwd * f, 3), right=round(right * f, 3))
+            fwd, right = fwd * (1 - f), right * (1 - f)
+            dist = math.hypot(fwd, right)
         if a.get("yaw_deg"):
             await self._prim("yaw", deg=a["yaw_deg"], relative=True)
 

@@ -37,6 +37,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(prog="station.dev")
     ap.add_argument("--no-station", action="store_true")
     ap.add_argument("--audio", action="store_true", help="play replies on this laptop")
+    ap.add_argument("--rng", action="store_true",
+                    help="station flies with rangefinder height, like the real drone (--rng)")
     a = ap.parse_args()
     load_dotenv()
 
@@ -68,7 +70,7 @@ def main() -> None:
     if not a.no_station:
         start("station", "-m", "station", "--edge", f"127.0.0.1:{EDGE}", "--video-port",
               str(VIDEO), "--cloud", f"ws://127.0.0.1:{CLOUD}", "--stub-locate",
-              *([] if a.audio else ["--no-audio"]))
+              *([] if a.audio else ["--no-audio"]), *(["--rng"] if a.rng else []))
     keys = "with Vultr key" if os.environ.get("VULTR_INFERENCE_KEY") else \
         "NO Vultr key: rule-based brain, no vision/memory"
     print(flush=True)

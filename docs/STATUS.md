@@ -140,6 +140,19 @@ position (altitude used to sag about 0.1 m per command).
      layout: edge frozen by SIGSTOP while hovering → FC in LAND **273 ms** later with the FC's
      own failsafe off, landed + disarmed, heartbeats resume when the core comes back.
 
+## Dashboard flies the real drone: station `--rng` (2026-11-21 night, cloud lead with Claude; **drone lead: please review before flying**)
+
+- `python -m tools.demo_laptop --edge <pi> --rng` -> dashboard http://127.0.0.1:8100 flies the real
+  drone. `--rng` (station, station.dev, demo_laptop) moves `tools/auto_hover --rng` into
+  `station/planner.py`: takeoff asks the FC for 1.2 m and holds once the rangefinder reads 0.5 m;
+  a guard corrects height from the rangefinder once a second, lands if it's lost for 1 s or reads
+  above 1.2 m, and lets go if the FC leaves GUIDED; "go up" is capped at 1.0 m; sideways moves go
+  in 2 m legs. Off by default (sim and tests unchanged). Every primitive still goes through the
+  edge's gate; nothing in `edge/` or `shared/` changed.
+- Verified: 5 new tests on the sim edge (214 pass) and end to end through the dashboard (take off,
+  refused "go up 2 m", land). **Not flown yet**: first real flight = "take off", then "land", pilot on SwA.
+  Fallback: `tools.voice_flights` (8200).
+
 ## Limits removed for flying outdoors (2026-11-21, cloud lead's call; **drone lead: please review**)
 
 `edge/config.py`: `alt_max`, `fence_half`, `max_step`, `max_takeoff_alt` are now `None` (no

@@ -24,7 +24,7 @@ from station.brain import Brain, rule_parse
 from station.camera import Frame, Pose
 from station.config import MissingKey, Settings
 from station.localize import box_to_goal, locate, parse_box
-from station.planner import Planner, compass
+from station.planner import Planner, PlannerConfig, compass
 
 
 def free_port() -> int:
@@ -1009,3 +1009,75 @@ def test_planner_waits_long_enough_for_long_moves():
     assert p._timeout("takeoff", {"alt": 30.0}) > 60
     assert p._timeout("land", {}) >= 90
     assert p._timeout("move_body", {"fwd": 1.0}) < 60     # short moves still fail fast
+
+
+# --- rangefinder height (PlannerConfig.rng): the real drone's takeoff path ------------------
+def rng_planner(sim, edge, **cfg):
+    p, said, _ = make_planner(sim, edge)
+    p.cfg = PlannerConfig(rng=True, **cfg)
+    return p, said
+
+
+async def until(cond, timeout=10.0):
+    end = asyncio.get_running_loop().time() + timeout
+    while not cond():
+        assert asyncio.get_running_loop().time() < end, "timed out"
+        await asyncio.sleep(0.05)
+
+
+async def test_rng_takeoff_holds_at_the_rangefinder_height(rig):
+    """It asks the FC for the ceiling but stops the climb once the rangefinder reads the target,
+    then keeps holding there."""
+    sim, edge = rig
+    p, said = rng_planner(sim, edge)
+    await run_plan(p, [{"kind": "takeoff", "alt": 1.0}])  # the brain always says 1.0
+    assert p.log[0] == "takeoff {'alt': 1.2}" and "stop" in p.log
+    assert p._target == pytest.approx(0.5)
+    await asyncio.sleep(2.5)
+    assert sim.state().alt == pytest.approx(0.5, abs=0.15) and sim.state().armed
+    await run_plan(p, [{"kind": "land"}])
+    await until(lambda: not sim.state().armed)
+    await asyncio.sleep(0.5)
+    assert p._guard.done() and p._target is None
+
+
+async def test_rng_sideways_moves_go_in_legs_and_height_stays_in_range(rig):
+    sim, edge = rig
+    p, said = rng_planner(sim, edge)
+    await run_plan(p, [{"kind": "takeoff"}])
+    await run_plan(p, [{"kind": "move", "fwd": 0.0, "right": -5.0, "up": 0.0, "yaw_deg": 0.0}], 90)
+    legs = [l for l in p.log if l.startswith("move_body")]
+    assert legs == ["move_body {'fwd': 0.0, 'right': -2.0}"] * 2 + ["move_body {'fwd': 0.0, 'right': -1.0}"]
+    assert sim.state().e == pytest.approx(-5.0, abs=0.3)
+    await run_plan(p, [{"kind": "move", "up": 0.3}])
+    assert p._target == pytest.approx(0.8) and sim.state().alt == pytest.approx(0.8, abs=0.15)
+    await run_plan(p, [{"kind": "move", "up": 1.0}])  # 1.8 m: past what the rangefinder holds
+    assert "only lets me fly up to 1.0" in said[-1] and p._target == pytest.approx(0.8)
+    await run_plan(p, [{"kind": "land"}])
+
+
+async def test_rng_lands_when_the_rangefinder_is_lost(rig):
+    sim, edge = rig
+    p, said = rng_planner(sim, edge)
+    await run_plan(p, [{"kind": "takeoff"}])
+    p.rng_height = lambda: None  # the ultrasonic stops echoing (grass, tilt)
+    await until(lambda: any("height sensor" in s for s in said), 5)
+    await until(lambda: not sim.state().armed, 20)
+
+
+async def test_rng_lands_when_too_high(rig):
+    sim, edge = rig
+    p, said = rng_planner(sim, edge)
+    await run_plan(p, [{"kind": "takeoff"}])
+    p.rng_height = lambda: 1.5
+    await until(lambda: any("above the 1.2 metre limit" in s for s in said), 5)
+    await until(lambda: not sim.state().armed, 20)
+
+
+async def test_rng_refuses_takeoff_when_the_rangefinder_isnt_on_the_floor(rig):
+    sim, edge = rig
+    p, said = rng_planner(sim, edge)
+    sim.s.range_m = None  # sim writes range_m = alt only while it steps; on the ground it stays
+    await asyncio.sleep(0.3)
+    await run_plan(p, [{"kind": "takeoff"}])
+    assert "isn't pointing at the floor" in said[-1] and not sim.state().armed
