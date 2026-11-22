@@ -99,15 +99,20 @@ class BrainResult:
 
 
 TEST4 = re.compile(r"\btest\s*(four|4|for)\b", re.I)
+# With test 4 armed off camera (Brain.test4_armed, POST /test4), a plain forward request is the
+# refusal too, so nobody has to say "test four" on camera (cloud lead, 2026-11-22).
+FORWARD = re.compile(r"\b(forwards?|straight ahead|towards?|closer|"
+                     r"(?:move|go|fly|head|keep going) ahead(?! and))\b", re.I)
 
 
-def test4_refusal(text: str, telemetry: dict | None = None) -> BrainResult | None:
+def test4_refusal(text: str, telemetry: dict | None = None,
+                  armed: bool = False) -> BrainResult | None:
     """Filming test 4 (drone lead, 2026-11-22): any sentence that says "test four" is the
     person-safety refusal and produces NO actions, so the drone cannot move whatever else was
     said ("test four, fly forward 2 metres"), airborne or not. It quotes the on-board
     detector's distance when it sees someone right now (telemetry "people"). Same behaviour as
     tools/voice_flights."""
-    if not TEST4.search(text):
+    if not (TEST4.search(text) or (armed and FORWARD.search(text) and not is_urgent(text))):
         return None
     d = [b[5] for b in ((telemetry or {}).get("people") or [])
          if isinstance(b, (list, tuple)) and len(b) >= 6 and isinstance(b[5], (int, float))]
@@ -164,12 +169,13 @@ class Brain:
     def __init__(self, ai: AI | None):
         self.ai = ai
         self.history: list[dict] = []  # last few user/assistant turns, for "do that again"
+        self.test4_armed = False  # filming test 4: plain "move forward" is refused, nothing sent
 
     async def think(self, text: str, telemetry: dict | None = None) -> BrainResult:
         text = text.strip()
         if not text:
             return BrainResult("I didn't catch that.", source="rules")
-        if (r := test4_refusal(text, telemetry)) is not None:  # before anything that can fly
+        if (r := test4_refusal(text, telemetry, self.test4_armed)) is not None:  # before anything that can fly
             return r
         if self.ai is None or is_urgent(text):
             return rule_parse(text, telemetry)  # urgent: skip the LLM round trip (~0.7 s)

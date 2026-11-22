@@ -115,6 +115,11 @@ Phone hotspot with no IPv4 on the laptop: see `tools/v6_tunnel.py` (SSH tunnel o
    person box. Without the words "test four", "fly forward" is a real, gate-checked move: don't
    use that for filming. (Changed by the drone lead 2026-11-22: the earlier version sent the
    forward move and relied on the detector seeing the person.)
+   **Without saying "test four" on camera:** arm it off camera first,
+   `curl -X POST http://127.0.0.1:8100/test4 -H 'Content-Type: application/json' -d '{"on": true}'`;
+   then a plain "Hey, move forward" (or "fly forward 2 metres", "come towards me") is the same
+   refusal with nothing sent. Land / stop / photos / other moves work as usual. Disarm with
+   `{"on": false}` (a cloud restart also disarms it).
 
 ### Without voice
 ```sh

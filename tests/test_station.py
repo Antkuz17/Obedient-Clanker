@@ -1333,3 +1333,31 @@ async def test_test4_phrase_never_produces_actions():
         assert r.actions == [] and "2.3 metres ahead" in r.reply
     r = await Brain(None).think("fly forward 2 metres", flying)       # without "test four": a
     assert r.actions and r.actions[0]["kind"] == "move"               # real (gate-checked) move
+
+
+async def test_test4_armed_off_camera_refuses_plain_forward_with_nothing_sent():
+    """Test 4 without saying "test four" on camera: armed via POST /test4, a plain "hey, move
+    forward" is refused with no actions; land / stop / the other tests still work."""
+    b = Brain(FakeAI({"content": "should not be asked", "tool_calls": []}))
+    tel = {"armed": True, "people": [[0.3, 0.1, 0.6, 0.9, 0.9, 2.4]]}
+    assert (await b.think("Hey, move forward.", tel)).source != "test4"   # not armed: normal path
+    b.test4_armed = True
+    for t in ("Hey, move forward.", "Hey drone, fly forward 2 metres", "Come towards me.",
+              "Keep going ahead"):
+        r = await b.think(t, tel)
+        assert r.actions == [] and r.source == "test4" and "2.4 metres" in r.reply, t
+    assert [a["kind"] for a in (await b.think("Land.", tel)).actions] == ["land"]
+    assert [a["kind"] for a in (await b.think("Stop!", tel)).actions] == ["stop"]
+    assert [a["kind"] for a in (await b.think("Go ahead and land.", tel)).actions] == ["land"]
+    assert [a["kind"] for a in (await b.think("Yo, take a photo.", tel)).actions] == ["look"]
+
+
+def test_test4_switch_endpoint(tmp_path):
+    from fastapi.testclient import TestClient
+    from cloud.app import create_app
+    app = create_app(Settings(vultr_key="", station_token="tok", data_dir=tmp_path), ai=FakeAI())
+    with TestClient(app) as c:
+        assert c.get("/test4").json() == {"test4_armed": False}
+        assert c.post("/test4", json={"on": True}).json() == {"test4_armed": True}
+        assert app.state.hub.brain.test4_armed
+        assert c.post("/test4", json={"on": False}).json() == {"test4_armed": False}

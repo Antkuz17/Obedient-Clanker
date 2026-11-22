@@ -450,6 +450,18 @@ def create_app(s: Settings | None = None, ai: AI | None = None) -> FastAPI:
     async def text_cmd(body: dict):
         return await hub.command(str(body.get("text", "")), str(body.get("client", "api")))
 
+    @app.post("/test4")
+    async def test4(body: dict):
+        """Arm / disarm filming test 4 off camera: while on, "hey, move forward" is refused with
+        nothing sent to the drone (land / stop still work). {"on": true|false}"""
+        hub.brain.test4_armed = bool(body.get("on"))
+        log.info("test 4 %s", "ARMED" if hub.brain.test4_armed else "off")
+        return {"test4_armed": hub.brain.test4_armed}
+
+    @app.get("/test4")
+    async def test4_state():
+        return {"test4_armed": hub.brain.test4_armed}
+
     @app.post("/memory/reset")
     async def memory_reset():
         """Forget every memory frame, e.g. after rehearsing on the sim (review3)."""
