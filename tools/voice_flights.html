@@ -29,7 +29,7 @@ button{cursor:pointer}
 .mono{font-family:var(--mono)}
 
 .app{max-width:1280px;margin:0 auto;padding:0 16px 16px;display:grid;gap:14px;
-  grid-template-columns:minmax(0,1fr);grid-template-areas:"head" "cam" "pipe" "dock"}
+  grid-template-columns:minmax(0,1fr);grid-template-areas:"head" "cam" "pipe" "charts" "dock"}
 header{grid-area:head;display:flex;align-items:center;gap:10px;min-height:58px;flex-wrap:wrap}
 .brand{display:flex;align-items:center;gap:10px;font-size:17px;font-weight:600;letter-spacing:-.02em;margin-right:auto}
 .brand i{width:12px;height:12px;border-radius:50%;background:var(--pink);box-shadow:0 0 14px rgba(234,75,113,.6)}
@@ -85,8 +85,23 @@ header{grid-area:head;display:flex;align-items:center;gap:10px;min-height:58px;f
 .type input:focus{border-color:var(--btn)}
 .type button{height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:var(--raise);color:var(--soft)}
 
+/* charts: height over time, top-down track, battery */
+.charts{grid-area:charts;display:grid;gap:14px;grid-template-columns:minmax(0,1fr)}
+.panel{background:var(--node);border:1px solid var(--line);border-radius:12px;padding:12px 14px 10px;min-width:0;position:relative}
+.panel h3{margin:0 0 8px;font-size:11.5px;font-weight:500;color:var(--t2);text-transform:uppercase;letter-spacing:.08em;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.panel h3 .now{margin-left:auto;font-family:var(--mono);font-size:12px;letter-spacing:0;text-transform:none;color:var(--text)}
+.legend{display:flex;gap:12px;text-transform:none;letter-spacing:0;font-size:12px;color:var(--soft)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{display:inline-block;width:16px;height:0;border-top:2px solid}
+.legend i.dash{border-top-style:dashed}
+.panel canvas{display:block;width:100%;height:190px;cursor:crosshair}
+.tip{position:absolute;pointer-events:none;background:#0E0E14;border:1px solid var(--btn);border-radius:8px;padding:7px 9px;font-size:12px;line-height:1.5;color:var(--soft);white-space:nowrap;z-index:5}
+.tip b{color:var(--text);font-weight:500}
+.tip i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:0}
+
 @media (min-width:980px){
-  .app{grid-template-columns:minmax(0,1.6fr) minmax(320px,1fr);grid-template-areas:"head head" "cam pipe" "dock dock"}
+  .app{grid-template-columns:minmax(0,1.6fr) minmax(320px,1fr);grid-template-areas:"head head" "cam pipe" "charts charts" "dock dock"}
+  .charts{grid-template-columns:minmax(0,1.5fr) minmax(0,1fr) minmax(0,1fr)}
   .cam{max-height:none;height:100%;min-height:420px}
 }
 </style>
@@ -120,6 +135,17 @@ header{grid-area:head;display:flex;align-items:center;gap:10px;min-height:58px;f
     <div class="node" id="nFlight"><h3><i></i>Flight</h3><pre class="log" id="log"></pre></div>
   </section>
 
+  <section class="charts">
+    <div class="panel"><h3>Height
+        <span class="legend"><span><i style="border-color:#EA4B71"></i>rangefinder (real)</span><span><i class="dash" style="border-color:#3987e5"></i>flight controller's estimate</span></span>
+        <span class="now" id="hNow">&ndash;</span></h3>
+      <canvas id="cHeight" aria-label="Height over the last 60 seconds: rangefinder and flight controller estimate"></canvas></div>
+    <div class="panel"><h3>Track &middot; from above <span class="now" id="tNow">&ndash;</span></h3>
+      <canvas id="cTrack" aria-label="Top-down track of the drone, metres from the start point"></canvas></div>
+    <div class="panel"><h3>Battery <span class="now" id="bNow">&ndash;</span></h3>
+      <canvas id="cBatt" aria-label="Battery voltage over the last 60 seconds"></canvas></div>
+  </section>
+
   <section class="dock">
     <button class="talk" id="talk"><span id="talkTxt">Hold to talk</span><kbd>Space</kbd></button>
     <div class="side">
@@ -132,6 +158,144 @@ header{grid-area:head;display:flex;align-items:center;gap:10px;min-height:58px;f
 <script>
 const $ = (id) => document.getElementById(id);
 let since = 0, flying = false, preset = null, videoSet = false;
+
+/* ---------- charts (canvas, no libraries) ---------- */
+const C = { pink: '#EA4B71', blue: '#3987e5', soft: '#C4C4D0', t3: '#8A8A98', grid: '#262632', axis: '#6A6A78', amber: '#F2A73B', rose: '#C02A52', bg: '#17171F' };
+const MONO = "11px 'Geist Mono', ui-monospace, monospace";
+let pts = [], hseq = 0;
+const WIN = 60;  // seconds shown on the time charts
+
+function fit(cv) {
+  const r = cv.getBoundingClientRect(), d = devicePixelRatio || 1;
+  if (cv.width !== Math.round(r.width * d) || cv.height !== Math.round(r.height * d)) { cv.width = Math.round(r.width * d); cv.height = Math.round(r.height * d); }
+  const g = cv.getContext('2d'); g.setTransform(d, 0, 0, d, 0, 0); g.clearRect(0, 0, r.width, r.height);
+  return [g, r.width, r.height];
+}
+function niceStep(span, n) { const raw = span / n, p = Math.pow(10, Math.floor(Math.log10(raw))), m = raw / p; return (m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10) * p; }
+function tip(panel, html, x, y) {
+  let t = panel.querySelector('.tip'); if (!t) { t = document.createElement('div'); t.className = 'tip'; panel.appendChild(t); }
+  if (html == null) { t.hidden = true; return; }
+  t.hidden = false; t.innerHTML = html;
+  const pw = panel.clientWidth, tw = t.offsetWidth;
+  t.style.left = Math.min(pw - tw - 6, Math.max(6, x + 14)) + 'px'; t.style.top = Math.max(30, y - 10) + 'px';
+}
+const ago = (t, now) => { const s = Math.max(0, now - t); return s < 1 ? 'now' : s.toFixed(1) + ' s ago'; };
+
+/* time chart: one unit, one axis; series [{key,label,short,color,dash}], refs [{v,label,color}] */
+function timeChart(cv, series, o) {
+  const st = { hx: null };
+  cv.addEventListener('pointermove', (e) => { const r = cv.getBoundingClientRect(); st.hx = e.clientX - r.left; st.hy = e.clientY - r.top; draw(); });
+  cv.addEventListener('pointerleave', () => { st.hx = null; draw(); });
+  function draw() {
+    const [g, W, H] = fit(cv), L = 40, R = 92, T = 8, B = 20, pw = W - L - R, ph = H - T - B;
+    const now = pts.length ? pts[pts.length - 1].t : Date.now() / 1000, t0 = now - WIN;
+    const vis = pts.filter((p) => p.t >= t0);
+    let lo = o.min, hi = o.max;
+    for (const p of vis) for (const s of series) { const v = p[s.key]; if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); } }
+    for (const r of o.refs || []) { lo = Math.min(lo, r.v); hi = Math.max(hi, r.v); }
+    const pad = (hi - lo) * 0.08 || 0.1; lo -= pad; hi += pad; if (o.floor != null) lo = Math.max(lo, o.floor);
+    const X = (t) => L + (t - t0) / WIN * pw, Y = (v) => T + (1 - (v - lo) / (hi - lo)) * ph;
+    g.font = MONO; g.textBaseline = 'middle';
+    const step = niceStep(hi - lo, 4);
+    for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) {
+      g.strokeStyle = C.grid; g.lineWidth = 1; g.beginPath(); g.moveTo(L, Math.round(Y(v)) + .5); g.lineTo(L + pw, Math.round(Y(v)) + .5); g.stroke();
+      g.fillStyle = C.axis; g.textAlign = 'right'; g.fillText(v.toFixed(o.dp), L - 7, Y(v));
+    }
+    g.textAlign = 'center'; g.textBaseline = 'top'; g.fillStyle = C.axis;
+    for (let s = 0; s <= WIN; s += 15) g.fillText(s === 0 ? 'now' : '-' + s + 's', X(now - s), T + ph + 6);
+    for (const r of o.refs || []) {
+      g.setLineDash([4, 4]); g.strokeStyle = r.color; g.lineWidth = 1; g.beginPath(); g.moveTo(L, Y(r.v)); g.lineTo(L + pw, Y(r.v)); g.stroke(); g.setLineDash([]);
+      // reference labels sit inside the plot, top-left of their line: the right edge belongs
+      // to the series' direct labels (they collided at the 0.5 m target)
+      g.fillStyle = C.t3 || C.soft; g.textAlign = 'left'; g.textBaseline = 'bottom'; g.fillText(r.label, L + 6, Y(r.v) - 3);
+    }
+    const ends = [];
+    for (const s of series) {
+      g.strokeStyle = s.color; g.lineWidth = 2; g.lineJoin = g.lineCap = 'round'; g.setLineDash(s.dash ? [6, 4] : []);
+      g.beginPath(); let on = false, last = null;
+      for (const p of vis) { const v = p[s.key]; if (v == null) { on = false; continue; } const x = X(p.t), y = Y(v); on ? g.lineTo(x, y) : g.moveTo(x, y); on = true; last = [x, y]; }
+      g.stroke(); g.setLineDash([]);
+      if (last) ends.push([s, last]);
+    }
+    if (series.length > 1) {  // direct labels at the line ends: ink text, coloured mark beside it
+      ends.sort((a, b) => a[1][1] - b[1][1]); let prevY = -1e9;
+      for (const [s, [, y]] of ends) {
+        const ly = Math.max(y, prevY + 14); prevY = ly;
+        g.strokeStyle = s.color; g.lineWidth = 2; g.setLineDash(s.dash ? [3, 2] : []); g.beginPath(); g.moveTo(L + pw + 6, ly); g.lineTo(L + pw + 16, ly); g.stroke(); g.setLineDash([]);
+        g.fillStyle = C.soft; g.textAlign = 'left'; g.textBaseline = 'middle'; g.fillText(s.short, L + pw + 20, ly);
+      }
+    }
+    if (st.hx != null && vis.length && st.hx >= L && st.hx <= L + pw) {  // crosshair + values
+      const tt = t0 + (st.hx - L) / pw * WIN; let best = vis[0];
+      for (const p of vis) if (Math.abs(p.t - tt) < Math.abs(best.t - tt)) best = p;
+      const x = X(best.t);
+      g.strokeStyle = C.axis; g.lineWidth = 1; g.beginPath(); g.moveTo(x + .5, T); g.lineTo(x + .5, T + ph); g.stroke();
+      let html = '<b>' + ago(best.t, now) + '</b>';
+      for (const s of series) {
+        const v = best[s.key];
+        html += '<br><i style="background:' + s.color + '"></i>' + s.label + ' <b>' + (v == null ? 'no reading' : v.toFixed(o.dp) + ' ' + o.unit) + '</b>';
+        if (v != null) { g.fillStyle = C.bg; g.beginPath(); g.arc(x, Y(v), 6, 0, 7); g.fill(); g.fillStyle = s.color; g.beginPath(); g.arc(x, Y(v), 4, 0, 7); g.fill(); }
+      }
+      tip(cv.parentElement, html, x, st.hy);
+    } else tip(cv.parentElement, null);
+  }
+  return draw;
+}
+
+/* track from above: east to the right, north up, equal metres on both axes */
+function trackChart(cv) {
+  const st = { hx: null };
+  cv.addEventListener('pointermove', (e) => { const r = cv.getBoundingClientRect(); st.hx = e.clientX - r.left; st.hy = e.clientY - r.top; draw(); });
+  cv.addEventListener('pointerleave', () => { st.hx = null; draw(); });
+  function draw() {
+    const [g, W, H] = fit(cv);
+    if (!pts.length) return;
+    let s0 = 0; for (let i = pts.length - 1; i > 0; i--) if (pts[i].armed && !pts[i - 1].armed) { s0 = i; break; }
+    const tr = pts.slice(s0), o = tr[0], cur = tr[tr.length - 1];
+    let span = 3; for (const p of tr) span = Math.max(span, Math.abs(p.n - o.n) * 1.15, Math.abs(p.e - o.e) * 1.15);
+    const cx = W / 2, cy = H / 2, k = (Math.min(W, H) / 2 - 14) / span;
+    const X = (p) => cx + (p.e - o.e) * k, Y = (p) => cy - (p.n - o.n) * k;
+    const step = span > 8 ? 2 : 1;
+    g.strokeStyle = C.grid; g.lineWidth = 1;
+    for (let m = -Math.ceil(span * W / H); m <= Math.ceil(span * W / H); m += step) { g.beginPath(); g.moveTo(cx + m * k, 0); g.lineTo(cx + m * k, H); g.stroke(); }
+    for (let m = -Math.ceil(span); m <= Math.ceil(span); m += step) { g.beginPath(); g.moveTo(0, cy - m * k); g.lineTo(W, cy - m * k); g.stroke(); }
+    g.font = MONO; g.fillStyle = C.axis; g.textAlign = 'left'; g.textBaseline = 'top';
+    g.fillText('N ↑  grid ' + step + ' m', 8, 6);
+    g.strokeStyle = C.soft; g.lineWidth = 2; g.beginPath(); g.arc(cx, cy, 5, 0, 7); g.stroke();
+    g.fillStyle = C.soft; g.textBaseline = 'middle'; g.fillText('start', cx + 9, cy + 12);
+    g.strokeStyle = C.pink; g.lineWidth = 2; g.lineJoin = g.lineCap = 'round'; g.beginPath();
+    tr.forEach((p, i) => (i ? g.lineTo(X(p), Y(p)) : g.moveTo(X(p), Y(p)))); g.stroke();
+    const a = (cur.yaw || 0) * Math.PI / 180, px = X(cur), py = Y(cur);
+    g.strokeStyle = C.pink; g.beginPath(); g.moveTo(px, py); g.lineTo(px + Math.sin(a) * 20, py - Math.cos(a) * 20); g.stroke();
+    g.fillStyle = C.bg; g.beginPath(); g.arc(px, py, 8, 0, 7); g.fill();
+    g.fillStyle = C.pink; g.beginPath(); g.arc(px, py, 5, 0, 7); g.fill();
+    if (st.hx != null) {
+      let best = tr[0], bd = 1e9; for (const p of tr) { const d = Math.hypot(X(p) - st.hx, Y(p) - st.hy); if (d < bd) { bd = d; best = p; } }
+      if (bd < 24) {
+        g.fillStyle = C.bg; g.beginPath(); g.arc(X(best), Y(best), 6, 0, 7); g.fill(); g.fillStyle = C.pink; g.beginPath(); g.arc(X(best), Y(best), 4, 0, 7); g.fill();
+        tip(cv.parentElement, '<b>' + ago(best.t, cur.t) + '</b><br>' + (best.n - o.n >= 0 ? 'north ' : 'south ') + '<b>' + Math.abs(best.n - o.n).toFixed(2) + ' m</b> · ' +
+          (best.e - o.e >= 0 ? 'east ' : 'west ') + '<b>' + Math.abs(best.e - o.e).toFixed(2) + ' m</b><br>heading <b>' + Math.round(best.yaw) + '°</b>', X(best), st.hy);
+      } else tip(cv.parentElement, null);
+    } else tip(cv.parentElement, null);
+    $('tNow').textContent = Math.hypot(cur.n - o.n, cur.e - o.e).toFixed(2) + ' m from start · ' + Math.round(cur.yaw) + '°';
+  }
+  return draw;
+}
+
+const drawHeight = timeChart($('cHeight'), [
+  { key: 'h', label: 'rangefinder (real)', short: 'real', color: C.pink },
+  { key: 'fc', label: "flight controller's estimate", short: 'FC est.', color: C.blue, dash: true }],
+  { unit: 'm', dp: 2, min: 0, max: 0.8, floor: 0, refs: [{ v: 0.5, label: 'target 0.5 m', color: C.axis }] });
+const drawBatt = timeChart($('cBatt'), [{ key: 'v', label: 'battery', short: 'battery', color: C.soft }],
+  { unit: 'V', dp: 1, min: 10.0, max: 12.6, refs: [{ v: 10.6, label: 'no new moves', color: C.amber }, { v: 10.2, label: 'auto-land', color: C.rose }] });
+const drawTrack = trackChart($('cTrack'));
+function drawCharts() {
+  drawHeight(); drawBatt(); drawTrack();
+  const p = pts[pts.length - 1];
+  if (p) { $('hNow').textContent = (p.h == null ? '–' : p.h.toFixed(2) + ' m real') + ' · FC ' + p.fc.toFixed(2) + ' m'; $('bNow').textContent = p.v ? p.v.toFixed(2) + ' V' : '–'; }
+}
+addEventListener('resize', drawCharts);
+
 const audioQ = []; let playing = false;
 
 function playNext() {
@@ -155,7 +319,8 @@ function setPreset(p) {
 }
 async function poll() {
   try {
-    const r = await fetch('/api/state?since=' + since); const s = await r.json();
+    const r = await fetch('/api/state?since=' + since + '&hsince=' + hseq); const s = await r.json();
+    if (s.hist.length) { pts.push(...s.hist); hseq = s.hist[s.hist.length - 1].i; const cut = pts[pts.length - 1].t - 300; while (pts.length && pts[0].t < cut) pts.shift(); drawCharts(); }
     for (const e of s.events) {
       if (e.kind === 'heard') { $('heard').textContent = '“' + e.text + '”'; $('heard').classList.remove('dim'); $('nHeard').classList.add('live'); }
       else if (e.kind === 'reply') { $('reply').textContent = e.text; $('reply').classList.remove('dim'); $('nJarvis').classList.add('live'); if (e.mp3) { audioQ.push(e.mp3); playNext(); } }

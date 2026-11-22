@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import collections
 import contextlib
 import io
 import os
@@ -39,6 +40,7 @@ from tools import auto_hover
 
 PAGE = Path(__file__).with_name("voice_flights.html")
 PREFLIGHT_FRESH_S = 300
+HIST_HZ, HIST_S = 5, 300
 REPLIES = {
     "hover": "Rising to half a metre. Ten seconds up there, then back down.",
     "spin": "Going up for a full three-sixty. Try not to get dizzy.",
@@ -92,6 +94,11 @@ class Hub:
         self.flight: asyncio.Task | None = None
         self.preset: str | None = None
         self.landed_on_request = False
+        # chart history, 5 Hz for HIST_S: rangefinder height above the floor, the FC's own
+        # height estimate, position, heading, battery
+        self.hist: collections.deque = collections.deque(maxlen=int(HIST_S * HIST_HZ))
+        self.hseq = 0
+        self.ground_m = 0.12  # rangefinder reading on the floor, learned while disarmed
 
     def add(self, kind: str, text: str, mp3: bytes = b"") -> None:
         ev = {"i": len(self.events), "t": time.time(), "kind": kind, "text": text}
@@ -116,6 +123,24 @@ class Hub:
                     await asyncio.sleep(3)
                     continue
             await asyncio.sleep(1)
+
+    async def record(self) -> None:
+        """Telemetry history for the page's charts."""
+        while True:
+            await asyncio.sleep(1 / HIST_HZ)
+            t = (self.edge.telemetry if self.edge and self.edge.connected else None) or {}
+            if not t:
+                continue
+            r = t.get("range_m")
+            r = None if r is None or r < 0 or r > 1.9 else r
+            if r is not None and not t.get("armed"):
+                self.ground_m = 0.9 * self.ground_m + 0.1 * r  # slow average on the floor
+            self.hseq += 1
+            self.hist.append({"i": self.hseq, "t": round(time.time(), 2),
+                              "h": None if r is None else round(max(0.0, r - self.ground_m), 3),
+                              "fc": round(t.get("alt", 0.0), 3), "n": round(t.get("n", 0.0), 3),
+                              "e": round(t.get("e", 0.0), 3), "yaw": round(t.get("yaw", 0.0), 1),
+                              "v": t.get("battery_v"), "armed": bool(t.get("armed"))})
 
     # --- preflight ---------------------------------------------------------------------------
     async def run_preflight(self) -> None:
@@ -199,7 +224,7 @@ class Hub:
             await self.say("Back on the ground. That's a wrap." if rc == 0 else
                            "That one didn't go to plan. I'm down; check the log.")
 
-    def state(self, since: int) -> dict:
+    def state(self, since: int, hsince: int = 0) -> dict:
         t = (self.edge.telemetry if self.edge else None) or {}
         r = t.get("range_m")
         return {"events": self.events[since:], "next": len(self.events),
@@ -212,7 +237,8 @@ class Hub:
                 "tel": {"height": None if r is None or r > 1.9 else round(r, 2),
                         "mode": t.get("mode"), "armed": t.get("armed"),
                         "battery": t.get("battery_v"), "state": t.get("state")},
-                "video": f"http://{self.a.edge}:8080/forward.mjpg"}
+                "video": f"http://{self.a.edge}:8080/forward.mjpg",
+                "hist": [p for p in self.hist if p["i"] > hsince]}
 
 
 def create_app(a) -> FastAPI:
@@ -222,14 +248,15 @@ def create_app(a) -> FastAPI:
     @app.on_event("startup")
     async def _start() -> None:
         asyncio.ensure_future(hub.keep_edge())
+        asyncio.ensure_future(hub.record())
 
     @app.get("/", response_class=HTMLResponse)
     async def index():
         return PAGE.read_text(encoding="utf-8")
 
     @app.get("/api/state")
-    async def state(since: int = 0):
-        return hub.state(since)
+    async def state(since: int = 0, hsince: int = 0):
+        return hub.state(since, hsince)
 
     @app.post("/api/voice")
     async def voice(request: Request):
