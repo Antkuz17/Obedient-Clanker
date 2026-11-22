@@ -127,6 +127,39 @@ Run the preflight first: `python -m tools.deploy_pi --host <pi> --run "python3 -
 clean. Every test lands by itself; it also lands early if the rangefinder loses the ground for
 1 s, reads above 1.2 m, or the FC leaves GUIDED.
 
+## Video clips at the table (nothing flies)
+
+Drone powered on the table, props off or on (motors never run). Put it in demo mode and start
+the page in demo mode:
+
+```sh
+git pull
+python -m tools.field_setup --demo                  # deploys this laptop's code, demo edge
+python -m tools.voice_flights --edge <pi> --demo    # http://127.0.0.1:8200 (no preflight needed)
+```
+
+**Test 4: a person stops it.** Point the drone's forward camera along an empty stretch (3+ m of
+open space in front of it). Hold Space: "Hey drone, fly forward". The edge runs a pretend forward
+move (10 m in 2 m legs at 0.5 m/s; the FC never gets anything) with the *real* person check
+every tick. Walk into the camera's view from ~4 m away toward the drone: the page draws a box
+around you with your distance, and at ~2 m the edge stops the move (`person 1.8 m ahead:
+stopped`): red PERSON AHEAD banner, Jarvis says so. If you're already in view when you say it,
+it refuses up front ("someone right in front of me"). Stay out of view for a clean run: with the
+path clear it finishes and says so.
+
+**QNX clip: break things.** The QNX panel on the same page (needs the drone disarmed):
+- *Kill person detector*: SIGKILL; the supervisor respawns it (~30-60 ms). Forward moves are
+  refused while it's down.
+- *Freeze safety core 3 s*: SIGSTOP on the edge core; the C watchdog (top real-time priority)
+  notices within ~250 ms; flow and rangefinder keep reaching the FC directly (rates shown);
+  the core resumes with no restart.
+- *Kill camera service*: slays QNX's sensor service; sensor_keeper restarts it (~2-3 s) and both
+  cameras stream again (~5-8 s).
+For the extra shot, an SSH window on the Pi with `slog2info -w -b hope` shows every crash,
+restart and refusal in QNX's own system log, live.
+
+Back to flying afterwards: `python -m tools.field_setup` (or `--gps`) without `--demo`.
+
 ## Safety (every flight)
 
 - A **pilot on the FlySky with a thumb on SwA**: up = AltHold (normal), **down = land now**. The
