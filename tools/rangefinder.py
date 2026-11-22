@@ -79,7 +79,7 @@ class SpikeFilter:
     No echo is held the same way, and reported (-1) after `confirm` in a row.
     """
 
-    def __init__(self, max_rate: float = 0.8, slack: float = 0.08, confirm: int = 5):
+    def __init__(self, max_rate: float = 2.0, slack: float = 0.08, confirm: int = 5):
         self.max_rate, self.slack, self.confirm = max_rate, slack, confirm
         self.est: float | None = None
         self.t_est = 0.0

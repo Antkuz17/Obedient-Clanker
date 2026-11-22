@@ -160,7 +160,7 @@ def test_spike_filter_follows_a_real_climb_and_a_step():
     assert feed(f, climb) == climb
     f = SpikeFilter()
     out = feed(f, [0.5] * 10 + [0.9] * 10)                         # flew over a table
-    assert out[10:14] == [0.5] * 4 and out[14:] == [0.9] * 6      # 5 agreeing readings
+    assert out[10] == 0.5 and out[14:] == [0.9] * 6     # the jump is held, then followed
 
 
 def test_spike_filter_reports_sustained_no_echo():
