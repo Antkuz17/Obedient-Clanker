@@ -42,8 +42,11 @@ class SafetyConfig:
     person_latency_s: float = 0.3    # camera frame + inference (10 Hz) + UDP: measure on the Pi
     person_range_error: float = 0.3  # a person may be up to 30 % closer than the estimate says
     scan_rate_max: float | None = None  # deg/s; None = no cap on the scan op's turn rate
-    batt_reject_v: float = 10.6   # 3S: refuse new moves below this
-    batt_land_v: float = 10.2     # 3S: auto-land below this
+    # 3S, read under load. Was 10.6 / 10.2: the field pack (12.05 V at rest) sagged to 10.4 V
+    # within 5 s of hovering at ~80% throttle, so every move was refused and it auto-landed
+    # (2026-11-22, cloud lead's call; 9.6 V loaded = 3.2 V/cell)
+    batt_reject_v: float = 10.0   # 3S: refuse new moves below this
+    batt_land_v: float = 9.6      # 3S: auto-land below this (for 2 s)
     flow_quality_min: int = 50    # refuse moves when flow is this bad (0-255)
     person_close_m: float = 1.0   # clearance: never end or stop closer than this to a person
     # forward HC-SR04 (tools/rangefinder.py "fwd_m"): walls, furniture, a torso too close for

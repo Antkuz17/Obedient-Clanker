@@ -130,7 +130,7 @@ clean. Every test lands by itself; it also lands early if the rangefinder loses 
   within about 1 m of the end of a move gets it refused), about 6 m clear to its left.
 - Light wind only. Pavement / court / packed dirt beats grass (the ultrasonic sensor hates grass).
 - Charge the battery: preflight wants >= 11.2 V at rest; the edge refuses new moves below
-  10.6 V and lands below 10.2 V.
+  10.0 V and lands below 9.6 V (under load; was 10.6 / 10.2 until 2026-11-22: packs sag ~1.7 V at hover).
 
 ## After a flight
 

@@ -73,7 +73,7 @@ def test_gate_fence_battery_flow_person():
     g = SafetyGate(SafetyConfig(**LIMITS))
     s = VehicleState(**{**FLYING.as_dict(), "n": 2.5})
     assert "geofence" in g.check("move_body", {"fwd": 1.0}, s, True).reason
-    low = VehicleState(**{**FLYING.as_dict(), "battery_v": 10.4})
+    low = VehicleState(**{**FLYING.as_dict(), "battery_v": 9.8})
     assert "battery" in g.check("move_body", {"fwd": 0.5}, low, True).reason
     blind = VehicleState(**{**FLYING.as_dict(), "flow_quality": 10})
     assert "flow" in g.check("move_body", {"fwd": 0.5}, blind, True).reason
@@ -276,7 +276,7 @@ async def test_perception_over_udp(rig):
 async def test_low_battery_auto_lands(rig):
     srv, sim, edge = rig
     await edge.run("takeoff", alt=1.0)
-    sim.s.battery_v = 10.0
+    sim.s.battery_v = 9.4
     for _ in range(200):
         if not sim.s.armed:
             break
@@ -545,7 +545,7 @@ async def test_stop_while_armed_on_ground_disarms(rig):
 async def test_battery_sag_is_debounced(rig):
     srv, sim, edge = rig
     await edge.run("takeoff", alt=1.0)
-    sim.s.battery_v = 10.0
+    sim.s.battery_v = 9.4
     await asyncio.sleep(0.5)
     sim.s.battery_v = 11.5                            # throttle sag recovered
     await asyncio.sleep(2.5)

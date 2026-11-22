@@ -43,7 +43,7 @@ async def test_demo_real_gate_reasons_win(demo_rig):
     srv, sim, edge = demo_rig
     with pytest.raises(CommandRejected, match="exceeds the 2.0 m limit"):
         await edge.run("move_body", fwd=-3.0)
-    sim.s.battery_v = 10.0
+    sim.s.battery_v = 9.8
     with pytest.raises(CommandRejected, match="battery"):
         await edge.run("takeoff", alt=1.0)
 
@@ -65,7 +65,7 @@ async def test_demo_telemetry_shows_a_pretend_hover_and_land_still_works(demo_ri
 
 async def test_demo_takeoff_refused_for_a_real_reason_stays_down(demo_rig):
     srv, sim, edge = demo_rig
-    sim.s.battery_v = 10.0
+    sim.s.battery_v = 9.8
     with pytest.raises(CommandRejected, match="battery"):
         await edge.run("takeoff", alt=1.0)
     await asyncio.sleep(0.3)
