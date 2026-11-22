@@ -8,6 +8,23 @@ anything unsafe. Built at Hack Western 13 (Nov 20–22, 2026).
 
 Tracks: **Best Use of QNX** and **Best Use of Vultr**.
 
+## Why
+
+The people who most need a drone are the ones who can't fly one. A firefighter at a burning
+building can see exactly what's going on, but their hands are on a hose, a ladder or a person.
+When they need eyes on the second floor, they shouldn't have to put everything down and pick up
+a controller. They should be able to say "rise, look at the second-floor window, take a photo"
+and keep working.
+
+That's the idea: **a drone you command by voice, for people whose hands are busy and whose
+situation is critical.** The person on the ground has the best line of sight and the best
+judgment about what matters; the drone becomes an extra pair of eyes they can direct without
+breaking focus. The same applies to search and rescue, paramedics at a crash scene, utility
+crews checking a line after a storm, or anyone inspecting something they can't climb to.
+
+Because it's meant for those moments, it can't be a toy: it has to refuse unsafe orders, keep
+working when the network doesn't, and never fly into a person, no matter what it's told.
+
 ## What it does
 
 - **Talk to it.** Hold a button (or Space), say what you want, let go. Jarvis plans it, says
@@ -92,6 +109,66 @@ F450 frame, Matek H743 flight controller (ArduPilot 4.7), QNX Raspberry Pi 5, tw
 cameras (forward and down), HC-SR04 ultrasonic rangefinders, HGLRC M100-PRO GPS, 3S LiPo,
 FlySky transmitter. Wiring and setup: [docs/hardware.md](docs/hardware.md),
 [docs/flight-setup.md](docs/flight-setup.md).
+
+## Innovation & creativity
+
+- **Voice as the whole interface.** No joystick, no app full of buttons: you say what you want
+  in plain English and the drone works out the flight. Simple commands ("rise and do a 360")
+  are understood instantly on the laptop; anything open-ended goes to a language model on Vultr
+  that turns it into flight steps.
+- **An AI that's allowed to say no.** Jarvis has a personality and refuses dumb or dangerous
+  orders out loud, with the reason, and a hard safety layer on the drone backs that up in code.
+  The cloud AI proposes; the drone disposes.
+- **Edge for reflexes, cloud for intelligence.** The expensive thinking (speech, planning,
+  vision) lives on Vultr; everything that keeps people safe lives on the drone itself, on a
+  real-time OS, and keeps working with the cloud or the laptop gone.
+
+## Technical complexity
+
+- **A real flight computer on a real-time OS.** A Raspberry Pi 5 running QNX 8 rides on the
+  drone and talks MAVLink to an ArduPilot flight controller over USB, with a hand-written USB
+  link because QNX has no serial driver for it.
+- **On-board AI that gates flight.** TensorFlow Lite person detection runs on the drone; its
+  output decides whether a forward move is allowed, and stops one that's already running.
+- **Real-time engineering:** a SCHED_FIFO priority plan so AI work can never starve the safety
+  loop or QNX's own drivers; a C watchdog with a sub-millisecond worst case; a supervisor that
+  restarts any crashed process in tens of milliseconds.
+- **Sensor fusion that survives the real world:** optical flow indoors, GPS outdoors, and an
+  ultrasonic rangefinder for height, because the flight controller's own height estimate
+  drifts near the ground.
+- **A full stack in two days:** cloud app, speech-to-text, LLM tool calling, vision, a live
+  dashboard, a planner, a wire protocol, a safety gate and the embedded side, all integrated.
+
+## Completeness
+
+Working on the real drone, by voice, from the dashboard:
+
+- takeoff to a hover held by the rangefinder, then landing on command
+- a full 360° turn, then hovering until told to land, including "land" said mid-flight
+- moving sideways by a given distance, taking a photo on the way
+- refusing to fly forward when a person is in front of the camera, and boxing them on screen
+- outdoor flight on GPS; refusals for height, battery and distance limits; automatic landing
+  when height, sensors or the link are lost
+
+Known limits:
+
+- The airframe is heavy for its 3S battery (about 80% throttle to hover), so sideways flight
+  needs a well-charged pack; on a tired one the drone sinks and lands itself.
+- The forward ultrasonic obstacle sensor isn't wired yet, so only people (not objects) are
+  detected ahead.
+- Hand-gesture control (palm to stop) is designed but not implemented.
+
+## Design
+
+- **One screen:** the live camera with people boxed in red; a pipeline that reads left to right
+  (You said → Jarvis plans → QNX decides → Motors) with animated links that show where a command
+  is and stop with a ✕ where the safety gate refused it; and a side panel with the decision, the
+  real-time stats from QNX, height against the ceiling, and battery.
+- **Hold to talk** (button or Space), **Land** and a big **STOP** (also Esc) that never asks for
+  anything. A problem banner appears only when something is wrong: link lost, low battery,
+  pilot override.
+- **Readable at a glance:** one accent colour, status colours only for state (amber for refused,
+  green for approved), no clutter. Works on a laptop and a phone.
 
 ## Repository
 
