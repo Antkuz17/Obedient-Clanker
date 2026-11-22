@@ -9,7 +9,12 @@ of the presets in tools/auto_hover.py (rangefinder-only height):
   "rise / take off / hover"            -> hover     (0.5 m, hold 10 s, land)
   "turn around / spin / 360"           -> spin      (rise, one full turn, land)
   "left ... right / side to side"      -> leftright (rise, 5 m left, 5 m right, land)
+  "fly forward / go ahead"             -> forward   (--demo only: test 4, the person check)
   "land / stop / abort"                -> lands now
+--demo (the edge in demo mode, field_setup --demo): nothing flies. "Fly forward" runs the edge's
+pretend forward move with the live person check: walk into the forward camera's view and it
+stops ("person 1.6 m ahead"). The QNX panel causes real failures on the drone stack
+(tools/qnx_faults.py) and shows the recovery.
 Jarvis answers aloud (ElevenLabs, played by the page). Flights need a preflight GO from the
 last 5 minutes (button on the page), and the safety pilot keeps SwA. This is the filming
 shortcut until the full brain/planner flies the real drone; it never sends anything the edge's
@@ -45,10 +50,18 @@ REPLIES = {
     "hover": "Rising to half a metre. Ten seconds up there, then back down.",
     "spin": "Going up for a full three-sixty. Try not to get dizzy.",
     "leftright": "Up we go. Five metres left, five metres right, then down.",
+    "forward": "Heading forward. Person detection is live.",
+}
+FORWARD_M, FORWARD_LEG_M = 10.0, 2.0  # the demo forward move, in 2 m legs (the gate's cap)
+QNX_FAULTS = {
+    "kill_vision": ("kill -9 the person detector", False),
+    "freeze_core": ("freeze the safety core for 3 s", False),
+    "kill_camera_service": ("kill QNX's camera service", True),   # needs root
 }
 PRESET_WORDS = {  # first match wins: a sideways word beats a turn word beats a rise word
     "leftright": ("left", "right", "side to side", "sideways", "strafe", "back and forth"),
     "spin": ("turn", "spin", "around", "360", "three sixty", "rotate", "circle"),
+    "forward": ("forward", "forwards", "ahead", "straight", "advance"),
     "hover": ("rise", "take off", "takeoff", "lift", "lift off", "hover", "fly", "go up", "up"),
 }
 LAND_WORDS = ("land", "stop", "abort", "down", "emergency", "cancel")
@@ -106,6 +119,11 @@ class Hub:
             ev["mp3"] = base64.b64encode(mp3).decode()
         self.events.append(ev)
 
+    def on_edge_event(self, e: dict) -> None:
+        self.add("log", f"!! {e['kind']}: {e['detail']}")
+        if e["kind"] == "person_close" or (e["kind"] == "safety_reject" and "person" in e["detail"]):
+            self.add("alert", e["detail"])
+
     async def say(self, text: str) -> None:
         self.add("reply", text, await self.ai.speak(text))
 
@@ -114,8 +132,8 @@ class Hub:
         while True:
             if self.edge is None or not self.edge.connected:
                 try:
-                    self.edge = await EdgeClient(self.a.edge, on_event=lambda e: self.add(
-                        "log", f"!! {e['kind']}: {e['detail']}")).connect()
+                    self.edge = await EdgeClient(self.a.edge, on_event=self.on_edge_event
+                                                 ).connect()
                     self.add("log", f"connected to the drone at {self.a.edge}")
                 except Exception as e:
                     self.edge = None
@@ -193,6 +211,17 @@ class Hub:
         if flying:
             await self.say(f"Still busy with the {self.preset} flight. Say land to stop it.")
             return {"preset": preset, "started": False}
+        if preset == "forward" and not self.a.demo:
+            await self.say("Forward flight is the person-safety demo. Start me with demo mode.")
+            return {"preset": preset, "started": False}
+        if self.a.demo:  # nothing flies: no preflight needed, the edge refuses real motion
+            if self.edge is None or not self.edge.connected:
+                await self.say("I can't reach the drone.")
+                return {"preset": preset, "started": False}
+            await self.say(REPLIES[preset] if preset == "forward" else "Checking with the drone.")
+            self.preset, self.landed_on_request = preset, False
+            self.flight = asyncio.ensure_future(self._demo(preset))
+            return {"preset": preset, "started": True}
         fresh = self.preflight["ok"] and time.time() - self.preflight["t"] < PREFLIGHT_FRESH_S
         if not fresh:
             await self.say("Run the preflight first. I don't fly blind.")
@@ -224,6 +253,87 @@ class Hub:
             await self.say("Back on the ground. That's a wrap." if rc == 0 else
                            "That one didn't go to plan. I'm down; check the log.")
 
+    async def _demo(self, preset: str) -> None:
+        """--demo: forward = the pretend move with the live person check (in 2 m legs);
+        anything else = the edge's verdict on a takeoff (a sarcastic no, or the real reason)."""
+        from shared.client import CommandRejected
+        self.add("state", f"flying:{preset}")
+        try:
+            if preset != "forward":
+                try:
+                    await self.edge.run("takeoff", alt=0.5, timeout=10)
+                except CommandRejected as e:
+                    await self.say(str(e))
+                return
+            gone = 0.0
+            while gone < FORWARD_M - 0.01:
+                leg = min(FORWARD_LEG_M, FORWARD_M - gone)
+                try:
+                    d = await self.edge.run("move_body", fwd=leg, timeout=30)
+                except CommandRejected as e:
+                    self.add("log", f"refused: {e}")
+                    if "person" in str(e):
+                        self.add("alert", str(e))
+                        await self.say("There's someone right in front of me. I'm not moving.")
+                    else:
+                        await self.say(f"The safety gate says no: {e}.")
+                    return
+                if d.get("status") != "ok":
+                    why = d.get("reason") or d.get("status")
+                    self.add("log", f"stopped: {why}")
+                    if "person" in why:
+                        await self.say("Person in front of me. Stopping right here. Safety first.")
+                    else:
+                        await self.say(f"Stopped: {why}.")
+                    return
+                gone += leg
+                self.add("log", f"forward {gone:.0f} of {FORWARD_M:.0f} m, path clear")
+            await self.say(f"Path stayed clear. That's {FORWARD_M:.0f} metres forward, "
+                           "in my imagination. Motors never moved.")
+        except asyncio.CancelledError:
+            await self.say("Stopped.")
+        finally:
+            self.add("state", "idle")
+
+    async def qnx_fault(self, fault: str) -> dict:
+        """Cause one failure on the drone (tools/qnx_faults.py over SSH) and narrate it."""
+        if fault not in QNX_FAULTS:
+            return {"error": "unknown fault"}
+        label, root = QNX_FAULTS[fault]
+        if self.flight is not None and not self.flight.done() and not self.a.demo:
+            await self.say("Not while I'm flying.")
+            return {"error": "flying"}
+        self.add("qnx", f"▶ {label} ...")
+        cmd = ("cd /data/home/qnxuser/hope && "
+               + ("sudo -S -p '' " if root else "")
+               + "env PYTHONPATH=/data/home/qnxuser/hope:"
+               "/data/home/qnxuser/.local/lib/python3.14/site-packages "
+               f"python3 -m tools.qnx_faults {fault}")
+
+        def run() -> str:
+            from tools.deploy_pi import ssh
+            c = ssh(self.a.edge)
+            try:
+                i, o, _ = c.exec_command(cmd, timeout=60)
+                if root:  # sudo -S reads the password from stdin (same login as deploy_pi)
+                    i.write(os.environ.get("QNX_PASS", "qnxuser") + "\n")
+                    i.flush()
+                return o.read().decode(errors="replace")
+            finally:
+                c.close()
+        import json
+        try:
+            out = await asyncio.get_running_loop().run_in_executor(None, run)
+            r = json.loads([ln for ln in out.splitlines() if ln.startswith("{")][-1])
+        except Exception as e:
+            self.add("qnx", f"✖ couldn't run it: {e}")
+            return {"error": str(e)}
+        lines, speech = qnx_story(r)
+        for ln in lines:
+            self.add("qnx", ln)
+        await self.say(speech)
+        return r
+
     def state(self, since: int, hsince: int = 0) -> dict:
         t = (self.edge.telemetry if self.edge else None) or {}
         r = t.get("range_m")
@@ -236,9 +346,41 @@ class Hub:
                 time.time() - self.preflight["t"] < PREFLIGHT_FRESH_S,
                 "tel": {"height": None if r is None or r > 1.9 else round(r, 2),
                         "mode": t.get("mode"), "armed": t.get("armed"),
-                        "battery": t.get("battery_v"), "state": t.get("state")},
+                        "battery": t.get("battery_v"), "state": t.get("state"),
+                        "people": t.get("people") or []},
+                "demo": bool(self.a.demo),
                 "video": f"http://{self.a.edge}:8080/forward.mjpg",
                 "hist": [p for p in self.hist if p["i"] > hsince]}
+
+
+def qnx_story(r: dict) -> tuple[list[str], str]:
+    """Measured recovery -> lines for the page and one sentence for Jarvis."""
+    f = r.get("fault")
+    if not r.get("ok"):
+        return [f"\u2716 {f}: {r.get('error') or 'no recovery seen'}"], "That didn't go as planned."
+    if f == "kill_vision":
+        ms = r.get("respawn_ms")
+        return ([f"\u2716 person detector (pid {r['pid']}) killed with SIGKILL",
+                 f"\u2714 supervisor respawned it in {ms:.0f} ms (pid {r['new_pid']})",
+                 "\u2714 forward moves were refused until it was back (fail-safe)"],
+                f"Person detector killed. QNX had it back in {ms:.0f} milliseconds.")
+    if f == "freeze_core":
+        lines = [f"\u2744 safety core frozen (SIGSTOP) for {r['frozen_s']:.0f} s",
+                 f"\u2714 C watchdog (top real-time priority) noticed after {r['watchdog_noticed_ms']:.0f} ms"
+                 + (": sent LAND" if r.get("land_sent") else ": disarmed, nothing to land"),
+                 f"\u2714 flow {r.get('flow_hz')} Hz and rangefinder {r.get('range_hz')} Hz kept "
+                 "reaching the flight controller directly",
+                 "\u2714 core resumed; no restart, no lost state"]
+        return lines, (f"I froze my own brain for three seconds. The watchdog noticed in "
+                       f"{r['watchdog_noticed_ms']:.0f} milliseconds, and my sensors never stopped.")
+    if f == "kill_camera_service":
+        cams = r.get("cameras_back_ms") or {}
+        lines = ["\u2716 QNX camera service killed (slay sensor)",
+                 f"\u2714 sensor_keeper restarted it: back in {r['service_back_ms'] / 1000:.1f} s"]
+        lines += [f"\u2714 {k} streaming again after {v / 1000:.1f} s" for k, v in cams.items()]
+        return lines, (f"Camera service killed. It was back in "
+                       f"{r['service_back_ms'] / 1000:.1f} seconds, cameras and all.")
+    return [str(r)], "Done."
 
 
 def create_app(a) -> FastAPI:
@@ -282,6 +424,10 @@ def create_app(a) -> FastAPI:
         asyncio.ensure_future(hub.run_preflight())
         return {"started": True}
 
+    @app.post("/api/qnx/{fault}")
+    async def qnx(fault: str):
+        return await hub.qnx_fault(fault)
+
     @app.post("/api/land")
     async def land():
         return await hub.command("land")
@@ -298,9 +444,12 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=8200)
     ap.add_argument("--gps", action="store_true", help="preflight checks GPS (outdoors)")
     ap.add_argument("--min-batt", type=float, default=11.2)
+    ap.add_argument("--demo", action="store_true",
+                    help="the drone is in demo mode (field_setup --demo): nothing flies; enables "
+                         "'fly forward' (the person-check test) without a preflight")
     a = ap.parse_args()
     print(f"\n  voice flights: http://127.0.0.1:{a.port}   (drone {a.edge}"
-          f"{', GPS' if a.gps else ''})\n", flush=True)
+          f"{', GPS' if a.gps else ''}{', DEMO (no flying)' if a.demo else ''})\n", flush=True)
     uvicorn.run(create_app(a), host="127.0.0.1", port=a.port, log_level="warning")
 
 

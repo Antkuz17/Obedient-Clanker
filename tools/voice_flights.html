@@ -55,6 +55,22 @@ header{grid-area:head;display:flex;align-items:center;gap:10px;min-height:58px;f
 .rec i{width:7px;height:7px;border-radius:50%;background:var(--pink);animation:pulse 1.2s infinite}
 @keyframes pulse{50%{opacity:.25}}
 
+/* person boxes from the on-board detector, and the stop banner */
+.cam canvas.boxes{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.alert{position:absolute;left:50%;bottom:96px;transform:translate(-50%,-8px);opacity:0;transition:opacity .2s,transform .2s;pointer-events:none;
+  padding:14px 22px;border-radius:12px;background:rgba(192,42,82,.92);border:1px solid #ff8aa5;color:#fff;text-align:center;box-shadow:0 10px 40px rgba(192,42,82,.45)}
+.alert.on{opacity:1;transform:translate(-50%,0)}
+.alert b{display:block;font-size:24px;font-weight:600;letter-spacing:.02em}
+.alert span{font-size:14px;opacity:.92}
+/* QNX failure panel */
+.qbtns{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.qbtns button{height:34px;padding:0 11px;border-radius:8px;border:1px solid var(--line);background:var(--raise);color:var(--soft);font-size:12.5px}
+.qbtns button:hover{border-color:var(--btn);color:var(--text)}
+.qbtns button:disabled{opacity:.45;cursor:wait}
+.qlog{font-family:var(--mono);font-size:12px;line-height:1.6;color:var(--soft);max-height:170px;overflow:auto;white-space:pre-wrap;margin:0}
+.qlog .ok{color:var(--green)} .qlog .bad{color:var(--pink)} .qlog .run{color:var(--amber)}
+.demo-only{display:none} .demo .demo-only{display:inline-flex}
+
 /* pipeline: heard -> understood -> jarvis -> flight */
 .pipe{grid-area:pipe;display:flex;flex-direction:column;gap:10px;min-width:0}
 .node{background:var(--node);border:1px solid var(--line);border-radius:12px;padding:12px 14px;min-width:0}
@@ -112,14 +128,17 @@ header{grid-area:head;display:flex;align-items:center;gap:10px;min-height:58px;f
     <div class="brand"><i></i>Hope <span>· voice flight</span></div>
     <span class="chip"><span class="dot" id="linkDot"></span><span id="linkTxt">drone</span></span>
     <span class="chip"><span class="dot" id="pfDot"></span><span id="pfTxt">preflight not run</span></span>
+    <span class="chip demo-only" style="border-color:var(--amber);color:var(--amber)">demo mode &middot; motors never run</span>
     <span class="chip">battery <b id="batt">–</b></span>
   </header>
 
   <section class="cam" id="cam">
     <div class="empty" id="camEmpty">connecting to the drone's camera…</div>
     <img id="video" alt="" hidden>
+    <canvas class="boxes" id="boxes"></canvas>
+    <div class="alert" id="alert"><b>PERSON AHEAD &middot; STOPPED</b><span id="alertTxt"></span></div>
     <div class="shade"></div>
-    <div class="tag"><span class="rec"><i></i>FLYING</span><span id="modeTag">mode –</span></div>
+    <div class="tag"><span class="rec"><i></i><span id="recTxt">FLYING</span></span><span id="modeTag">mode –</span></div>
     <div class="hud">
       <div><div class="lab">height · rangefinder</div><div class="big" id="height">–<small>m</small></div></div>
       <div><div class="lab">state</div><div class="stat" id="stateTxt">–</div></div>
@@ -129,10 +148,17 @@ header{grid-area:head;display:flex;align-items:center;gap:10px;min-height:58px;f
   <section class="pipe">
     <div class="node" id="nHeard"><h3><i></i>Heard</h3><div class="v dim" id="heard">Hold the button and talk to the drone</div></div>
     <div class="node" id="nPick"><h3><i></i>Understood</h3>
-      <div class="presets"><span data-p="hover">Rise · hover · land</span><span data-p="spin">Rise · 360° · land</span><span data-p="leftright">Rise · left · right · land</span></div>
+      <div class="presets"><span data-p="hover">Rise · hover · land</span><span data-p="spin">Rise · 360° · land</span><span data-p="leftright">Rise · left · right · land</span><span data-p="forward" class="demo-only">Forward · person check</span></div>
     </div>
     <div class="node" id="nJarvis"><h3><i></i>Jarvis</h3><div class="v dim" id="reply">–</div></div>
     <div class="node" id="nFlight"><h3><i></i>Flight</h3><pre class="log" id="log"></pre></div>
+    <div class="node" id="nQnx"><h3><i></i>QNX &middot; break something</h3>
+      <div class="qbtns">
+        <button data-f="kill_vision">Kill person detector</button>
+        <button data-f="freeze_core">Freeze safety core 3 s</button>
+        <button data-f="kill_camera_service">Kill camera service</button>
+      </div>
+      <pre class="qlog" id="qlog">Each button causes a real failure on the drone's QNX computer and shows how it recovers.</pre></div>
   </section>
 
   <section class="charts">
@@ -313,6 +339,46 @@ function logLine(text) {
   el.textContent = text;
   const log = $('log'); log.appendChild(el); log.scrollTop = log.scrollHeight;
 }
+/* person boxes: normalised [x0,y0,x1,y1,score,metres] from edge/vision, mapped onto the
+   object-fit:cover image; pink when the edge would stop for them */
+function drawBoxes(people) {
+  const cv = $('boxes'), img = $('video');
+  const r = cv.getBoundingClientRect(), d = devicePixelRatio || 1;
+  cv.width = Math.round(r.width * d); cv.height = Math.round(r.height * d);
+  const g = cv.getContext('2d'); g.setTransform(d, 0, 0, d, 0, 0); g.clearRect(0, 0, r.width, r.height);
+  if (img.hidden || !people || !people.length) return;
+  const iw = img.naturalWidth || 640, ih = img.naturalHeight || 480, k = Math.max(r.width / iw, r.height / ih);
+  const ox = (r.width - iw * k) / 2, oy = (r.height - ih * k) / 2;
+  g.font = "600 13px 'Geist', system-ui, sans-serif"; g.textBaseline = 'bottom';
+  for (const b of people) {
+    const [x0, y0, x1, y1, , m] = b, close = m != null && m < 2.5;
+    const X = ox + x0 * iw * k, Y = oy + y0 * ih * k, W = (x1 - x0) * iw * k, H = (y1 - y0) * ih * k;
+    g.strokeStyle = close ? '#EA4B71' : '#EDEDF2'; g.lineWidth = 2; g.strokeRect(X, Y, W, H);
+    const label = 'person' + (m != null ? ' ' + m.toFixed(1) + ' m' : '');
+    const tw = g.measureText(label).width + 12;
+    g.fillStyle = close ? '#EA4B71' : 'rgba(14,14,20,.8)'; g.fillRect(X, Math.max(0, Y - 22), tw, 22);
+    g.fillStyle = '#fff'; g.fillText(label, X + 6, Math.max(22, Y) - 5);
+  }
+}
+let alertTimer = null;
+function showAlert(text) {
+  $('alertTxt').textContent = text; $('alert').classList.add('on');
+  clearTimeout(alertTimer); alertTimer = setTimeout(() => $('alert').classList.remove('on'), 7000);
+}
+function qnxLine(text) {
+  const el = document.createElement('div');
+  el.className = text.startsWith('\u2714') ? 'ok' : text.startsWith('\u25b6') ? 'run' : (text.startsWith('\u2716') || text.startsWith('\u2744')) ? 'bad' : '';
+  el.textContent = text;
+  const q = $('qlog'); if (q.dataset.fresh !== '1') { q.textContent = ''; q.dataset.fresh = '1'; }
+  q.appendChild(el); q.scrollTop = q.scrollHeight;
+}
+document.querySelectorAll('.qbtns button').forEach((b) => b.onclick = async () => {
+  document.querySelectorAll('.qbtns button').forEach((x) => x.disabled = true);
+  $('nQnx').classList.add('live');
+  try { await fetch('/api/qnx/' + b.dataset.f, { method: 'POST' }); }
+  finally { document.querySelectorAll('.qbtns button').forEach((x) => x.disabled = false); $('nQnx').classList.remove('live'); }
+});
+
 function setPreset(p) {
   document.querySelectorAll('.presets span').forEach((s) => s.classList.toggle('on', s.dataset.p === p));
   $('nPick').classList.toggle('live', !!p);
@@ -325,6 +391,8 @@ async function poll() {
       if (e.kind === 'heard') { $('heard').textContent = '“' + e.text + '”'; $('heard').classList.remove('dim'); $('nHeard').classList.add('live'); }
       else if (e.kind === 'reply') { $('reply').textContent = e.text; $('reply').classList.remove('dim'); $('nJarvis').classList.add('live'); if (e.mp3) { audioQ.push(e.mp3); playNext(); } }
       else if (e.kind === 'log') logLine(e.text);
+      else if (e.kind === 'alert') showAlert(e.text);
+      else if (e.kind === 'qnx') qnxLine(e.text);
       else if (e.kind === 'state' && e.text.startsWith('flying:')) { setPreset(e.text.slice(7)); $('log').textContent = ''; }
     }
     since = s.next;
@@ -341,10 +409,13 @@ async function poll() {
     $('height').innerHTML = (t.height == null ? '–' : t.height.toFixed(2)) + '<small>m</small>';
     $('batt').textContent = t.battery ? t.battery.toFixed(2) + ' V' : '–';
     $('modeTag').textContent = 'mode ' + (t.mode || '–');
+    $('app').classList.toggle('demo', !!s.demo);
+    $('recTxt').textContent = s.demo ? 'MOVING (PRETEND)' : 'FLYING';
+    drawBoxes(t.people);
     $('stateTxt').textContent = (t.state || '–') + (t.armed ? ' · armed' : '');
     if (!videoSet && s.link) { const v = $('video'); v.src = s.video; v.onload = () => { v.hidden = false; $('camEmpty').hidden = true; }; videoSet = true; }
     $('talk').classList.toggle('busy', !recording && flying);
-    $('talkTxt').textContent = recording ? 'Listening… release to send' : flying ? 'Flying · hold to say “land”' : 'Hold to talk';
+    $('talkTxt').textContent = recording ? 'Listening… release to send' : flying ? (s.demo ? 'Moving (pretend) · hold to say “stop”' : 'Flying · hold to say “land”') : 'Hold to talk';
   } catch (e) { /* server restarting */ }
   setTimeout(poll, 300);
 }
