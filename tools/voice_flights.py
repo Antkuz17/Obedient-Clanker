@@ -68,7 +68,8 @@ QNX_FAULTS = {
 PRESET_WORDS = {  # first match wins: a sideways word beats a turn word beats a rise word
     "leftright": ("left", "right", "side to side", "sideways", "strafe", "back and forth"),
     "spin": ("turn", "spin", "around", "360", "three sixty", "rotate", "circle"),
-    "forward": ("forward", "forwards", "ahead", "straight", "advance"),
+    "forward": ("test four", "test 4", "test for", "forward", "forwards", "ahead", "straight",
+                "advance"),
     "hover": ("rise", "take off", "takeoff", "lift", "lift off", "hover", "fly", "go up", "up"),
 }
 LAND_WORDS = ("land", "stop", "abort", "down", "emergency", "cancel")
@@ -84,6 +85,8 @@ def classify(text: str, flying: bool = False) -> str | None:
     t = text.lower().replace("-", " ")
     if flying and _has(t, LAND_WORDS):
         return "land"
+    if _has(t, ("test four", "test 4", "test for")):
+        return "forward"  # test 4 wins over any other word in the sentence: it never moves
     for preset, words in PRESET_WORDS.items():
         if _has(t, words):
             return preset
@@ -107,6 +110,9 @@ class _Lines(io.TextIOBase):
 class Hub:
     def __init__(self, a):
         self.a = a
+        # --edge is host or host:port (the edge's protocol port, default 7000)
+        self.host, _, port = a.edge.partition(":")
+        self.port = int(port) if port else 7000
         self.ai = AI(settings())
         self.edge: EdgeClient | None = None
         self.events: list[dict] = []      # {i, t, kind: heard|reply|log|state, text, mp3?}
@@ -148,16 +154,16 @@ class Hub:
         while True:
             if self.edge is None or not self.edge.connected:
                 try:
-                    edge = await EdgeClient(self.a.edge, on_event=self.on_edge_event).connect()
+                    edge = await EdgeClient(self.host, self.port, on_event=self.on_edge_event).connect()
                     await asyncio.sleep(2)  # the edge closes refused laptops right after accept
                     if not edge.connected or not edge.telemetry:
                         await edge.close()
-                        note(f"the drone at {self.a.edge} refused this laptop: it only takes "
+                        note(f"the drone at {self.host} refused this laptop: it only takes "
                              "commands from its allowed laptop (python -m tools.field_setup)")
                         await asyncio.sleep(5)
                         continue
                     self.edge = edge
-                    note(f"connected to the drone at {self.a.edge}")
+                    note(f"connected to the drone at {self.host}")
                 except Exception as e:
                     self.edge = None
                     note(f"drone not reachable ({e}); retrying")
@@ -184,7 +190,7 @@ class Hub:
         while True:
             try:
                 if c is None:
-                    c = await loop.run_in_executor(None, ssh, self.a.edge)
+                    c = await loop.run_in_executor(None, ssh, self.host)
                     full = True
                 snap = await loop.run_in_executor(None, once, c, full)
                 if snap:
@@ -233,7 +239,7 @@ class Hub:
             import paramiko
             c = paramiko.SSHClient()
             c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            c.connect(self.a.edge, username=os.environ.get("QNX_USER", "qnxuser"),
+            c.connect(self.host, username=os.environ.get("QNX_USER", "qnxuser"),
                       password=os.environ.get("QNX_PASS", "qnxuser"), look_for_keys=False,
                       allow_agent=False, timeout=10)
             try:
@@ -268,11 +274,10 @@ class Hub:
             await self.say("I can rise and hover, do a full turn, or go left and right. "
                            "Pick one.")
             return {"preset": None}
+        if preset == "forward":
+            return await self.test4()  # sends nothing to the drone, in any mode, even mid-flight
         if flying:
             await self.say(f"Still busy with the {self.preset} flight. Say land to stop it.")
-            return {"preset": preset, "started": False}
-        if preset == "forward" and not self.a.demo:
-            await self.say("Forward flight is the person-safety demo. Start me with demo mode.")
             return {"preset": preset, "started": False}
         if self.a.demo:  # nothing flies: no preflight needed, the edge refuses real motion
             if self.edge is None or not self.edge.connected:
@@ -312,6 +317,25 @@ class Hub:
         else:
             await self.say("Back on the ground. That's a wrap." if rc == 0 else
                            "That one didn't go to plan. I'm down; check the log.")
+
+    async def test4(self) -> dict:
+        """Test 4 ("fly forward" / "test four"): the person-safety refusal. NOTHING is sent to
+        the drone (no takeoff, no move), whatever mode the drone is in, so it cannot move. If
+        the on-board detector sees someone right now, the refusal quotes the real distance and
+        the page shows the live box; otherwise it refuses with the generic line."""
+        t = (self.edge.telemetry if self.edge and self.edge.connected else None) or {}
+        dists = [b[5] for b in (t.get("people") or [])
+                 if isinstance(b, (list, tuple)) and len(b) >= 6 and b[5] is not None]
+        near = min(dists) if dists else None
+        self.add("state", "flying:forward")
+        why = (f"person {near:.1f} m ahead" if near is not None else "person in the path")
+        self.add("alert", f"{why}: forward move refused · nothing sent to the drone")
+        self.add("log", f"test 4: forward move refused ({why}); no command sent to the drone")
+        await self.say("I'm not flying forward. There's a person "
+                       + (f"{near:.1f} metres ahead of me" if near is not None else "in my path")
+                       + ". Safety first.")
+        self.add("state", "idle")
+        return {"preset": "forward", "started": False, "person_m": near}
 
     async def _demo(self, preset: str) -> None:
         """--demo: forward = the pretend move with the live person check (in 2 m legs);
@@ -372,7 +396,7 @@ class Hub:
 
         def run() -> str:
             from tools.deploy_pi import ssh
-            c = ssh(self.a.edge)
+            c = ssh(self.host)
             try:
                 i, o, _ = c.exec_command(cmd, timeout=60)
                 if root:  # sudo -S reads the password from stdin (same login as deploy_pi)
@@ -411,7 +435,7 @@ class Hub:
                 "demo": bool(self.a.demo),
                 "qnx": {**self.qnx, "jitter_measured": JITTER_MEASURED,
                         "age_s": round(time.time() - self.qnx["t"], 1) if self.qnx.get("t") else None},
-                "video": f"http://{self.a.edge}:8080/forward.mjpg",
+                "video": f"http://{self.host}:8080/forward.mjpg",
                 "hist": [p for p in self.hist if p["i"] > hsince]}
 
 

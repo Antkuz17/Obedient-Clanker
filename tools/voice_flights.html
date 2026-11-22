@@ -172,7 +172,7 @@ header{grid-area:head;display:flex;align-items:center;gap:10px;min-height:58px;f
     <div class="empty" id="camEmpty">connecting to the drone's camera…</div>
     <img id="video" alt="" hidden>
     <canvas class="boxes" id="boxes"></canvas>
-    <div class="alert" id="alert"><b>PERSON AHEAD &middot; STOPPED</b><span id="alertTxt"></span></div>
+    <div class="alert" id="alert"><b id="alertTitle">PERSON AHEAD &middot; STOPPED</b><span id="alertTxt"></span></div>
     <div class="shade"></div>
     <div class="tag"><span class="rec"><i></i><span id="recTxt">FLYING</span></span><span id="modeTag">mode –</span></div>
     <div class="hud">
@@ -184,7 +184,7 @@ header{grid-area:head;display:flex;align-items:center;gap:10px;min-height:58px;f
   <section class="pipe">
     <div class="node" id="nHeard"><h3><i></i>Heard</h3><div class="v dim" id="heard">Hold the button and talk to the drone</div></div>
     <div class="node" id="nPick"><h3><i></i>Understood</h3>
-      <div class="presets"><span data-p="hover">Rise · hover · land</span><span data-p="spin">Rise · 360° · land</span><span data-p="leftright">Rise · left · right · land</span><span data-p="forward" class="demo-only">Forward · person check</span></div>
+      <div class="presets"><span data-p="hover">Rise · hover · land</span><span data-p="spin">Rise · 360° · land</span><span data-p="leftright">Rise · left · right · land</span><span data-p="forward">Test 4 · person check</span></div>
     </div>
     <div class="node" id="nJarvis"><h3><i></i>Jarvis</h3><div class="v dim" id="reply">–</div></div>
     <div class="node" id="nFlight"><h3><i></i>Flight</h3><pre class="log" id="log"></pre></div>
@@ -424,6 +424,7 @@ function drawBoxes(people) {
 }
 let alertTimer = null;
 function showAlert(text) {
+  $('alertTitle').textContent = /refused/.test(text) ? 'PERSON AHEAD · NOT MOVING' : 'PERSON AHEAD · STOPPED';
   $('alertTxt').textContent = text; $('alert').classList.add('on');
   clearTimeout(alertTimer); alertTimer = setTimeout(() => $('alert').classList.remove('on'), 7000);
 }
