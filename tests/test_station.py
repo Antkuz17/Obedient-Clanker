@@ -1242,3 +1242,17 @@ def test_test2_phrases_as_whisper_writes_them(text, kinds):
     assert r and [a["kind"] for a in r.actions] == kinds
     if kinds[-1] == "move":
         assert r.actions[-1]["yaw_deg"] == 360
+
+
+async def test_rng_take_a_photo_mid_flight(rig):
+    """'Hey drone, take a photo.' said while hovering: no LLM, a photo with a caption, still hovering."""
+    sim, edge = rig
+    p, said, photos = make_planner(sim, edge, ai=FakeAI(vision_reply="Two people on a court."))
+    p.cfg = PlannerConfig(rng=True)
+    await run_plan(p, fast_parse("hey drone, rise").actions)
+    r = fast_parse("Hey drone, take a photo.")
+    assert [a["kind"] for a in r.actions] == ["look"] and r.actions[0]["action"] == "photo"
+    await run_plan(p, r.actions)
+    assert photos and sim.state().armed and sim.state().alt == pytest.approx(0.5, abs=0.15)
+    p.submit(fast_parse("land").actions)
+    await until(lambda: not sim.state().armed, 30)

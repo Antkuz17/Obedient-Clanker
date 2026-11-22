@@ -253,6 +253,7 @@ _F_AROUND = re.compile(r"(?:(?:turn|spin|rotate)(?: all the way)? around|(?:do )
 _F_BACK = re.compile(r"(?:turn back|face the other way|turn 180|do a 180|one eighty)")
 _F_BARE = re.compile(_FVERB + r"(?:to the )?" + _FDIR)  # no distance
 BARE_MOVE_M = 2.0  # m for "go left" with no distance (one leg; the Pi's gate caps a move at 2 m)
+_F_PHOTO = re.compile(r"(?:take|snap|grab|get) (?:a |me a )?(?:photo|picture|pic|shot|snapshot)(?: (?:of|at) (?:this|that|it|here|me|us|them))?")
 _F_HOME = re.compile(r"come back|come home|go home|fly home|return home|go back home")
 _F_LAND = re.compile(r"(?:land|come down|touch down|set down)(?: now)?")
 _F_SPLIT = re.compile(r" (?:and then|then|and|after that) ")
@@ -296,6 +297,9 @@ def fast_parse(text: str, telemetry: dict | None = None) -> BrainResult | None:
             if not 0.3 <= alt <= 5.0:
                 return None
             actions.append({"kind": "takeoff", "alt": alt})
+            continue
+        if _F_PHOTO.fullmatch(c):
+            actions.append({"kind": "look", "action": "photo", "question": text})
             continue
         if _F_HOME.fullmatch(c):
             actions.append({"kind": "home"})
