@@ -673,14 +673,16 @@ class Planner:
     async def _task_at(self, action: str, question: str, target: str = "") -> None:
         fr = await self._frame()
         if action == "photo":
+            # the photo goes out first (the dashboard flashes it at once); the caption is only for
+            # what Jarvis says, and must never hold the photo back
+            if self.on_photo:
+                await self.on_photo(fr, target)
             caption = ""
             if self.ai:
                 try:
-                    caption = await vision.ask(self.ai, "describe", fr.jpeg)
+                    caption = await asyncio.wait_for(vision.ask(self.ai, "describe", fr.jpeg), 8.0)
                 except Exception as e:
                     log.warning("caption failed: %s", e)
-            if self.on_photo:
-                await self.on_photo(fr, caption or target)
             await self.say("Got the shot." + (f" {caption}" if caption else ""))
             return
         if not self.ai:

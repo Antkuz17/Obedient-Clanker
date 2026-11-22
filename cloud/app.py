@@ -331,14 +331,16 @@ class Hub:
         await self.to_station({"type": "memory_result", "req": m.get("req"), "hits": hits})
 
     async def _photo(self, m: dict) -> None:
-        jpeg = base64.b64decode(m["jpeg"])
+        # Show it now, inline: the dashboard's photo flash must not wait on (or be lost to) the
+        # memory ingest, which calls an embedding model (field 2026-11-22: slow or failing on a
+        # phone hotspot, and the photo never appeared).
+        await self.to_uis({"type": "photo", "url": "data:image/jpeg;base64," + m["jpeg"],
+                           "caption": m.get("caption") or ""})
         try:
-            rec = await self.memory.ingest(jpeg, m["pose"], m.get("caption") or "photo",
-                                           kind="photo")
-        except Exception as e:  # no key: still keep the photo
+            await self.memory.ingest(base64.b64decode(m["jpeg"]), m["pose"],
+                                     m.get("caption") or "photo", kind="photo")
+        except Exception as e:  # no key / no network: the photo was still shown
             log.warning("photo ingest failed: %s", e)
-            return
-        await self.to_uis({"type": "photo", "url": rec["jpeg_url"], "caption": rec["caption"]})
 
     async def _ingest(self, m: dict) -> None:
         try:

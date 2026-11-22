@@ -3,6 +3,7 @@
 No network and no keys: the AI is a fake with the same methods as station.ai.AI.
 """
 import asyncio
+import base64
 import json
 import math
 import socket
@@ -1256,7 +1257,9 @@ async def test_rng_take_a_photo_mid_flight(rig):
     r = fast_parse("Hey drone, take a photo.")
     assert [a["kind"] for a in r.actions] == ["look"] and r.actions[0]["action"] == "photo"
     await run_plan(p, r.actions)
-    assert photos and sim.state().armed and sim.state().alt == pytest.approx(0.5, abs=0.15)
+    assert photos and sim.state().armed
+    # the 10x-speed sim overshoots the takeoff; the guard must bring it back to 0.5 m
+    await until(lambda: abs(sim.state().alt - 0.5) < 0.15, 15)
     p.submit(fast_parse("land").actions)
     await until(lambda: not sim.state().armed, 30)
 
@@ -1271,3 +1274,45 @@ def test_test3_phrasings_skip_the_llm(text):
     r = fast_parse(text)
     assert r and r.actions[0]["kind"] == "takeoff"
     assert [a["right"] for a in r.actions if a["kind"] == "move"] == [-5.0, 5.0]
+
+
+def test_photo_reaches_the_dashboard_even_if_memory_fails(tmp_path):
+    """'Yo, take a photo': the dashboard gets the photo at once, inline, even when the memory
+    ingest (an embedding call) fails, as it did on the phone hotspot."""
+    from fastapi.testclient import TestClient
+    from cloud.app import create_app
+
+    s = Settings(vultr_key="", station_token="tok", data_dir=tmp_path)
+    app = create_app(s, ai=FakeAI())
+
+    async def broken(*a, **k):
+        raise OSError("nodename nor servname provided")
+    app.state.hub.memory.ingest = broken
+    jpeg = base64.b64encode(b"\xff\xd8 a photo").decode()
+    with TestClient(app) as c:
+        with c.websocket_connect("/ws/station?token=tok") as st, \
+                c.websocket_connect("/ws/ui?client=judge") as ui:
+            assert ui.receive_json()["type"] == "hello"
+            st.send_json({"type": "photo", "jpeg": jpeg, "pose": {"n": 0, "e": 0, "alt": 0.5, "yaw": 0},
+                          "caption": ""})
+            for _ in range(20):
+                m = ui.receive_json()
+                if m["type"] == "photo":
+                    break
+            assert m["url"] == "data:image/jpeg;base64," + jpeg
+
+
+async def test_take_a_photo_on_the_ground_sends_it_before_the_caption(rig):
+    """Just 'take a photo', no flying: the photo goes out first; a slow caption can't hold it."""
+    sim, edge = rig
+    order = []
+
+    class SlowAI(FakeAI):
+        async def chat(self, *a, **k):
+            order.append("caption asked")
+            await asyncio.sleep(0.3)
+            return await super().chat(*a, **k)
+    p, said, photos = make_planner(sim, edge, ai=SlowAI(vision_reply="A tree."))
+    p.on_photo = lambda fr, cap: order.append("photo sent") or asyncio.sleep(0)
+    await run_plan(p, fast_parse("Yo, take a photo.").actions)
+    assert order[0] == "photo sent" and said[-1].startswith("Got the shot") and not sim.state().armed
