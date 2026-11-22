@@ -1,122 +1,109 @@
 # Hope Drone Don't Go Kaboom
 
-A voice-controlled indoor drone assistant with a personality, a bit like Jarvis. You tell it
-"go over there and do X" and it does it. Built at Hack Western 13 (Nov 20–22, 2026).
+A voice-controlled drone with a personality. You talk to it like Jarvis ("rise and do a 360",
+"go two metres to the left and take a photo", "land") and it flies, answers back, and refuses
+anything unsafe. Built at Hack Western 13 (Nov 20–22, 2026).
 
-> "Edge for reflexes, cloud for intelligence. Vultr thinks and remembers; QNX keeps it alive.
-> Kill the cloud, kill the laptop, kill a process: the drone still stops on your hand."
+> Edge for reflexes, cloud for intelligence. Vultr thinks; QNX keeps it alive.
 
-Target tracks: **Best Use of QNX** and **Best Use of Vultr**.
-
-**Plan and split:** [docs/PRD.md](docs/PRD.md). **Progress:** [docs/STATUS.md](docs/STATUS.md).
-
-```sh
-uv venv --python 3.11 .venv && uv pip install --python .venv -e '.[dev]'
-.venv/bin/python -m edge --sim     # simulated drone: protocol on :7000, video on :8080
-.venv/bin/python -m tools.cmd      # type: takeoff alt=1, move_body fwd=1, t, land
-.venv/bin/python -m pytest -q
-```
+Tracks: **Best Use of QNX** and **Best Use of Vultr**.
 
 ## What it does
 
-- **Voice commands, one task at a time:** "turn around", "move back", "tell me what's written
-  here", "solve this math problem", "fly to the door and take a photo". No chained tasks.
-- **Personality:** it refuses dumb or dangerous orders with attitude ("crash into a wall?
-  absolutely not"). Hard safety rules in code back that up.
-- **Hand gestures:** ✋ palm = stop and hover, 👉 point = go there, 👍 confirm, 👎 cancel.
-- **Visual memory:** "where did I leave my keys?" It searches everything it has seen, says
-  where and when, then flies there.
-- **Jarvis from anywhere:** a web dashboard on Vultr. Anyone can open it on a phone and command
-  the drone.
+- **Talk to it.** Hold a button (or Space), say what you want, let go. Jarvis plans it, says
+  what it's doing in a dry, sarcastic voice, and the drone flies it.
+- **Simple flying in plain English:** take off, land, stop, move by distance and direction,
+  turn or spin all the way around, chain a few steps in one sentence.
+- **Eyes:** it takes photos on request and can read, describe or solve what the camera sees.
+- **Listens mid-flight:** "land" or "stop" interrupts whatever it's doing.
+- **Safety first, always:** every command is checked on the drone before the motors move. It
+  refuses to fly toward a person, above its ceiling, outside its limits or on a weak battery,
+  and it lands itself if it loses height, loses its sensors or loses the link.
+- **A live dashboard** shows the camera with people boxed in red, what you said, what Jarvis
+  planned, what the safety gate decided, and the drone's height, battery and position.
 
-## Architecture
+## How it works
 
 ```
- phone / dashboard ──► VULTR (cloud brain)
-                        • speech-to-text (Whisper)
-                        • LLM + vision model: command -> mission(where, what, after)
-                        • visual memory: captions + embeddings + position, vector search
-                        • dashboard backend, flight logs
-                              │
- laptop station ◄─────────────┘   mic, speakers (TTS), drone video from the iPhone
-        │ missions
+  dashboard (browser, mic)
+        │ voice / text
         ▼
- QNX Raspberry Pi 5 (reflexes, real-time)
-   • ArUco tracker -> VISION_POSITION_ESTIMATE (indoor "GPS")
-   • safety gate: altitude, fence, battery, distance to people
-   • watchdog: laptop or cloud lost -> hover, then land
-   • gesture AI (QNX TFLite hand landmarks)
-        │ only safe commands, MAVLink
+  VULTR (cloud)
+   • speech-to-text: whisper-large-v3-turbo
+   • brain: glm-5.3-flash (tool calls) turns a sentence into flight steps
+   • vision: qwen3.8-27b reads, describes and captions photos
+   • dashboard backend, live video and telemetry relay
+        │ plan
         ▼
- Matek H743 / ArduPilot 4.7.2 (GUIDED mode) ──► F450
+  laptop station
+   • planner: flight steps -> safe primitives (takeoff, move, turn, land)
+   • rangefinder height hold, sink / drift / link guards
+        │ protocol v1 (TCP)
+        ▼
+  QNX on a Raspberry Pi 5, riding on the drone
+   • safety gate: every primitive checked (ceiling, fence, battery, person distance)
+   • on-board person detector (TensorFlow Lite) gates forward motion
+   • optical flow (OpenCV) + ultrasonic rangefinder feed the flight controller
+   • C watchdog: no heartbeat -> hold, then land
+   • supervisor restarts any crashed process
+        │ MAVLink over USB
+        ▼
+  Matek H743 / ArduPilot (GUIDED) ──► F450 frame
 ```
 
-### Indoor positioning (no GPS, no optical-flow sensor)
+The cloud is a convenience layer. Everything that keeps the drone safe runs on the drone: with
+the cloud or the laptop gone, it still holds, refuses unsafe moves and lands.
 
-- **Plan A (outside-in):** a webcam looks down at the flying area. An ArUco marker sits on top
-  of the drone. OpenCV computes position and heading at about 30 Hz and sends them as
-  `VISION_POSITION_ESTIMATE`.
-- **Plan B (inside-out, upgrade):** the QNX Pi rides on the drone, powered by a USB power bank,
-  with the webcam pointing down at ArUco markers on the floor.
+## QNX on the drone
 
-ArduPilot parameters for both:
+The Pi 5 runs QNX 8 and is the drone's flight computer. Both cameras, optical flow, the person
+detector, the safety gate, the watchdog and the link to the flight controller all run on it.
 
-| Parameter | Value |
+- **QNX open-source AI:** TensorFlow Lite (QNX port) runs SSD-MobileNet person detection on
+  board, and OpenCV (QNX port) runs the optical flow.
+- **Real-time priorities:** the watchdog, flight-controller link and safety core run with
+  SCHED_FIFO priority above QNX's USB and Wi-Fi drivers; cameras, flow and AI run below them,
+  so heavy compute can never starve the safety loop.
+- **Measured on the drone:** the 50 Hz watchdog loop's worst wake-up is under 1 ms. A killed
+  detector respawns in about 73 ms. A frozen safety core is caught in about 260 ms while the
+  flight controller keeps getting its sensor data.
+- **Observability:** every start, crash, restart and safety refusal goes to QNX's system log.
+
+More detail: [docs/qnx.md](docs/qnx.md).
+
+## Vultr in the loop
+
+Speech-to-text, the language model that plans each command, and the vision model all run on
+Vultr Serverless Inference (OpenAI-compatible API). The brain answers in about a second;
+simple flying commands skip the model entirely for speed. ElevenLabs provides the Jarvis voice.
+
+More detail: [docs/models.md](docs/models.md).
+
+## Positioning
+
+- **Height:** a downward ultrasonic rangefinder. The flight controller's own height estimate
+  drifts near the ground, so takeoff and hover are decided by the rangefinder.
+- **Indoors:** optical flow from a down-facing camera.
+- **Outdoors:** GPS for horizontal position, rangefinder for height.
+
+## Hardware
+
+F450 frame, Matek H743 flight controller (ArduPilot 4.7), QNX Raspberry Pi 5, two Logitech C270
+cameras (forward and down), HC-SR04 ultrasonic rangefinders, HGLRC M100-PRO GPS, 3S LiPo,
+FlySky transmitter. Wiring and setup: [docs/hardware.md](docs/hardware.md),
+[docs/flight-setup.md](docs/flight-setup.md).
+
+## Repository
+
+| Folder | What's in it |
 |---|---|
-| `VISO_TYPE` | 1 (MAVLink) |
-| `EK3_SRC1_POSXY` | 6 (ExternalNav) |
-| `EK3_SRC1_POSZ` | 6 (ExternalNav) |
-| `EK3_SRC1_YAW` | 6 (ExternalNav) |
-
-Also send `SET_GPS_GLOBAL_ORIGIN` once at startup.
-
-### Commands
-
-The LLM turns speech into a single call:
-
-```
-mission(where: "the door" | "3 m left" | "where I'm pointing" | "back to me",
-        what:  photo | video | describe | read | solve | hover | look_around | follow | land,
-        after: come_back | stay | land)
-```
-
-If the target isn't in view, the drone does a slow 360° scan first. Each command is then
-checked by the safety gate on QNX before anything flies.
-
-## QNX demo points
-
-1. A live latency graph shows the safety loop meeting its deadline while the CPU is maxed out
-   by AI work. Optionally, the same test on Linux shows jitter for comparison.
-2. Kill the vision process mid-flight. QNX restarts it and the drone keeps hovering.
-3. A palm gesture stops the drone even with the laptop unplugged.
-
-## Vultr demo points
-
-1. "Where are my keys?": visual memory search, then the drone flies there.
-2. A judge commands the drone from their own phone through the Vultr dashboard.
-3. Big models (vision-language model, Whisper, open-vocabulary detector) run on Vultr: on a GPU
-   if the credits allow, otherwise on Vultr Serverless Inference with the vision models on the
-   GPU laptop.
-
-## Build order
-
-1. ArduPilot SITL + Gazebo with a simulated camera; build everything here first.
-2. ArUco tracker -> MAVLink bridge -> indoor position hold on the real drone.
-3. Voice -> LLM -> `mission()` -> relative moves.
-4. Safety gate + watchdog on the QNX Pi.
-5. Detector -> "fly to the named thing"; then read, solve, photo and describe.
-6. Vultr: models, visual memory, dashboard.
-7. Gestures; then move the Pi onboard (Plan B).
-
-## Open questions
-
-- Laptop ↔ flight controller link: the ESP8266 Wi-Fi bridge (`SERIAL2`). First find its
-  firmware baud rate and match `SERIAL2_BAUD`. See [docs/hardware.md](docs/hardware.md).
-- Do the Vultr credits include GPUs?
-- Which QNX open-source AI modules are available (oss.qnx.com)?
+| `edge/` | Runs on QNX on the drone: safety gate, executor, watchdog, flight-controller link, cameras, optical flow, person detector |
+| `shared/` | The protocol between the laptop and the drone |
+| `station/` | Laptop: brain, planner, voice in and out, vision tasks |
+| `cloud/` | Vultr app and the dashboard |
+| `docs/` | Design, hardware, QNX and model notes |
 
 ## Safety
 
-The props are 10", and there are no prop guards yet. Fly in a cleared area with people behind
-the line, keep a pilot on the transmitter with the Land switch ready at all times, and test in
-SITL before flying.
+The props are 10" with no guards. Fly in a cleared area with people behind the drone and a
+pilot on the transmitter with the land switch ready. The pilot always overrides the computer.
