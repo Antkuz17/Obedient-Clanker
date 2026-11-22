@@ -138,6 +138,17 @@ class Executor:
         else:
             verdict = self.gate.check(op, args, demo.pretend_hover(s), True, self.perception,
                                       home=self.home)
+        if (op == "move_body" and verdict.ok and float(args.get("fwd") or 0) > 0.2
+                and abs(float(args.get("right") or 0)) < 0.01
+                and abs(float(args.get("up") or 0)) < 0.01):
+            # straight forward: run it as a pretend move with the live person check (edge/demo.py)
+            self.log({"t": time.time(), "kind": "cmd", "id": cid, "op": op, "args": args,
+                      "ok": True, "demo": True, "gate_ok": True, "reason": "demo forward"})
+            self.emit(P.ack(cid, True, "demo: pretend forward move, person check live"))
+            self._cancel("superseded by a demo forward move")
+            self._active = (cid, op)
+            self._task = asyncio.create_task(self._run(cid, "demo_forward", args, verdict))
+            return True
         reason = verdict.reason if not verdict.ok else demo.sarcastic(op, args)
         if op == "takeoff" and verdict.ok:
             self.demo_up = True  # from now on, moves are what gets judged (not another takeoff)
@@ -262,7 +273,33 @@ class Executor:
                   "reason": reason})
         self.emit(P.done(cid, status, reason))
 
+    async def _demo_forward(self, args: dict) -> tuple[str, str]:
+        """Demo mode: a forward move that never reaches the FC. It 'advances' at the real cruise
+        speed and every tick runs the same person / obstacle checks a running forward move gets
+        (person_room + stopping_distance at that speed), so a person walking into view stops it
+        exactly as they would stop a real flight."""
+        sc = self.gate.cfg
+        dist, v, t0 = float(args["fwd"]), sc.speed_xy, time.monotonic()
+        person_need = sc.person_close_m + stopping_distance(v, sc.person_latency_s, sc)
+        obstacle_need = sc.obstacle_close_m + stopping_distance(v, sc.obstacle_latency_s, sc)
+        gone = 0.0
+        while gone < dist:
+            await asyncio.sleep(self.TICK)
+            gone = min(dist, (time.monotonic() - t0) * v)
+            p = self.perception
+            if sc.require_person_detector and not p.detector_alive:
+                return P.ABORTED, f"person detector stopped: stopped after {gone:.1f} m"
+            if (room := person_room(p, sc)) is not None and room < person_need:
+                why = f"person {p.person_m:.1f} m ahead: stopped after {gone:.1f} m"
+                self.emit(P.event("person_close", why + " (demo, motors off)"))
+                return P.ABORTED, why
+            if (ob := obstacle_ahead(p)) is not None and ob < obstacle_need:
+                return P.ABORTED, f"something {ob:.1f} m ahead: stopped after {gone:.1f} m"
+        return P.OK, f"demo: {dist:g} m forward with the path clear the whole way"
+
     async def _do(self, op: str, args: dict, verdict) -> tuple[str, str]:
+        if op == "demo_forward":
+            return await self._demo_forward(args)
         c = self.cfg
         sc = self.gate.cfg
         if op == "stop" or op == "hover":

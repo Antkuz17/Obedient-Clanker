@@ -105,3 +105,43 @@ async def test_demo_refusal_is_spoken_as_one_line(demo_rig):
     p.submit([{"kind": "move", "fwd": -3.0, "right": 0.0, "up": 0.0, "yaw_deg": 0.0}], "On it.")
     await asyncio.wait_for(p.wait(), 10)
     assert len(said) == 1 and said[0].startswith("Safety says no") and "2.0 m limit" in said[0]
+
+
+async def _feed(srv, person, secs, hz=10):
+    for _ in range(int(secs * hz)):
+        srv.on_perception({"person_m": person() if callable(person) else person, "palm": False})
+        await asyncio.sleep(1 / hz)
+
+
+async def test_demo_forward_stops_for_a_person(demo_rig):
+    """Test 4: a pretend forward move runs the real person check; someone walking into view
+    stops it (the motors never run)."""
+    srv, sim, edge = demo_rig
+    srv.exec.gate.cfg.require_person_detector = True
+    feeder = asyncio.ensure_future(_feed(srv, None, 1.0))
+    await asyncio.sleep(0.3)
+    cid, ack = await edge.send("move_body", fwd=2.0)
+    assert ack["ok"]
+    await feeder
+    t0 = asyncio.get_running_loop().time()
+    walk = lambda: max(1.2, 4.0 - 2.0 * (asyncio.get_running_loop().time() - t0))  # walks in
+    feeder = asyncio.ensure_future(_feed(srv, walk, 3.0))
+    d = await edge.wait_done(cid, 10)
+    feeder.cancel()
+    assert d["status"] == P.ABORTED and "person" in d["reason"] and "ahead" in d["reason"]
+    assert any(e["kind"] == "person_close" for e in edge.events)
+    assert not sim.s.armed and (sim.s.n, sim.s.e) == (0.0, 0.0)
+
+
+async def test_demo_forward_clear_path_and_dead_detector(demo_rig):
+    srv, sim, edge = demo_rig
+    srv.exec.gate.cfg.require_person_detector = True
+    feeder = asyncio.ensure_future(_feed(srv, None, 4.0))
+    await asyncio.sleep(0.3)
+    d = await edge.run("move_body", fwd=1.0, timeout=10)          # 2 s at 0.5 m/s, nobody there
+    assert d["status"] == P.OK and "clear" in d["reason"]
+    await feeder                                                    # detector goes quiet
+    await asyncio.sleep(1.5)
+    with pytest.raises(CommandRejected, match="detector"):          # the gate refuses up front
+        await edge.run("move_body", fwd=1.0, timeout=10)
+    assert not sim.s.armed
