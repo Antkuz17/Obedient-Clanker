@@ -20,7 +20,7 @@ HOST = os.environ.get("QNX_HOST", os.environ.get("EDGE_HOST", "192.168.68.131"))
 REMOTE = "/data/home/qnxuser/hope"
 PYPATH = f"PYTHONPATH={REMOTE}:/data/home/qnxuser/.local/lib/python3.14/site-packages"
 CHILDREN = ("usb_relay", "rangefinder", "hbwd", "edge", "camgrab_fwd", "camgrab_down", "flow",
-            "vision", "video", "blackbox")
+            "vision", "video", "blackbox", "camrec")
 results: list[tuple[str, bool, str]] = []
 
 
@@ -72,7 +72,8 @@ def ssh_checks() -> bool:
     names = {"usb_relay": "tools.usb_relay", "rangefinder": "tools.rangefinder",
              "hbwd": "hbwd", "edge": "-m edge ", "camgrab_fwd": "camgrab_fwd",
              "camgrab_down": "camgrab_down", "flow": "edge.flow", "vision": "edge.vision",
-             "video": "edge.video", "blackbox": "tools.blackbox"}
+             "video": "edge.video", "blackbox": "tools.blackbox",
+             "camrec": "tools.camrec"}
     missing = [k for k in CHILDREN if names[k] not in procs]
     check("drone processes running", not missing,
           "all 10" if not missing else "missing: " + ", ".join(missing))
