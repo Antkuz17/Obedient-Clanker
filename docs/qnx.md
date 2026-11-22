@@ -98,6 +98,25 @@ Use real-time priorities (`SCHED_FIFO`): watchdog and safety first, flow next, A
 - If it ever disappears from the network: put a `/boot/onboot` script on the SD card. The
   image runs it as root at boot (`mount_fs.sh`), so it can write diagnostics back to `/boot`.
 
+## Track evidence (measured on the drone, 2026-11-22)
+
+Live on the voice page's "Running on QNX" panel (`tools/qnx_status.py`, polled over SSH) and
+reproducible with `tools/qnx_faults.py`.
+
+| Track asks for | What we show | Measured |
+|---|---|---|
+| Runs on QNX | The QNX Pi 5 **rides on the drone** and runs everything it does in flight: both cameras (QNX camera API, C), optical flow, the person detector, the safety gate, the C watchdog, MAVLink to the flight controller | `QNX 8.0.0 RaspberryPi5 aarch64le`, 4 cores, 13 supervised processes |
+| Open-source AI module from QNX | **TensorFlow Lite** (QNX port, `apk` package `python3-tflite-runtime 2.21.0-r1`) runs the on-board person detector (SSD-MobileNet); **OpenCV** (QNX port, `python3-opencv 4.12.0-r1`, `libopencv_optflow`) runs the optical flow that feeds the flight controller | detector 7.5 Hz, 84-87 ms/frame on the Pi |
+| AI where it matters | The detector's output gates flight: forward moves are refused or stopped when a person is too close, and refused entirely if the detector is down | test 4: a person walking in stopped a forward move at 1.8 m |
+| Real-time performance | SCHED_FIFO priority plan: watchdog 60, USB link 50, safety core 45, rangefinder 42 **above** QNX's USB/Wi-Fi drivers (21); flow/cameras 20-18 and the AI 11 **below** them, so heavy compute can never starve a driver or the safety loop | C watchdog loop (50 Hz, FIFO 60, pinned): worst wake-up 0.27-0.98 ms, 0 late; same loop at normal priority p99 14.0 ms vs FIFO p99 1.2 ms |
+| Real-time engineering | Found a 433 ms stall of the FIFO-60 loop: it printed its log to the SD card and a busy card blocked it. Moved logging to a lock-free ring + normal-priority logger thread | same SD stress: 433 ms -> **0.86 ms**, 0 late, 0 lines dropped |
+| Reliability | Our supervisor (QNX has no HAM on this image) restarts any process; a C watchdog lands the drone if the core hangs; sensor_keeper restarts QNX's camera service | detector SIGKILL -> respawn **73 ms**; safety core frozen 3 s -> watchdog noticed in **260 ms**, flow 10 Hz + rangefinder 10.3 Hz kept reaching the FC; camera service killed -> back in **3.6 s**, cameras streaming in 4.6 s |
+| Observability | Every start, crash, restart and safety refusal goes to QNX's system log (slog2 buffer set `hope`) | `slog2info -w -b hope` |
+| Embedded demo | The drone itself; the page shows the QNX proof live | |
+
+Earlier finding, same theme: with flow/vision/camgrab at FIFO 40-45 they starved QNX's USB and
+Wi-Fi drivers (USB `RING_OVERRUN`, the camera service died); the priority plan above fixed it.
+
 ## Pi 5 setup (QNX quick-start image)
 
 - **Login:** `qnxuser` / `qnxuser`. Root password `root` (`su`).
