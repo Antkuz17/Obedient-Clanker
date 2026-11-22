@@ -1316,3 +1316,20 @@ async def test_take_a_photo_on_the_ground_sends_it_before_the_caption(rig):
     p.on_photo = lambda fr, cap: order.append("photo sent") or asyncio.sleep(0)
     await run_plan(p, fast_parse("Yo, take a photo.").actions)
     assert order[0] == "photo sent" and said[-1].startswith("Got the shot") and not sim.state().armed
+
+
+async def test_test4_phrase_never_produces_actions():
+    """Filming test 4: 'test four' refuses with no actions, whatever else is said, airborne or
+    not, with or without an LLM; quotes the detector's distance when it sees someone."""
+    from station.brain import Brain
+    flying = {"state": "HOVER", "armed": True, "alt": 0.5}
+    for ai in (None, FakeAI()):
+        b = Brain(ai)
+        for text in ("Test four. Hey drone, fly forward 2 metres.", "test 4: fly forward",
+                     "Okay, test for. Go forward two meters"):
+            r = await b.think(text, flying)
+            assert r.actions == [] and "not flying forward" in r.reply and r.source == "test4"
+        r = await b.think("test four, fly forward", {**flying, "people": [[.4, .2, .6, .9, .9, 2.3]]})
+        assert r.actions == [] and "2.3 metres ahead" in r.reply
+    r = await Brain(None).think("fly forward 2 metres", flying)       # without "test four": a
+    assert r.actions and r.actions[0]["kind"] == "move"               # real (gate-checked) move

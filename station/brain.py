@@ -98,6 +98,24 @@ class BrainResult:
     latency_s: float = 0.0
 
 
+TEST4 = re.compile(r"\btest\s*(four|4|for)\b", re.I)
+
+
+def test4_refusal(text: str, telemetry: dict | None = None) -> BrainResult | None:
+    """Filming test 4 (drone lead, 2026-11-22): any sentence that says "test four" is the
+    person-safety refusal and produces NO actions, so the drone cannot move whatever else was
+    said ("test four, fly forward 2 metres"), airborne or not. It quotes the on-board
+    detector's distance when it sees someone right now (telemetry "people"). Same behaviour as
+    tools/voice_flights."""
+    if not TEST4.search(text):
+        return None
+    d = [b[5] for b in ((telemetry or {}).get("people") or [])
+         if isinstance(b, (list, tuple)) and len(b) >= 6 and isinstance(b[5], (int, float))]
+    where = f"{min(d):.1f} metres ahead of me" if d else "in my path"
+    return BrainResult(f"I'm not flying forward. There's a person {where}. Safety first.",
+                       [], "test4")
+
+
 def normalize(name: str, args: dict) -> dict | None:
     """Tool call -> action dict with clean types, or None if it's junk."""
     if name not in TOOL_NAMES:
@@ -151,6 +169,8 @@ class Brain:
         text = text.strip()
         if not text:
             return BrainResult("I didn't catch that.", source="rules")
+        if (r := test4_refusal(text, telemetry)) is not None:  # before anything that can fly
+            return r
         if self.ai is None or is_urgent(text):
             return rule_parse(text, telemetry)  # urgent: skip the LLM round trip (~0.7 s)
         if r := fast_parse(text, telemetry):  # plain "forward 1 m, turn left": no LLM either
