@@ -154,7 +154,27 @@ def kill_camera_service() -> dict:
             "cameras_back_ms": cams}
 
 
+def fc_armed() -> bool | None:
+    """The FC's armed flag from its heartbeat (relay tap); None if it can't be read."""
+    try:
+        from tools import fclink
+        m = fclink.connect(fclink.TAP, timeout=5)
+        end = time.monotonic() + 4
+        while time.monotonic() < end:
+            hb = m.recv_match(type="HEARTBEAT", blocking=True, timeout=0.5)
+            if hb is not None and hb.get_srcSystem() == 1 and hb.type != fclink.M.MAV_TYPE_GCS:
+                return bool(hb.base_mode & fclink.M.MAV_MODE_FLAG_SAFETY_ARMED)
+    except Exception:
+        pass
+    return None
+
+
 if __name__ == "__main__":
+    if fc_armed() is not False:  # armed, or can't tell: these faults are for a drone on the ground
+        print(json.dumps({"fault": sys.argv[1] if len(sys.argv) > 1 else "?", "ok": False,
+                          "error": "the drone is armed (or its state can't be read): "
+                                   "faults only run on the ground"}), flush=True)
+        raise SystemExit(0)
     fn = {"kill_vision": kill_vision, "freeze_core": freeze_core,
           "kill_camera_service": kill_camera_service}.get(sys.argv[1] if len(sys.argv) > 1 else "")
     if fn is None:
