@@ -39,7 +39,10 @@ async def main(a) -> None:
         # until it has proven itself: 2 m ceiling, gentle speeds, and a 2 m cap per move (which
         # also catches a misread unit: "50 cm" parsed as 50 m flew 16.7 m in sim).
         cfg.alt_max, cfg.max_takeoff_alt, cfg.max_step = 1.5, 1.2, 2.0  # rangefinder height: stay < 2 m
-        cfg.speed_xy, cfg.speed_z, cfg.speed_dn = 0.5, 0.5, 0.5
+        # climb 1.0 m/s: on the ground the FC's height estimate drifts up at up to ~0.5 m/s while
+        # the motors spool (field test 2026-11-22), so a 0.5 m/s climb limit let the FC believe
+        # it was already climbing at full rate and back off before lift-off
+        cfg.speed_xy, cfg.speed_z, cfg.speed_dn = 0.5, 1.0, 0.5
         cfg.accel_xy, cfg.jerk_xy = 2.0, 5.0
         logging.info("slow-and-low profile: ceiling 1.5 m, takeoff <= 1.2 m, move <= 2 m, 0.5 m/s")
     if cfg.speed_xy > (fastest := max_checked_speed(cfg)):
