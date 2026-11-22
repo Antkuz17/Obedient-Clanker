@@ -1256,3 +1256,14 @@ async def test_rng_take_a_photo_mid_flight(rig):
     assert photos and sim.state().armed and sim.state().alt == pytest.approx(0.5, abs=0.15)
     p.submit(fast_parse("land").actions)
     await until(lambda: not sim.state().armed, 30)
+
+
+@pytest.mark.parametrize("text", [
+    "Hey, rise, go five meters to the left and then five meters to the right.",   # field 00:21
+    "Hey drone, rise, go to the left 5 meters, then to the right 5 meters, then land.",
+    "rise, fly 5 metres to your left, then 5 metres to your right",
+])
+def test_test3_phrasings_skip_the_llm(text):
+    r = fast_parse(text)
+    assert r and [a["kind"] for a in r.actions][:3] == ["takeoff", "move", "move"]
+    assert [r.actions[1]["right"], r.actions[2]["right"]] == [-5.0, 5.0]

@@ -245,8 +245,8 @@ _FUNIT = r" ?(m|metres?|meters?|cm|centimetres?|centimeters?)"
 _FDIR = r"(forwards?|ahead|backwards?|back|left|right|up|down)"
 _FVERB = r"(?:(?:move|go|fly|head|drift|slide|climb|drop|descend|rise) )?"
 _F_TAKEOFF = re.compile(r"(?:take ?off|lift off|launch|rise|go up and hover|hover)(?: (?:to )?" + _FNUM + _FUNIT + r")?")
-_F_MOVE1 = re.compile(_FVERB + _FDIR + r" (?:by )?" + _FNUM + _FUNIT)        # forward 1 metre
-_F_MOVE2 = re.compile(_FVERB + _FNUM + _FUNIT + " " + _FDIR)                   # 1 metre forward
+_F_MOVE1 = re.compile(_FVERB + r"(?:to (?:the |your )?)?" + _FDIR + r" (?:by |for )?" + _FNUM + _FUNIT)        # forward 1 metre
+_F_MOVE2 = re.compile(_FVERB + _FNUM + _FUNIT + r" (?:to (?:the |your )?)?" + _FDIR)                   # 1 metre forward
 _F_TURN = re.compile(r"(?:turn|rotate|spin|yaw) (?:to the )?(left|right)"
                      r"(?: (?:by )?" + _FNUM + r"(?: ?degrees?)?)?")
 _F_AROUND = re.compile(r"(?:(?:turn|spin|rotate)(?: all the way)? around|(?:do )?(?:a )?(?:full )?(?:360|three sixty)(?: degrees?)?(?: turn| spin)?|(?:do )?a full (?:turn|spin|circle)|spin)")
