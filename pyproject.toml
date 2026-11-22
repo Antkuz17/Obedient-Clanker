@@ -5,7 +5,8 @@ requires-python = ">=3.11"
 dependencies = ["pymavlink", "numpy", "opencv-python-headless"]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-asyncio", "httpx", "websockets", "fastapi", "uvicorn", "python-multipart"]
+dev = ["pytest", "pytest-asyncio", "httpx", "websockets", "fastapi", "uvicorn", "python-multipart",
+       "paramiko"]  # paramiko: deploy_pi, field_setup, voice_flights preflight (SSH to the Pi)
 # laptop station and Vultr cloud (never on the Pi)
 station = ["httpx", "websockets"]
 cloud = ["httpx", "websockets", "fastapi", "uvicorn[standard]", "python-multipart"]
