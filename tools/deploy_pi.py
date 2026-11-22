@@ -33,6 +33,8 @@ def main() -> None:
     ap.add_argument("--stations", help="comma-separated laptop IPs allowed to command the drone; "
                     "writes ~/hope/supervisor_local.json from tools/supervisor_pi.json (the first "
                     "IP also gets the QNX stats). Restart the stack to apply")
+    ap.add_argument("--gps", action="store_true",
+                    help="with --stations: edge in GPS mode (outdoors, after fc_profile --gps)")
     ap.add_argument("--demo", action="store_true",
                     help="with --stations: run the edge in no-fly demo mode (edge/demo.py); "
                          "rerun --stations without it to fly again")
@@ -100,13 +102,16 @@ def main() -> None:
                 i += 1
             if a.demo and child["name"] == "edge":
                 out.append("--demo")
+            if a.gps and child["name"] == "edge":
+                out.append("--gps")  # FC on GPS (fc_profile --gps): no fake origin / flow check
             child["cmd"] = out
         with sf.open(f"{REMOTE}/supervisor_local.json", "w") as f:
             f.write(json.dumps(cfg, indent=2))
         with sf.open(f"{REMOTE}/qnx_stats_to", "w") as f:  # start_pi.sh: supervisor events
             f.write(f"{ips[0]}:7010\n")
         print(f"wrote supervisor_local.json: stations {ips}"
-              + (", DEMO MODE (never flies)" if a.demo else "") + " (restart the stack to apply)")
+              + (", DEMO MODE (never flies)" if a.demo else "") + (", GPS" if a.gps else "")
+              + " (restart the stack to apply)")
 
     if a.autostart:
         pw = os.environ.get("QNX_PASS", "qnxuser")

@@ -40,3 +40,12 @@ def test_flight_report_on_synthetic_flight():
     assert "armed for 8 s" in out and "GUIDED" in out
     assert "optical flow quality mean 200" in out and "battery" in out
     assert report(recs[:1]) == "no armed period in this file"
+
+
+def test_gps_profile_keeps_rangefinder_height_and_failsafes():
+    from tools.fc_profile import profile_for
+    g = profile_for(gps=True)
+    assert g["GPS1_TYPE"][0] == 1 and g["EK3_SRC1_POSXY"][0] == 3 and g["EK3_SRC1_VELXY"][0] == 3
+    assert g["EK3_SRC1_POSZ"][0] == 2          # height stays on the rangefinder, not the baro
+    for k in ("FS_GCS_ENABLE", "FS_EKF_ACTION", "FLTMODE6"):
+        assert g[k] == PROFILE[k]

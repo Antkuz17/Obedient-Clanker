@@ -2,6 +2,7 @@
 
   python3 -m tools.fc_profile              # check only: prints OK / DIFF per parameter
   python3 -m tools.fc_profile --outdoor    # outdoors: GPS navigation instead of flow (no 2 m cap)
+  python3 -m tools.fc_profile --gps        # outdoors, low: GPS sideways, rangefinder height
   python3 -m tools.fc_profile --apply      # back up current values, write the diffs, verify
   python3 -m tools.fc_profile --apply --reboot   # also reboot the FC if a reboot-only param changed
   python3 -m tools.fc_profile --addr tcp:127.0.0.1:5761   # SITL instead of the relay tap
@@ -69,14 +70,35 @@ OUTDOOR: dict[str, tuple[float, bool, str]] = {
 }
 
 
+# Outdoors, low (field test 2026-11-22): GPS for horizontal position and vertical speed, the
+# rangefinder stays the height source. In the air the down camera's flow quality fell to 0 at
+# ~80% throttle (vibration) and the drone drifted; GPS doesn't care. Unlike OUTDOOR, height is
+# NOT the baro (prop wash fooled it on every takeoff). GPS vertical speed also counters the FC's
+# height estimate drifting up while it sits on the ground with the motors spinning.
+GPS_RNG: dict[str, tuple[float, bool, str]] = {
+    "GPS1_TYPE": (1, True, "GPS on (auto-detect)"),
+    "EK3_SRC1_POSXY": (3, False, "GPS horizontal position"),
+    "EK3_SRC1_VELXY": (3, False, "GPS horizontal velocity"),
+    "EK3_SRC1_VELZ": (3, False, "GPS vertical velocity (counters on-ground height drift)"),
+}
+
+
+def profile_for(outdoor: bool = False, gps: bool = False) -> dict[str, tuple[float, bool, str]]:
+    if gps:
+        return {**PROFILE, **GPS_RNG}
+    return {**PROFILE, **OUTDOOR} if outdoor else PROFILE
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--addr", default=fclink.TAP)
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--reboot", action="store_true", help="reboot the FC if needed after apply")
     ap.add_argument("--outdoor", action="store_true", help="GPS navigation (see OUTDOOR)")
+    ap.add_argument("--gps", action="store_true",
+                    help="GPS sideways + rangefinder height, low outdoor flights (see GPS_RNG)")
     a = ap.parse_args()
-    profile = {**PROFILE, **OUTDOOR} if a.outdoor else PROFILE
+    profile = profile_for(a.outdoor, a.gps)
     m = fclink.connect(a.addr)
 
     current = {k: fclink.get_param(m, k) for k in profile}

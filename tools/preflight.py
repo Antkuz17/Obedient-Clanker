@@ -13,7 +13,7 @@ import argparse
 import time
 
 from tools import fclink
-from tools.fc_profile import PROFILE
+from tools.fc_profile import profile_for
 
 M = fclink.M
 
@@ -23,7 +23,13 @@ def main() -> int:
     ap.add_argument("--addr", default=fclink.TAP)
     ap.add_argument("--shm", default="camgrab_down", help="flow camera's shared memory ('' = skip)")
     ap.add_argument("--min-batt", type=float, default=11.4, help="3S volts to allow takeoff")
+    ap.add_argument("--gps", action="store_true",
+                    help="outdoors, fc_profile --gps: check GPS fix and absolute position "
+                         "instead of optical flow")
+    ap.add_argument("--min-sats", type=int, default=8)
     a = ap.parse_args()
+    if a.gps:
+        a.shm = ""  # the down camera isn't what holds position
     results: list[tuple[str, bool, str]] = []
 
     def check(name: str, ok: bool, info: str = "") -> None:
@@ -32,7 +38,7 @@ def main() -> int:
     m = fclink.connect(a.addr)
     for mid, hz in ((M.MAVLINK_MSG_ID_EKF_STATUS_REPORT, 5), (M.MAVLINK_MSG_ID_OPTICAL_FLOW, 20),
                     (M.MAVLINK_MSG_ID_DISTANCE_SENSOR, 10), (M.MAVLINK_MSG_ID_SYS_STATUS, 2),
-                    (M.MAVLINK_MSG_ID_RC_CHANNELS, 5)):
+                    (M.MAVLINK_MSG_ID_RC_CHANNELS, 5), (M.MAVLINK_MSG_ID_GPS_RAW_INT, 5)):
         fclink.stream(m, mid, hz)
     m.mav.command_long_send(1, 1, M.MAV_CMD_RUN_PREARM_CHECKS, 0, 0, 0, 0, 0, 0, 0, 0)
 
@@ -50,7 +56,7 @@ def main() -> int:
         elif t == "STATUSTEXT":
             texts.append(msg.text)
         elif t in ("EKF_STATUS_REPORT", "OPTICAL_FLOW", "DISTANCE_SENSOR", "SYS_STATUS",
-                   "RC_CHANNELS"):
+                   "RC_CHANNELS", "GPS_RAW_INT"):
             seen.setdefault(t, []).append(msg)
 
     armed = bool(hb and hb.base_mode & M.MAV_MODE_FLAG_SAFETY_ARMED)
@@ -58,7 +64,7 @@ def main() -> int:
     check("FC link + disarmed", hb is not None and not armed, f"mode {mode}, armed={armed}")
 
     bad = []
-    for k, (want, _, _) in PROFILE.items():
+    for k, (want, _, _) in profile_for(gps=a.gps).items():
         cur = fclink.get_param(m, k)
         if cur is None or abs(cur - want) > 1e-3 * max(1.0, abs(want)):
             bad.append(f"{k}={cur} (want {want})")
@@ -69,13 +75,24 @@ def main() -> int:
 
     ekf = seen.get("EKF_STATUS_REPORT", [])
     flags = fclink.ekf_flags(ekf[-1].flags) if ekf else []
-    check("EKF horizontal position", "pos_h_rel" in flags or "pred_h_rel" in flags,
-          ",".join(flags) or "no EKF_STATUS_REPORT")
-
-    of = seen.get("OPTICAL_FLOW", [])
-    q = sum(x.quality for x in of) / len(of) if of else 0
-    check("optical flow at the FC", len(of) >= 30 and q >= 100,
-          f"{len(of) / 6:.0f} Hz, mean quality {q:.0f}")
+    if a.gps:
+        check("EKF absolute position (GPS)", "pos_h_abs" in flags,
+              ",".join(flags) or "no EKF_STATUS_REPORT")
+        g = seen.get("GPS_RAW_INT", [])
+        if g:
+            fix, sats, hdop = g[-1].fix_type, g[-1].satellites_visible, g[-1].eph / 100
+            check("GPS fix", fix >= 3 and sats >= a.min_sats and hdop <= 1.5,
+                  f"fix type {fix} (3 = 3D), {sats} satellites (min {a.min_sats}), "
+                  f"HDOP {hdop:.1f} (max 1.5)")
+        else:
+            check("GPS fix", False, "no GPS_RAW_INT (GPS1_TYPE=1 applied and FC rebooted?)")
+    else:
+        check("EKF horizontal position", "pos_h_rel" in flags or "pred_h_rel" in flags,
+              ",".join(flags) or "no EKF_STATUS_REPORT")
+        of = seen.get("OPTICAL_FLOW", [])
+        q = sum(x.quality for x in of) / len(of) if of else 0
+        check("optical flow at the FC", len(of) >= 30 and q >= 100,
+              f"{len(of) / 6:.0f} Hz, mean quality {q:.0f}")
 
     ds = seen.get("DISTANCE_SENSOR", [])
     d = ds[-1].current_distance / 100 if ds else None
