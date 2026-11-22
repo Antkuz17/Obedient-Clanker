@@ -29,7 +29,7 @@ button{cursor:pointer}
 .mono{font-family:var(--mono)}
 
 .app{max-width:1280px;margin:0 auto;padding:0 16px 16px;display:grid;gap:14px;
-  grid-template-columns:minmax(0,1fr);grid-template-areas:"head" "cam" "pipe" "charts" "dock"}
+  grid-template-columns:minmax(0,1fr);grid-template-areas:"head" "cam" "pipe" "qnx" "charts" "dock"}
 header{grid-area:head;display:flex;align-items:center;gap:10px;min-height:58px;flex-wrap:wrap}
 .brand{display:flex;align-items:center;gap:10px;font-size:17px;font-weight:600;letter-spacing:-.02em;margin-right:auto}
 .brand i{width:12px;height:12px;border-radius:50%;background:var(--pink);box-shadow:0 0 14px rgba(234,75,113,.6)}
@@ -101,6 +101,41 @@ header{grid-area:head;display:flex;align-items:center;gap:10px;min-height:58px;f
 .type input:focus{border-color:var(--btn)}
 .type button{height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:var(--raise);color:var(--soft)}
 
+/* Running on QNX: the proof panel */
+.qnx{grid-area:qnx;display:grid;gap:14px;grid-template-columns:minmax(0,1fr)}
+.qnx .panel h3 .badge{margin-left:auto;text-transform:none;letter-spacing:0;font-size:11.5px;color:var(--t3)}
+.os{font-size:22px;font-weight:500;letter-spacing:-.02em;line-height:1.2}
+.os small{display:block;font-size:13px;font-weight:400;color:var(--t2);margin-top:4px;letter-spacing:0}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;margin-top:12px;font-size:13px;align-items:baseline}
+.kv dt{color:var(--t2)} .kv dd{margin:0;color:var(--text)}
+.kv code{font-family:var(--mono);font-size:12px;color:var(--soft);background:var(--raise);border:1px solid var(--div);border-radius:5px;padding:1px 6px}
+.ai{display:grid;gap:8px;margin-top:12px}
+.ai div{background:var(--raise);border:1px solid var(--div);border-radius:9px;padding:9px 11px}
+.ai b{font-weight:500} .ai .live{float:right;font-family:var(--mono);font-size:12px;color:var(--text)}
+.ai small{display:block;color:var(--t2);font-size:12px;margin-top:3px}
+.rt{display:flex;align-items:baseline;gap:10px}
+.rt .big{font-size:40px;font-weight:300;letter-spacing:-.03em;line-height:1}
+.rt .big small{font-size:15px;color:var(--t2);margin-left:3px}
+.rt .sub{font-size:12.5px;color:var(--t2);line-height:1.45}
+#cLoop{display:block;width:100%;height:92px;margin-top:10px}
+.cmp{margin-top:12px;display:grid;gap:7px;font-size:12.5px}
+.cmp .row{display:grid;grid-template-columns:118px 1fr 64px;align-items:center;gap:8px;color:var(--soft)}
+.cmp .bar{height:10px;border-radius:0 4px 4px 0;background:var(--btn)}
+.cmp .bar.rt{background:var(--pink)}
+.cmp .v{font-family:var(--mono);color:var(--text);text-align:right}
+.cmp .note{font-size:11.5px;color:var(--t3)}
+.prio{width:100%;border-collapse:collapse;font-size:12.5px}
+.prio td{padding:4px 0;border-bottom:1px solid var(--div);vertical-align:middle}
+.prio td.p{width:62px;font-family:var(--mono);color:var(--text)}
+.prio td.p i{display:inline-block;height:6px;border-radius:0 3px 3px 0;background:var(--pink);margin-right:6px;vertical-align:1px}
+.prio td.n{font-family:var(--mono);color:var(--text);white-space:nowrap;padding-right:10px}
+.prio td.r{color:var(--t2)}
+.prio td.x{text-align:right;color:var(--t3);font-family:var(--mono);white-space:nowrap}
+.prio tr.drv td{color:var(--amber)} .prio tr.drv td.p i{background:var(--amber)}
+.prio tr.down td.n{color:var(--pink)}
+.slogw{grid-column:1/-1}
+.slogw pre{margin:0;font-family:var(--mono);font-size:12px;line-height:1.6;color:var(--soft);white-space:pre-wrap;max-height:150px;overflow:auto}
+
 /* charts: height over time, top-down track, battery */
 .charts{grid-area:charts;display:grid;gap:14px;grid-template-columns:minmax(0,1fr)}
 .panel{background:var(--node);border:1px solid var(--line);border-radius:12px;padding:12px 14px 10px;min-width:0;position:relative}
@@ -116,9 +151,10 @@ header{grid-area:head;display:flex;align-items:center;gap:10px;min-height:58px;f
 .tip i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:0}
 
 @media (min-width:980px){
-  .app{grid-template-columns:minmax(0,1.6fr) minmax(320px,1fr);grid-template-areas:"head head" "cam pipe" "charts charts" "dock dock"}
+  .app{grid-template-columns:minmax(0,1.6fr) minmax(320px,1fr);grid-template-areas:"head head" "cam pipe" "qnx qnx" "charts charts" "dock dock"}
   .charts{grid-template-columns:minmax(0,1.5fr) minmax(0,1fr) minmax(0,1fr)}
-  .cam{max-height:none;height:100%;min-height:420px}
+  .qnx{grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.15fr)}
+  .cam{max-height:none;height:100%;min-height:420px;aspect-ratio:auto}
 }
 </style>
 </head>
@@ -159,6 +195,32 @@ header{grid-area:head;display:flex;align-items:center;gap:10px;min-height:58px;f
         <button data-f="kill_camera_service">Kill camera service</button>
       </div>
       <pre class="qlog" id="qlog">Each button causes a real failure on the drone's QNX computer and shows how it recovers.</pre></div>
+  </section>
+
+  <section class="qnx" id="qnxSec">
+    <div class="panel"><h3>Running on QNX <span class="badge" id="qAge">connecting…</span></h3>
+      <div class="os" id="qOs">–<small>&nbsp;</small></div>
+      <dl class="kv" id="qKv"></dl>
+      <div class="ai">
+        <div><span class="live" id="qVis">–</span><b>TensorFlow Lite</b> &middot; person detector <small id="qTfl">QNX open-source port</small></div>
+        <div><span class="live">&rarr; flight controller</span><b>OpenCV</b> &middot; optical flow <small id="qCv">QNX open-source port</small></div>
+      </div></div>
+    <div class="panel"><h3>Hard real-time safety loop <span class="badge">C &middot; SCHED_FIFO 60 &middot; 50 Hz</span></h3>
+      <div class="rt"><div class="big" id="qMax">–<small>ms</small></div>
+        <div class="sub">worst wake-up this second<br><span id="qMax60">–</span></div></div>
+      <canvas id="cLoop" aria-label="Worst wake-up of the 50 Hz safety loop, each second for the last minute, against the 2 ms deadline"></canvas>
+      <div class="cmp">
+        <div class="note">Same loop on this Pi, 99th-percentile lateness (measured):</div>
+        <div class="row"><span>normal priority</span><div class="bar" id="bN"></div><span class="v" id="vN">–</span></div>
+        <div class="row"><span>QNX real-time</span><div class="bar rt" id="bR"></div><span class="v" id="vR">–</span></div>
+        <div class="note" style="margin-top:6px">Busy SD card, the watchdog's worst wake-up: we moved its logging out of the real-time loop</div>
+        <div class="row"><span>logging in the loop</span><div class="bar" id="bSB"></div><span class="v" id="vSB">–</span></div>
+        <div class="row"><span>lock-free queue</span><div class="bar rt" id="bSA"></div><span class="v" id="vSA">–</span></div>
+      </div></div>
+    <div class="panel"><h3>Priority plan &middot; who wins the CPU <span class="badge" id="qSup">–</span></h3>
+      <table class="prio" id="qProcs"></table></div>
+    <div class="panel slogw"><h3>QNX system log &middot; slog2 (live from the drone) <span class="badge">slog2info -b hope</span></h3>
+      <pre id="qSlog">–</pre></div>
   </section>
 
   <section class="charts">
@@ -379,6 +441,56 @@ document.querySelectorAll('.qbtns button').forEach((b) => b.onclick = async () =
   finally { document.querySelectorAll('.qbtns button').forEach((x) => x.disabled = false); $('nQnx').classList.remove('live'); }
 });
 
+/* ---------- Running on QNX ---------- */
+const esc = (t) => String(t).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+function drawLoop(trace) {
+  const [g, W, H] = fit($('cLoop')), L = 34, R = 8, T = 6, B = 16, pw = W - L - R, ph = H - T - B;
+  const hi = Math.max(2.6, ...(trace.length ? trace : [0])) * 1.1, Y = (v) => T + (1 - v / hi) * ph;
+  g.font = MONO; g.textBaseline = 'middle'; g.textAlign = 'right';
+  const st = niceStep(hi, 3), ticks = []; for (let v = 0; v <= hi; v += st) ticks.push(v);
+  for (const v of ticks) { g.strokeStyle = C.grid; g.lineWidth = 1; g.beginPath(); g.moveTo(L, Math.round(Y(v)) + .5); g.lineTo(L + pw, Math.round(Y(v)) + .5); g.stroke(); g.fillStyle = C.axis; g.fillText(v + ' ms', L - 5, Y(v)); }
+  g.setLineDash([4, 4]); g.strokeStyle = C.amber; g.beginPath(); g.moveTo(L, Y(2)); g.lineTo(L + pw, Y(2)); g.stroke(); g.setLineDash([]);
+  g.fillStyle = C.soft; g.textAlign = 'left'; g.textBaseline = 'bottom'; g.fillText('2 ms deadline', L + pw - 92, Y(2) - 3);
+  g.textBaseline = 'top'; g.fillStyle = C.axis; g.fillText('-60 s', L, T + ph + 3); g.textAlign = 'right'; g.fillText('now', L + pw, T + ph + 3);
+  if (!trace.length) return;
+  const X = (i) => L + (trace.length === 1 ? pw : i / (trace.length - 1) * pw);
+  g.strokeStyle = C.pink; g.lineWidth = 2; g.lineJoin = g.lineCap = 'round'; g.beginPath();
+  trace.forEach((v, i) => (i ? g.lineTo(X(i), Y(v)) : g.moveTo(X(i), Y(v)))); g.stroke();
+}
+function renderQnx(q) {
+  if (!q || !q.os) { $('qAge').textContent = 'waiting for the drone…'; return; }
+  $('qAge').textContent = q.age_s == null ? '' : 'live · ' + q.age_s.toFixed(0) + ' s ago';
+  const m = q.os.match(/QNX \S+ (\S+) .* (\S+) (\S+)$/);
+  $('qOs').innerHTML = esc(m ? 'QNX ' + m[1] : q.os) + '<small>' + esc(m ? m[2] + ' · ' + m[3] : '') + ' · ' + (q.cpus || '?') + ' cores · on the drone</small>';
+  const procs = q.procs || [], up = procs.filter((p) => p.state === 'up').length, rs = procs.reduce((a, p) => a + (p.restarts || 0), 0);
+  $('qKv').innerHTML = '<dt>supervised</dt><dd>' + up + ' of ' + procs.length + ' processes up · ' + rs + ' crash' + (rs === 1 ? '' : 'es') + ' recovered</dd>' +
+    '<dt>booted</dt><dd>' + esc(q.boot || '–') + '</dd>' +
+    '<dt>watchdog</dt><dd>' + (q.hbwd && q.hbwd.pets ? q.hbwd.pets.toLocaleString() + ' checks · ' + q.hbwd.lands + ' emergency landings' : '–') + '</dd>';
+  const pk = q.packages || {};
+  $('qTfl').innerHTML = 'QNX port <code>python3-tflite-runtime ' + esc(pk['python3-tflite-runtime'] || '…') + '</code> · SSD-MobileNet, on the drone';
+  $('qCv').innerHTML = 'QNX port <code>python3-opencv ' + esc(pk['python3-opencv'] || '…') + '</code> · Lucas-Kanade tracking';
+  const v = q.vision || {};
+  $('qVis').textContent = v.hz ? v.hz.toFixed(1) + ' Hz · ' + v.infer_ms + ' ms' : '–';
+  const h = q.hbwd || {};
+  $('qMax').innerHTML = (h.max_ms_1s != null ? h.max_ms_1s.toFixed(2) : '–') + '<small>ms</small>';
+  $('qMax60').textContent = h.max_ms_60s != null ? 'worst in the last minute ' + h.max_ms_60s.toFixed(2) + ' ms · late (> 2 ms): ' + h.late_60s : '';
+  drawLoop(h.trace || []);
+  const j = q.jitter_measured || {}, top = Math.max(j.normal_p99_ms || 1, j.fifo_p99_ms || 1);
+  $('bN').style.width = (100 * (j.normal_p99_ms || 0) / top) + '%'; $('vN').textContent = (j.normal_p99_ms || 0).toFixed(1) + ' ms';
+  $('bR').style.width = Math.max(2, 100 * (j.fifo_p99_ms || 0) / top) + '%'; $('vR').textContent = (j.fifo_p99_ms || 0).toFixed(1) + ' ms';
+  const sdTop = Math.max(j.sd_before_ms || 1, j.sd_after_ms || 1);
+  $('bSB').style.width = (100 * (j.sd_before_ms || 0) / sdTop) + '%'; $('vSB').textContent = (j.sd_before_ms || 0).toFixed(0) + ' ms';
+  $('bSA').style.width = Math.max(2, 100 * (j.sd_after_ms || 0) / sdTop) + '%'; $('vSA').textContent = (j.sd_after_ms || 0).toFixed(2) + ' ms';
+  const rows = procs.filter((p) => p.prio != null).map((p) => ({ ...p }));
+  const drv = q.drivers || {};
+  if (drv['io-usb-otg'] || drv['io-sock']) rows.push({ name: 'QNX drivers', role: 'USB + Wi-Fi (io-usb-otg, io-sock)', prio: drv['io-usb-otg'] || drv['io-sock'], policy: 'RR', drv: true, state: 'up', restarts: '' });
+  rows.sort((a, b) => b.prio - a.prio);
+  $('qProcs').innerHTML = rows.map((p) => '<tr class="' + (p.drv ? 'drv' : '') + (p.state === 'down' ? ' down' : '') + '"><td class="p"><i style="width:' + Math.round(p.prio / 60 * 26) + 'px"></i>' + p.prio + '</td><td class="n">' + esc(p.name) +
+    '</td><td class="r">' + esc(p.role) + '</td><td class="x">' + (p.drv ? '' : (p.restarts ? '\u21bb' + p.restarts : '')) + '</td></tr>').join('');
+  $('qSup').textContent = 'priority · higher runs first';
+  $('qSlog').textContent = (q.slog || []).join('\n') || '–';
+}
+
 function setPreset(p) {
   document.querySelectorAll('.presets span').forEach((s) => s.classList.toggle('on', s.dataset.p === p));
   $('nPick').classList.toggle('live', !!p);
@@ -412,6 +524,7 @@ async function poll() {
     $('app').classList.toggle('demo', !!s.demo);
     $('recTxt').textContent = s.demo ? 'MOVING (PRETEND)' : 'FLYING';
     drawBoxes(t.people);
+    renderQnx(s.qnx);
     $('stateTxt').textContent = (t.state || '–') + (t.armed ? ' · armed' : '');
     if (!videoSet && s.link) { const v = $('video'); v.src = s.video; v.onload = () => { v.hidden = false; $('camEmpty').hidden = true; }; videoSet = true; }
     $('talk').classList.toggle('busy', !recording && flying);

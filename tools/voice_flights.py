@@ -46,6 +46,13 @@ from tools import auto_hover
 PAGE = Path(__file__).with_name("voice_flights.html")
 PREFLIGHT_FRESH_S = 300
 HIST_HZ, HIST_S = 5, 300
+QNX_POLL_S = 3.0
+# measured on this Pi (tools/jitter.py, 2026-11-21): 50 Hz loop, no load, 99th percentile lateness
+JITTER_MEASURED = {"normal_p99_ms": 14.0, "normal_max_ms": 19.0, "fifo_p99_ms": 1.2,
+                   "fifo_max_ms": 2.2,
+                   # the C watchdog under a busy SD card (100 MB write + disk-heavy reads),
+                   # before / after moving its logging out of the real-time loop (2026-11-22)
+                   "sd_before_ms": 433.2, "sd_after_ms": 0.86}
 REPLIES = {
     "hover": "Rising to half a metre. Ten seconds up there, then back down.",
     "spin": "Going up for a full three-sixty. Try not to get dizzy.",
@@ -112,6 +119,7 @@ class Hub:
         self.hist: collections.deque = collections.deque(maxlen=int(HIST_S * HIST_HZ))
         self.hseq = 0
         self.ground_m = 0.12  # rangefinder reading on the floor, learned while disarmed
+        self.qnx: dict = {}   # tools/qnx_status snapshot from the drone (the "Running on QNX" panel)
 
     def add(self, kind: str, text: str, mp3: bytes = b"") -> None:
         ev = {"i": len(self.events), "t": time.time(), "kind": kind, "text": text}
@@ -129,18 +137,70 @@ class Hub:
 
     # --- edge link ---------------------------------------------------------------------------
     async def keep_edge(self) -> None:
+        """One edge link; says once why it's down instead of repeating itself."""
+        last_note = ""
+
+        def note(text: str) -> None:
+            nonlocal last_note
+            if text != last_note:
+                self.add("log", text)
+                last_note = text
         while True:
             if self.edge is None or not self.edge.connected:
                 try:
-                    self.edge = await EdgeClient(self.a.edge, on_event=self.on_edge_event
-                                                 ).connect()
-                    self.add("log", f"connected to the drone at {self.a.edge}")
+                    edge = await EdgeClient(self.a.edge, on_event=self.on_edge_event).connect()
+                    await asyncio.sleep(2)  # the edge closes refused laptops right after accept
+                    if not edge.connected or not edge.telemetry:
+                        await edge.close()
+                        note(f"the drone at {self.a.edge} refused this laptop: it only takes "
+                             "commands from its allowed laptop (python -m tools.field_setup)")
+                        await asyncio.sleep(5)
+                        continue
+                    self.edge = edge
+                    note(f"connected to the drone at {self.a.edge}")
                 except Exception as e:
                     self.edge = None
-                    self.add("log", f"drone not reachable ({e}); retrying")
+                    note(f"drone not reachable ({e}); retrying")
                     await asyncio.sleep(3)
                     continue
             await asyncio.sleep(1)
+
+    async def qnx_poll(self) -> None:
+        """QNX proof from the drone every QNX_POLL_S: one SSH session, tools/qnx_status as root
+        (it lists every process); versions (--full) once per connection."""
+        import json
+        from tools.deploy_pi import ssh
+        loop = asyncio.get_running_loop()
+        c, full = None, True
+        cmd = ("cd /data/home/qnxuser/hope && sudo -S -p '' env PYTHONPATH=/data/home/qnxuser/hope:"
+               "/data/home/qnxuser/.local/lib/python3.14/site-packages python3 -m tools.qnx_status")
+
+        def once(conn, with_versions: bool) -> dict:
+            i, o, _ = conn.exec_command(cmd + (" --full" if with_versions else ""), timeout=40)
+            i.write(os.environ.get("QNX_PASS", "qnxuser") + "\n")
+            i.flush()
+            lines = [ln for ln in o.read().decode(errors="replace").splitlines() if ln.startswith("{")]
+            return json.loads(lines[-1]) if lines else {}
+        while True:
+            try:
+                if c is None:
+                    c = await loop.run_in_executor(None, ssh, self.a.edge)
+                    full = True
+                snap = await loop.run_in_executor(None, once, c, full)
+                if snap:
+                    if full and snap.get("packages"):
+                        full = False
+                    snap.setdefault("packages", self.qnx.get("packages"))
+                    snap["t"] = time.time()
+                    self.qnx = snap
+            except Exception:
+                try:
+                    c and c.close()
+                except Exception:
+                    pass
+                c = None
+                await asyncio.sleep(5)
+            await asyncio.sleep(QNX_POLL_S)
 
     async def record(self) -> None:
         """Telemetry history for the page's charts."""
@@ -349,6 +409,8 @@ class Hub:
                         "battery": t.get("battery_v"), "state": t.get("state"),
                         "people": t.get("people") or []},
                 "demo": bool(self.a.demo),
+                "qnx": {**self.qnx, "jitter_measured": JITTER_MEASURED,
+                        "age_s": round(time.time() - self.qnx["t"], 1) if self.qnx.get("t") else None},
                 "video": f"http://{self.a.edge}:8080/forward.mjpg",
                 "hist": [p for p in self.hist if p["i"] > hsince]}
 
@@ -391,6 +453,7 @@ def create_app(a) -> FastAPI:
     async def _start() -> None:
         asyncio.ensure_future(hub.keep_edge())
         asyncio.ensure_future(hub.record())
+        asyncio.ensure_future(hub.qnx_poll())
 
     @app.get("/", response_class=HTMLResponse)
     async def index():
