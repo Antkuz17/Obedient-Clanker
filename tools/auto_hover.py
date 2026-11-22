@@ -83,29 +83,89 @@ async def rng_flight(edge: EdgeClient, a) -> int:
             print(f"ABORT: still {h:.2f} m after 8 s, not lifting")
             return 1
 
-    t1, hs = time.monotonic(), []
-    while time.monotonic() - t1 < a.hold:  # hold, corrected by the rangefinder once a second
-        await asyncio.sleep(1.0)
-        h = real()
-        if not fc_ok():
-            print("pilot or failsafe took over:", pos(edge.telemetry))
-            return 1
-        if h is None:
-            print("ABORT: rangefinder lost the floor")
-            return 1
-        hs.append(h)
-        print(f"   height {h:.2f} m (rangefinder)")
-        if h > a.max_alt:
-            print(f"ABORT: {h:.2f} m is above {a.max_alt} m")
-            return 1
-        err = a.alt - h
-        if abs(err) > 0.12:
-            try:
-                await edge.run("move_body", up=max(-0.3, min(0.3, err)), timeout=10)
-            except CommandRejected as e:
-                print("   correction refused:", e)
-    print(f"hovered {a.hold:.0f} s at {min(hs):.2f}-{max(hs):.2f} m by rangefinder "
-          f"(mean {statistics.mean(hs):.2f})")
+    hs: list[float] = []
+
+    async def guard() -> str:
+        """Runs beside every step: returns why the flight must end, as soon as it must."""
+        lost = None
+        while True:
+            await asyncio.sleep(0.2)
+            if not fc_ok():
+                return "pilot or failsafe took over: " + pos(edge.telemetry)
+            h = real()
+            if h is None:
+                lost = lost or time.monotonic()
+                if time.monotonic() - lost > 1.0:
+                    return "rangefinder lost the floor"
+                continue
+            lost = None
+            if h > a.max_alt:
+                return f"{h:.2f} m by rangefinder is above {a.max_alt} m"
+
+    async def guarded(name: str, coro) -> None:
+        step, g = asyncio.ensure_future(coro), asyncio.ensure_future(guard())
+        done, _ = await asyncio.wait({step, g}, return_when=asyncio.FIRST_COMPLETED)
+        if g in done:
+            step.cancel()
+            raise RuntimeError(f"ABORT during {name}: {g.result()}")
+        g.cancel()
+        step.result()  # re-raise a step's own failure
+
+    async def hold(secs: float) -> None:
+        t1 = time.monotonic()
+        while time.monotonic() - t1 < secs:  # corrected by the rangefinder once a second
+            await asyncio.sleep(1.0)
+            h = real()
+            if h is None:
+                continue  # the guard decides when a lost rangefinder ends the flight
+            hs.append(h)
+            print(f"   height {h:.2f} m (rangefinder)")
+            err = a.alt - h
+            if abs(err) > 0.12:
+                try:
+                    await edge.run("move_body", up=max(-0.3, min(0.3, err)), timeout=10)
+                except CommandRejected as e:
+                    print("   correction refused:", e)
+
+    async def prim(op: str, **args) -> None:
+        d = await edge.run(op, timeout=90, **args)
+        if d.get("status") != "ok":
+            raise RuntimeError(f"ABORT: {op} {args} was {d.get('status')}: {d.get('reason')}")
+
+    async def sideways(right: float) -> None:
+        """right < 0 = left. Legs of at most --max-leg (the gate caps one move at 2 m)."""
+        left_to_go, sign = abs(right), 1 if right > 0 else -1
+        while left_to_go > 0.01:
+            leg = min(a.max_leg, left_to_go)
+            print(f"   leg: {'right' if sign > 0 else 'left'} {leg:.1f} m")
+            await prim("move_body", right=sign * leg)
+            left_to_go -= leg
+
+    plans = {
+        "hover": [("hold", a.hold)],
+        "spin": [("hold", 3), ("spin", a.spin_rate), ("hold", 3)],
+        "leftright": [("hold", 3), ("side", -a.dist), ("hold", 3), ("side", a.dist), ("hold", 3)],
+    }
+    try:
+        for kind, arg in plans[a.test]:
+            if kind == "hold":
+                print(f"hold {arg:.0f} s")
+                await guarded("hold", hold(arg))
+            elif kind == "spin":
+                print(f"full 360 turn at {arg:.0f} deg/s")
+                await guarded("360 turn", prim("scan", rate_dps=arg))
+            elif kind == "side":
+                print(f"{'right' if arg > 0 else 'left'} {abs(arg):.1f} m")
+                await guarded("sideways move", sideways(arg))
+    except CommandRejected as e:
+        print("ABORT: the safety gate refused:", e)
+        return 1
+    except RuntimeError as e:
+        print(e)
+        return 1
+    if hs:
+        print(f"test '{a.test}' done: height {min(hs):.2f}-{max(hs):.2f} m by rangefinder "
+              f"(mean {statistics.mean(hs):.2f})")
     return 0
 
 
@@ -202,6 +262,13 @@ if __name__ == "__main__":
     ap.add_argument("--rng", action="store_true",
                     help="rangefinder-only height: climb until the rangefinder reads --alt, hold "
                          "and correct from it (the FC's estimate drifts up on the ground)")
+    ap.add_argument("--test", choices=("hover", "spin", "leftright"), default="hover",
+                    help="--rng: hover = hold --hold s; spin = one full 360 turn; leftright = "
+                         "--dist m left, stop, --dist m right, stop. Always lands at the end")
+    ap.add_argument("--dist", type=float, default=5.0, help="--test leftright: metres each way")
+    ap.add_argument("--max-leg", type=float, default=2.0,
+                    help="longest single move (the edge's real-drone gate caps one at 2 m)")
+    ap.add_argument("--spin-rate", type=float, default=30.0, help="--test spin: deg/s")
     ap.add_argument("--ceiling", type=float, default=1.2,
                     help="--rng: takeoff target given to the FC so it keeps climbing (m)")
     ap.add_argument("--max-alt", type=float, default=1.2,
