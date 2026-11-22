@@ -104,11 +104,14 @@ async def rng_flight(edge: EdgeClient, a) -> int:
 
     async def guarded(name: str, coro) -> None:
         step, g = asyncio.ensure_future(coro), asyncio.ensure_future(guard())
-        done, _ = await asyncio.wait({step, g}, return_when=asyncio.FIRST_COMPLETED)
+        try:
+            done, _ = await asyncio.wait({step, g}, return_when=asyncio.FIRST_COMPLETED)
+        finally:  # also when this flight is cancelled ("land" from voice_flights): stop both
+            for task in (step, g):
+                if not task.done():
+                    task.cancel()
         if g in done:
-            step.cancel()
             raise RuntimeError(f"ABORT during {name}: {g.result()}")
-        g.cancel()
         step.result()  # re-raise a step's own failure
 
     async def hold(secs: float) -> None:
@@ -173,6 +176,11 @@ async def main(a) -> int:
     edge = await EdgeClient(a.host, on_event=lambda e: print(f"   !! {e['kind']}: {e['detail']}")
                             ).connect()
     await asyncio.sleep(1.5)
+    return await fly(edge, a)
+
+
+async def fly(edge: EdgeClient, a) -> int:
+    """The whole test on an already-connected edge (tools/voice_flights keeps one open)."""
     t = edge.telemetry or {}
     print("before:", pos(t), f"battery={t.get('battery_v')} flow_q={t.get('flow_quality')}")
     global GROUND_M
