@@ -73,13 +73,19 @@ OUTDOOR: dict[str, tuple[float, bool, str]] = {
 # Outdoors, low (field test 2026-11-22): GPS for horizontal position and vertical speed, the
 # rangefinder stays the height source. In the air the down camera's flow quality fell to 0 at
 # ~80% throttle (vibration) and the drone drifted; GPS doesn't care. Unlike OUTDOOR, height is
-# NOT the baro (prop wash fooled it on every takeoff). GPS vertical speed also counters the FC's
-# height estimate drifting up while it sits on the ground with the motors spinning.
+# NOT the baro (prop wash fooled it on every takeoff).
+# Changed in the field 2026-11-22 (cloud lead; drone lead please review):
+# - EK3_SRC1_VELZ 3 -> 0: with GPS vertical velocity the EKF read +0.3-0.4 m/s "climbing" while
+#   the drone sat on the ground, cut the throttle and skidded (blackbox flight_..._035052);
+#   with 0 the EKF height followed the rangefinder.
+# - GPS_AUTO_CONFIG 1 -> 0: the M100-PRO rejected ArduPilot's nav-rate config (0x1FF3) every
+#   30 s, so arming failed with "GPS 1 still configuring this GPS"; its own output is fine.
 GPS_RNG: dict[str, tuple[float, bool, str]] = {
     "GPS1_TYPE": (1, True, "GPS on (auto-detect)"),
+    "GPS_AUTO_CONFIG": (0, True, "don't reconfigure the M100-PRO (it rejects the nav-rate config)"),
     "EK3_SRC1_POSXY": (3, False, "GPS horizontal position"),
     "EK3_SRC1_VELXY": (3, False, "GPS horizontal velocity"),
-    "EK3_SRC1_VELZ": (3, False, "GPS vertical velocity (counters on-ground height drift)"),
+    "EK3_SRC1_VELZ": (0, False, "none: height from the rangefinder only (GPS vz drifted on the ground)"),
 }
 
 

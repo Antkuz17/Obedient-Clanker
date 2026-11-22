@@ -99,10 +99,15 @@ Open **http://127.0.0.1:8100**: hold Space (or the pink button) and talk, or "Ty
 lost or above 1.2 m. Run the preflight above first. STOP / Esc always works.
 
 ### The four filming tests from the dashboard (station `--rng`)
+Phone hotspot with no IPv4 on the laptop: see `tools/v6_tunnel.py` (SSH tunnel over IPv6).
 1. "Hey drone, rise" ... "land".
 2. "Hey drone, rise and do a 360" (no land): one full turn, then it hovers. Say "land" while it
    hovers (or mid-turn) to show it listens mid-flight.
-3. "Hey drone, rise, go left 5 metres, then right 5 metres, then come down" (2 m legs).
+3. "Hey drone, rise, go 2 meters to the left, take a photo, then 2 meters to the right" ... "Land."
+   Sideways moves are capped at 2 m per command in `--rng` (5 m in legs wandered). It turns to
+   face each move first. Needs a FULL pack: on a tired one it sinks while tilting (~80% hover
+   throttle) and the guard lands it ("I'm sinking").
+   Photos any time, flying or not: "Yo, take a photo." (full-screen flash on the dashboard).
 4. Person ahead: "Hey drone, rise"; a person stands ~2.5 m in front of the camera; "fly forward
    2 metres" must be refused by the gate ("Safety says no: person 2.5 m ahead"), dashboard
    shows Refused, the drone doesn't move. Then "land".

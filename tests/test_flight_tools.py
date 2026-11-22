@@ -47,5 +47,7 @@ def test_gps_profile_keeps_rangefinder_height_and_failsafes():
     g = profile_for(gps=True)
     assert g["GPS1_TYPE"][0] == 1 and g["EK3_SRC1_POSXY"][0] == 3 and g["EK3_SRC1_VELXY"][0] == 3
     assert g["EK3_SRC1_POSZ"][0] == 2          # height stays on the rangefinder, not the baro
+    assert g["EK3_SRC1_VELZ"][0] == 0          # field 2026-11-22: GPS vz drifted on the ground
+    assert g["GPS_AUTO_CONFIG"][0] == 0        # field 2026-11-22: "GPS 1 still configuring"
     for k in ("FS_GCS_ENABLE", "FS_EKF_ACTION", "FLTMODE6"):
         assert g[k] == PROFILE[k]

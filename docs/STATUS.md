@@ -153,6 +153,19 @@ position (altitude used to sag about 0.1 m per command).
   refused "go up 2 m", land). **Not flown yet**: first real flight = "take off", then "land", pilot on SwA.
   Fallback: `tools.voice_flights` (8200).
 
+## Field night 2026-11-22, end state (cloud lead with Claude; **drone lead: please review**)
+
+- Flown from the dashboard (`demo_laptop --edge 127.0.0.1:7400 --rng` over `tools/v6_tunnel.py`):
+  test 2 (rise + 360, "land" mid-flight) worked. Test 3 sank on a tired pack while tilting sideways.
+- FC: `GPS_AUTO_CONFIG=0`, `EK3_SRC1_VELZ=0` set on the board and now in `fc_profile` GPS_RNG (why
+  in the comments there). Edge battery limits 10.0 / 9.6 V under load (`edge/config.py`).
+- Station: sideways capped at 2 m per command, takeoff target 0.9 m, height corrections <= 0.15 m,
+  guard lands on sinking / uncommanded yaw, filming phrases + "take a photo" skip the LLM.
+- Cloud: photos are relayed inline before the memory ingest (they used to be dropped when it failed).
+- Known: the drone needs ~80% throttle to hover; sideways flight needs a full pack (or a lighter
+  drone / slower sideways speed). The dashboard shows "Checking..." then "Nothing to check" when the
+  planner (not the gate) refuses something, e.g. "too high for the rangefinder".
+
 ## Person boxes on the dashboard (2026-11-21 night, cloud lead with Claude; **drone lead: small additive change in `edge/`**)
 
 - `edge/vision` now also sends `boxes: [[x0, y0, x1, y1, score, metres], ...]` (normalised, up to 5)
