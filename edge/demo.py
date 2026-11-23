@@ -28,9 +28,9 @@ _LINES = itertools.cycle([
     "indoors, so I'll be doing it in my imagination",
     "{what}? Cleared by every safety check, and I'm not allowed to anyway. We're indoors. "
     "Consider it done, spiritually",
-    "I'd love to {what}, and my safety checks agree, but the venue rules say I stay put. "
+    "I'd love to {what}, and my safety checks agree, but the house rules say I stay put. "
     "Tragic",
-    "Safety checks: all green. Venue rules: very red. So no, I won't {what}, but I really "
+    "Safety checks: all green. House rules: very red. So no, I won't {what}, but I really "
     "wanted to",
 ])
 

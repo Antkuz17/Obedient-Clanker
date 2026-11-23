@@ -55,6 +55,7 @@ STALE_S = 1.0          # EKF / EXTENDED_SYS_STATE older than this = unknown
 FC_LINK_TIMEOUT_S = 3.0
 LAND_RETRY_S = 0.5
 ORIGIN_RETRY_S = 1.0
+GUIDED_WAIT_S = 3.0        # takeoff: how long the FC gets to report GUIDED before we give up
 HEARTBEAT_PERIOD_S = 0.5   # 2 Hz: 4 beats inside FS_GCS_TIMEOUT=2 (review2 #10)
 
 
@@ -343,6 +344,20 @@ class MavVehicle(Vehicle):
         if not self.gps:
             self.set_origin()
         self._set_mode(COPTER_GUIDED)
+        # Arm only once the FC reports GUIDED. If it refuses the mode (no position estimate is
+        # the usual reason) it stays in the pilot's switch mode, and arming there spun the props
+        # on the ground in AltHold until the takeoff timed out. The FC heartbeat is 1 Hz.
+        deadline = time.monotonic() + GUIDED_WAIT_S
+        while (time.monotonic() < deadline and self.state().mode != "GUIDED"
+               and not ab.is_set()):
+            time.sleep(0.05)
+        if ab.is_set():
+            return
+        if (mode := self.state().mode) != "GUIDED":
+            self.last_error = f"flight controller stayed in {mode}: it refused GUIDED, not arming"
+            log.error(self.last_error)
+            self.takeoff_failed = True
+            return
         self._cmd(M.MAV_CMD_DO_CHANGE_SPEED, 1, self.speed_xy, -1)
         if ab.is_set():
             return

@@ -30,6 +30,16 @@ PROFILE: dict[str, tuple[float, bool, str]] = {
     # voltage: the pack dips to ~10.4 V under ~80% hover throttle and the raw reading landed it
     # mid-test (pilot's OK, 2026-11-22)
     "BATT_FS_VOLTSRC": (1, False, "battery failsafe uses sag-compensated voltage"),
+    # Without these two the lines above do nothing: ArduPilot's default low-battery action is
+    # "none", and BATT_LOW_VOLT 0 turns the check off. 10.5 V is what docs/HANDOVER.md says
+    # was set by hand; now the profile sets it and the preflight checks it.
+    "BATT_LOW_VOLT": (10.5, False, "3S low-battery threshold (sag-compensated)"),
+    "BATT_FS_LOW_ACT": (1, False, "low battery -> Land"),
+    # The pilot's switch is the last safety layer; if the transmitter drops out mid-flight the
+    # FC must land, not carry on under computer control. Needs the receiver's own failsafe set
+    # so it stops output or drops throttle below FS_THR_VALUE when the signal is lost: check
+    # that once on the bench (transmitter off -> "Radio Failsafe" on the FC).
+    "FS_THR_ENABLE": (3, False, "transmitter signal lost -> Land, in any mode"),
     # pilot switch: SwA on channel 5, up = AltHold, down = Land (verified on the board)
     "FLTMODE_CH": (5, False, "SwA"),
     "FLTMODE1": (2, False, "SwA up: AltHold"),

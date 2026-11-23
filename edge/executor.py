@@ -126,7 +126,8 @@ class Executor:
         self._active_fwd = False
         if self._active_moves and verdict.target and "face_travel" not in verdict.extra:
             fwd, _ = ned_to_body(verdict.target[0] - s.n, verdict.target[1] - s.e, s.yaw)
-            self._active_fwd = fwd > 0.2  # faced moves: set by _do once it faces the path
+            # faced moves: set by _do once it faces the path
+            self._active_fwd = fwd > self.gate.cfg.forward_check_min_m
         self._active = (cid, op)
         self._task = asyncio.create_task(self._run(cid, op, args, verdict))
         return True

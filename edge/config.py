@@ -1,4 +1,4 @@
-"""Edge limits. Tune at the venue; every number here is a safety decision."""
+"""Edge limits. Tune where you fly; every number here is a safety decision."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -36,6 +36,9 @@ class SafetyConfig:
     # The sensors that have to stop it. Every forward check uses these, and max_checked_speed()
     # makes sure speed_xy lets each one stop the drone inside what it can see.
     face_travel_min_m: float = 0.5   # longer horizontal moves turn to face the way they fly first
+    # A move with at least this much forward travel gets the person / obstacle checks. It was
+    # 0.2 m, so "forward 0.2" repeated crept up to a person with no check at all.
+    forward_check_min_m: float = 0.02
     obstacle_range_m: float = 2.0    # forward HC-SR04: reliable echoes up to here
     obstacle_latency_s: float = 0.07 # 20 Hz pings + Arduino serial + UDP
     person_range_m: float = 4.0      # person detector: distance estimate usable up to here

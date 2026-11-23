@@ -1,6 +1,6 @@
 """Station and cloud settings, read from the environment and a git-ignored `.env`.
 
-Keys we don't have yet (see docs/TODO.md "CRITICAL: keys"): everything still imports and the
+Keys we don't have yet (see `.env.example`): everything still imports and the
 tests run with mocked HTTP; calls that need a missing key raise MissingKey with the variable
 name, and the brain falls back to its rule parser so the drone can still be flown by voice text.
 """

@@ -160,7 +160,7 @@ class SafetyGate:
             # the sensors only describe the path now if we already face it
             seen, ahead = abs(yaw_err(bearing, s.yaw)) <= 30.0, dxy
         else:
-            seen, ahead = fwd > 0.2, fwd
+            seen, ahead = fwd > c.forward_check_min_m, fwd
         if seen:
             if (why := path_blocked(p, ahead, c)) is not None:
                 return _reject(f"{why}; not moving there")

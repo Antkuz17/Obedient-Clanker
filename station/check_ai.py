@@ -1,5 +1,5 @@
 """Check every hosted model on the real keys, and time the voice path. Run it the moment the
-keys are in `.env` (docs/TODO.md "CRITICAL"):
+keys are in `.env` (names in `.env.example`):
 
     python -m station.check_ai            # everything
     python -m station.check_ai --only brain,vision
@@ -194,7 +194,7 @@ async def check_voice(ai: AI, s: Settings) -> None:
 async def main(only: set[str] | None, s: Settings | None = None, ai: AI | None = None) -> int:
     s = s or settings()
     if not s.vultr_key:
-        print("VULTR_INFERENCE_KEY is not set in .env: nothing to check (docs/TODO.md CRITICAL).")
+        print("VULTR_INFERENCE_KEY is not set in .env: nothing to check (names in .env.example).")
         return 1
     ai = ai or AI(s, timeout=30)
     checks = {"models": lambda: check_models(ai, s), "brain": lambda: check_brain(ai),

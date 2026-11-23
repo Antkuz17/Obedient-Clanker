@@ -31,6 +31,21 @@ def connect(addr: str = TAP, timeout: float = 10.0):
     raise TimeoutError(f"no flight controller heartbeat via {addr} (relay running with --tap?)")
 
 
+def is_armed(addr: str = TAP, timeout: float = 5.0) -> bool | None:
+    """True / False from the FC's own heartbeat; None when the FC can't be reached (relay or
+    FC down)."""
+    try:
+        m = connect(addr, timeout=timeout)
+    except Exception:
+        return None
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < 3.0:
+        hb = m.recv_match(type="HEARTBEAT", blocking=True, timeout=1)
+        if hb and hb.get_srcSystem() == 1 and hb.type != M.MAV_TYPE_GCS:
+            return bool(hb.base_mode & M.MAV_MODE_FLAG_SAFETY_ARMED)
+    return None
+
+
 def get_param(m, name: str, tries: int = 6) -> float | None:
     for _ in range(tries):
         m.mav.param_request_read_send(1, 1, name.encode(), -1)

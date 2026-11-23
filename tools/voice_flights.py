@@ -322,18 +322,23 @@ class Hub:
         """Test 4 ("fly forward" / "test four"): the person-safety refusal. NOTHING is sent to
         the drone (no takeoff, no move), whatever mode the drone is in, so it cannot move. If
         the on-board detector sees someone right now, the refusal quotes the real distance and
-        the page shows the live box; otherwise it refuses with the generic line."""
+        the page shows the live box; otherwise it says forward flight is locked for the test
+        and that it sees nobody (it never claims a person the detector didn't find)."""
         t = (self.edge.telemetry if self.edge and self.edge.connected else None) or {}
         dists = [b[5] for b in (t.get("people") or [])
                  if isinstance(b, (list, tuple)) and len(b) >= 6 and b[5] is not None]
         near = min(dists) if dists else None
         self.add("state", "flying:forward")
-        why = (f"person {near:.1f} m ahead" if near is not None else "person in the path")
-        self.add("alert", f"{why}: forward move refused · nothing sent to the drone")
+        if near is not None:  # the PERSON AHEAD banner only when the detector really sees one
+            why = f"person {near:.1f} m ahead"
+            self.add("alert", f"{why}: forward move refused · nothing sent to the drone")
+            line = f"I'm not flying forward. There's a person {near:.1f} metres ahead of me. Safety first."
+        else:
+            why = "forward flight locked for this test; no person in view"
+            line = ("I'm not flying forward. Forward flight is locked for this test, and I "
+                    "don't see anyone ahead right now.")
         self.add("log", f"test 4: forward move refused ({why}); no command sent to the drone")
-        await self.say("I'm not flying forward. There's a person "
-                       + (f"{near:.1f} metres ahead of me" if near is not None else "in my path")
-                       + ". Safety first.")
+        await self.say(line)
         self.add("state", "idle")
         return {"preset": "forward", "started": False, "person_m": near}
 

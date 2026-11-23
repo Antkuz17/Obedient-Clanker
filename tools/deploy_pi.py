@@ -50,6 +50,8 @@ def main() -> None:
                          "rerun --stations without it to fly again")
     ap.add_argument("--restart", action="store_true",
                     help="restart the whole drone stack (after --stations / --build)")
+    ap.add_argument("--force", action="store_true",
+                    help="with --restart: restart even if the flight controller says it is armed")
     ap.add_argument("--reboot-fc", action="store_true",
                     help="reboot the flight controller (clears a latched battery failsafe; only "
                          "while disarmed). The relay reconnects by itself")
@@ -92,9 +94,11 @@ def main() -> None:
     c.exec_command(f"cd {REMOTE} && cp tools/start_pi.sh start_sup.sh && chmod +x start_sup.sh",
                    timeout=30)[1].read()
 
-    def run(cmd: str) -> None:
+    def run(cmd: str) -> str:
         _, out, err = c.exec_command(f"cd {REMOTE} && {cmd}", timeout=300)
-        print(out.read().decode(errors="replace") + err.read().decode(errors="replace"), end="")
+        text = out.read().decode(errors="replace") + err.read().decode(errors="replace")
+        print(text, end="")
+        return text
 
     if a.stations:
         import json
@@ -141,6 +145,18 @@ def main() -> None:
         run(f"env {PYPATH} python3 -c \"from tools import fclink; m = fclink.connect(fclink.TAP); "
             "m.mav.command_long_send(1, 1, 246, 0, 1, 0, 0, 0, 0, 0, 0); print('FC reboot sent')\"")
     if a.restart:
+        # Restarting kills the safety core, the C watchdog and the USB relay together. Under a
+        # flying drone that leaves only the FC's 2 s failsafe, with no rangefinder: never do it
+        # while the FC says armed (another laptop running field_setup mid-flight did exactly this).
+        state = run(f"env {PYPATH} python3 -c \"from tools import fclink; "
+                    "print('FC_ARMED=%s' % fclink.is_armed())\"")
+        if "FC_ARMED=True" in state and not a.force:
+            raise SystemExit("the flight controller is ARMED: not restarting the drone stack. "
+                             "Land and disarm first (or --force if you are sure it is on the "
+                             "ground).")
+        if "FC_ARMED=False" not in state:
+            print("could not ask the flight controller whether it is armed (relay down?); "
+                  "restarting anyway")
         pw = os.environ.get("QNX_PASS", "qnxuser")
         run(f"echo {pw} | sudo -S sh -c 'slay -f camgrab; slay -f hbwd; slay -f slog2d; "
             f"slay -f python3; sleep 1; nohup {REMOTE}/start_sup.sh >/dev/null 2>&1 </dev/null &' "

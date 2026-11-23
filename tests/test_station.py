@@ -21,7 +21,7 @@ from edge.video import SIM_WORLD, intrinsics
 from shared.client import EdgeClient
 from station import localize_stub
 from station.ai import AI
-from station.brain import Brain, fast_parse, rule_parse
+from station.brain import Brain, fast_parse, is_urgent, rule_parse
 from station.camera import Frame, Pose
 from station.config import MissingKey, Settings
 from station.localize import box_to_goal, locate, parse_box
@@ -456,10 +456,10 @@ def test_cloud_relays_commands_to_station(tmp_path):
             with c.websocket_connect("/ws/station?token=wrong") as ws:
                 ws.receive_json()
         with c.websocket_connect("/ws/station?token=tok") as st, \
-                c.websocket_connect("/ws/ui?client=judge") as ui:
+                c.websocket_connect("/ws/ui?client=guest") as ui:
             assert ui.receive_json()["type"] == "hello"
             st.send_json({"type": "telemetry", "state": "IDLE", "armed": False, "alt": 0.0})
-            r = c.post("/text", json={"text": "take off", "client": "judge"}).json()
+            r = c.post("/text", json={"text": "take off", "client": "guest"}).json()
             assert r["ok"] and r["actions"][0]["kind"] == "takeoff"
             m = st.receive_json()
             assert m["type"] == "actions" and m["actions"][0]["kind"] == "takeoff"
@@ -483,7 +483,7 @@ def test_cloud_relays_commands_to_station(tmp_path):
             assert m == {"type": "memory_result", "req": 7, "hits": []}
         # voice: FakeAI.transcribe echoes the bytes
         r = c.post("/voice", files={"audio": ("clip.webm", b"land")},
-                   data={"client": "judge"}).json()
+                   data={"client": "guest"}).json()
         assert r["text"] == "land" and r["ok"] is False  # station gone
 
 
@@ -873,7 +873,7 @@ def test_any_viewer_can_fly(tmp_path):
             with c.websocket_connect("/ws/station?token=dev-token", headers=fwd) as ws:
                 ws.receive_json()
         with c.websocket_connect("/ws/station?token=dev-token") as st:
-            r = c.post("/text", json={"text": "take off", "client": "judge"}, headers=fwd).json()
+            r = c.post("/text", json={"text": "take off", "client": "guest"}, headers=fwd).json()
             assert r["ok"] and r["actions"][0]["kind"] == "takeoff"
             assert _next_actions(st)[0]["kind"] == "takeoff"
             with c.websocket_connect("/ws/ui?client=stranger") as ui:
@@ -915,7 +915,7 @@ def test_streamed_voice_runs_the_command_and_reports_errors(tmp_path, monkeypatc
                  stt_stream_model="voxtral-mini-4b-realtime")
     with TestClient(cloud_app.create_app(s, ai=FakeAI())) as c:
         with c.websocket_connect("/ws/station?token=tok") as st:
-            with c.websocket_connect("/ws/voice?client=judge") as v:
+            with c.websocket_connect("/ws/voice?client=guest") as v:
                 v.send_bytes(b"forward 1 ")
                 v.send_bytes(b"metre")
                 v.send_text("end")
@@ -924,7 +924,7 @@ def test_streamed_voice_runs_the_command_and_reports_errors(tmp_path, monkeypatc
             assert _next_actions(st)[0] == {"kind": "move", "fwd": 1.0, "right": 0.0,
                                             "up": 0.0, "yaw_deg": 0.0}
         s.stt_stream_model = ""
-        with c.websocket_connect("/ws/voice?client=judge") as v:
+        with c.websocket_connect("/ws/voice?client=guest") as v:
             assert "error" in v.receive_json()
 
 
@@ -985,7 +985,7 @@ def test_memory_search_is_rate_limited(tmp_path):
 
 async def test_qnx_datagrams_from_strangers_are_ignored(tmp_path):
     """The stats port listens on every interface: only the Pi (EDGE_HOST) and this machine may
-    put numbers on the judges' dashboard."""
+    put numbers on the dashboard."""
     from station import station as st_mod
     st = st_mod.Station(Settings(vultr_key="", data_dir=tmp_path, edge_host="192.0.2.7"),
                         stub_locate=True, speaker=False, ai=FakeAI(), qnx_port=free_port())
@@ -1291,7 +1291,7 @@ def test_photo_reaches_the_dashboard_even_if_memory_fails(tmp_path):
     jpeg = base64.b64encode(b"\xff\xd8 a photo").decode()
     with TestClient(app) as c:
         with c.websocket_connect("/ws/station?token=tok") as st, \
-                c.websocket_connect("/ws/ui?client=judge") as ui:
+                c.websocket_connect("/ws/ui?client=guest") as ui:
             assert ui.receive_json()["type"] == "hello"
             st.send_json({"type": "photo", "jpeg": jpeg, "pose": {"n": 0, "e": 0, "alt": 0.5, "yaw": 0},
                           "caption": ""})
@@ -1477,3 +1477,105 @@ async def test_llm_saying_nothing_falls_back_to_the_rules():
     assert r.source == "rules" and [a["kind"] for a in r.actions] == ["move"]
     r = await Brain(ai).think("how are you", AIR)
     assert r.actions == [] and "Try" in r.reply
+
+
+# --- review fixes (2026-11-22): test four vs stop / land, honest refusal, negations ------------
+async def test_test4_never_swallows_a_stop_or_land():
+    """A test-4 sentence that also says land or stop sends exactly that, and nothing else."""
+    flying = {"state": "HOVER", "armed": True, "alt": 0.7, "people": []}
+    b = Brain(None)
+    for text, kind in (("that's enough of test four, land", "land"),
+                       ("test four is over, stop", "stop"),
+                       ("test four, fly forward 2 metres then land", "land")):
+        assert (await b.think(text, flying)).actions == [{"kind": kind}], text
+    b.test4_armed = True  # armed off camera: a plain forward sentence is test 4 too
+    for text, kind in (("stop moving forward", "stop"), ("don't go forward, land", "land"),
+                       ("stop, there is someone straight ahead", "stop")):
+        assert (await b.think(text, flying)).actions == [{"kind": kind}], text
+    assert (await b.think("come towards me", flying)).actions == []   # still the refusal
+
+
+async def test_test4_does_not_claim_a_person_it_cannot_see():
+    flying = {"state": "HOVER", "armed": True, "alt": 0.7, "people": []}
+    r = await Brain(None).think("test four, fly forward", flying)
+    assert r.actions == [] and "person" not in r.reply and "don't see anyone" in r.reply
+    r = await Brain(None).think("test four, fly forward",
+                                {**flying, "people": [[.4, .2, .6, .9, .9, 2.3]]})
+    assert "person 2.3 metres ahead" in r.reply
+
+
+async def test_test_for_in_ordinary_speech_is_not_test_four():
+    r = await Brain(None).think("land, the test for today is done", {"armed": True})
+    assert r.source == "rules" and r.actions == [{"kind": "land"}]
+
+
+async def test_rules_never_obey_a_negated_command():
+    """LLM down: "don't take off" used to take off, "don't land" used to land."""
+    tel = {"state": "HOVER", "armed": True, "alt": 0.7}
+    for text in ("don't take off", "do not take off yet", "don't move forward",
+                 "never mind, don't land", "whatever you do, don't go up"):
+        assert rule_parse(text, tel).actions == [], text
+    assert rule_parse("wait, don't turn around", tel).actions == [{"kind": "stop"}]
+    assert rule_parse("don't go left, land", tel).actions == [{"kind": "land"}]
+
+
+async def test_every_urgent_word_does_something():
+    """is_urgent() skips the LLM, so the rules must act on each of its words ("abort" and "halt"
+    used to produce nothing)."""
+    for text, kind in (("abort", "stop"), ("abort abort", "stop"), ("halt", "stop"),
+                       ("that's enough", "stop"), ("cut it out", "stop"), ("kill it", "stop"),
+                       ("get down", "land"), ("hold it", "stop"), ("freeze", "stop")):
+        assert is_urgent(text), text
+        assert (await Brain(None).think(text, {"armed": True})).actions == [{"kind": kind}], text
+
+
+async def test_rng_guard_survives_an_edge_reconnect(rig):
+    """station.edge_loop swaps in a fresh client after a link drop; its telemetry is empty until
+    the first message. The guard read that as "disarmed" and stopped guarding the flight."""
+    sim, edge = rig
+    p, said = rng_planner(sim, edge)
+    await run_plan(p, [{"kind": "takeoff", "alt": 1.0}])
+    assert not p._guard.done()
+    for _ in range(4):  # the race is timing-dependent: swap several times
+        c = await EdgeClient("127.0.0.1", edge.port).connect()
+        old, p.edge = p.edge, c
+        await old.close()
+        await asyncio.sleep(0.45)
+    assert not p._guard.done() and p._target == pytest.approx(0.7) and sim.state().armed
+    await run_plan(p, [{"kind": "land"}])
+    await until(lambda: not sim.state().armed, 30)
+    await p.edge.close()
+
+
+async def test_rng_flight_with_no_guard_is_adopted_by_the_next_command(rig):
+    """Airborne with no guard (station restarted mid-flight): the next takeoff / move starts one."""
+    sim, edge = rig
+    p, said = rng_planner(sim, edge)
+    await run_plan(p, [{"kind": "takeoff", "alt": 1.0}])
+    p._guard.cancel()
+    await asyncio.sleep(0.1)
+    p._target = None
+    await run_plan(p, [{"kind": "takeoff", "alt": 1.0}])   # already flying: no second takeoff
+    assert p.log.count("takeoff {'alt': 1.0}") == 1
+    assert not p._guard.done() and p._target is not None
+
+
+async def test_rng_height_corrections_cannot_wind_up(rig):
+    """A drone that doesn't follow (tired pack) had its commanded height pushed up 0.15 m a
+    second without end. The corrections now stop at rng_fix_total."""
+    sim, edge = rig
+    p, said = rng_planner(sim, edge)
+    await run_plan(p, [{"kind": "takeoff", "alt": 1.0}])
+    real = p.rng_height
+    p.rng_height = lambda: 0.45 if real() is not None else None   # reads 0.25 m low, always
+    sent = []
+    run = p.edge.run
+
+    async def spy(op, **kw):
+        sent.append((op, kw.get("up")))
+        return await run(op, **kw)
+    p.edge.run = spy
+    await asyncio.sleep(7.0)
+    ups = [u for op, u in sent if op == "move_body"]
+    assert ups and sum(ups) == pytest.approx(p.cfg.rng_fix_total, abs=0.02)   # 3 x 0.15, then no more
+    assert sim.state().armed and sim.state().alt < 1.3

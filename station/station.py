@@ -200,7 +200,7 @@ class Station:
         station = self
         loop = asyncio.get_running_loop()
         # it listens on every interface (the Pi sends from the LAN), so only the Pi and this
-        # machine may feed the dashboard: anyone else on the venue Wi-Fi is ignored
+        # machine may feed the dashboard: anyone else on the same Wi-Fi is ignored
         try:
             for *_, sa in await loop.getaddrinfo(self.s.edge_host, None):
                 self.qnx_allowed.add(sa[0])

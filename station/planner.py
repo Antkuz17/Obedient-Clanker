@@ -80,6 +80,9 @@ class PlannerConfig:
     rng_max_side: float = 2.0      # rng: a sideways command flies at most this far (field: 5 m
                                    # in 2 m legs turned to face each leg and wandered off)
     rng_fix_max: float = 0.15      # m per height correction (0.3 knocked it from 0.8 m to the floor)
+    rng_fix_total: float = 0.45    # m: most the corrections may add up to, either way. They move
+                                   # the edge's *commanded* height, so a drone that can't follow
+                                   # (tired pack) had its target pushed up a step a second
     rng_stop_lead: float = 0.5     # s: stop the climb this far ahead (rangefinder + link lag)
     rng_sink_floor: float = 0.10   # land if this close to the floor (m of clearance) ...
     rng_sink_s: float = 3.0        # ... for this long. Not "below target": it flies a 2 m leg
@@ -127,6 +130,8 @@ class Planner:
         self._busy_prims = 0      # primitives in flight: no height corrections meanwhile
         self._vertical_busy = False  # an up/down move is running: no "sinking" check
         self._our_land = False    # we sent LAND: the FC leaving GUIDED isn't the pilot
+        self._fix_sum = 0.0       # net height corrections since the target was last set (m)
+        self._fix_capped = False  # said once that the corrections hit rng_fix_total
 
     # --- public ------------------------------------------------------------------------------
     def submit(self, actions: list[dict], reply: str | None = None) -> asyncio.Task | None:
@@ -299,7 +304,7 @@ class Planner:
         c = self.cfg
         self._our_land = False
         if self.tel.get("armed"):  # already flying (FC height said otherwise): just hold here
-            self._target = self.rng_height() or alt
+            self._set_target(self.rng_height() or alt)
             self._start_guard()
             return
         ground = self.tel.get("range_m")
@@ -341,7 +346,24 @@ class Planner:
                 with _quiet():
                     await self.edge.run("land", timeout=60)
             raise
+        self._set_target(target)
+        self._start_guard()
+
+    def _set_target(self, target: float | None) -> None:
+        """A new height to hold: the corrections' running total starts again."""
         self._target = target
+        self._fix_sum, self._fix_capped = 0.0, False
+
+    def _adopt_flight(self) -> None:
+        """Already in the air with no guard running (the station restarted or reconnected
+        mid-flight): hold the current height and guard the flight from here on."""
+        if not self.cfg.rng or (self._guard is not None and not self._guard.done()):
+            return
+        if not self._fc_guided():
+            return  # the pilot or a failsafe has it: nothing of ours to guard
+        if self._target is None:
+            self._set_target(self.rng_height() or self.cfg.rng_alt)
+        self._our_land = False
         self._start_guard()
 
     async def _drain(self, cid: str) -> None:
@@ -371,6 +393,13 @@ class Planner:
         while True:
             await asyncio.sleep(0.2)
             now = time.monotonic()
+            if not self.tel or not self.edge.connected:
+                # No telemetry is not "landed". station.edge_loop swaps in a fresh client after
+                # a link drop, and its telemetry is empty until the first message: reading that
+                # as disarmed ended this guard for the rest of the flight. Wait for the link (the
+                # edge hovers, then lands, on its own meanwhile).
+                lost = low_since = yaw_ref = None
+                continue
             if not self.tel.get("armed"):
                 self._target = None
                 return  # landed (or disarmed)
@@ -416,12 +445,25 @@ class Planner:
                     and now - last_fix >= 1.0 and abs(self._target - h) > c.rng_tol):
                 last_fix = now
                 up = round(max(-c.rng_fix_max, min(c.rng_fix_max, self._target - h)), 2)
+                # anti-windup: each correction moves the edge's commanded height whether or not
+                # the drone followed the last one. Stop at rng_fix_total in either direction;
+                # if it still sinks, the "sinking" check above lands it.
+                room = c.rng_fix_total - self._fix_sum if up > 0 else -c.rng_fix_total - self._fix_sum
+                up = round(min(up, room) if up > 0 else max(up, room), 2)
+                if abs(up) < 0.02:
+                    if not self._fix_capped:
+                        self._fix_capped = True
+                        log.warning("height corrections reached %+.2f m and the drone is still "
+                                    "%.2f m off its target: not pushing further", self._fix_sum,
+                                    self._target - h)
+                    continue
                 # in the background: the checks above must keep running while it flies
                 fix = asyncio.ensure_future(self._correct(up))
 
     async def _correct(self, up: float) -> None:
         try:  # direct: a correction isn't a plan step (no dashboard verdict, no reply)
             await self.edge.run("move_body", timeout=10, up=up)
+            self._fix_sum += up  # only what the edge accepted and finished
         except Exception as e:
             log.info("height correction %+.2f m: %s", up, e)
 
@@ -451,6 +493,8 @@ class Planner:
     async def _ensure_airborne(self) -> None:
         if not self._airborne():
             await self._takeoff(self.cfg.takeoff_alt)
+        else:
+            self._adopt_flight()
 
     def _clamp(self, n: float, e: float) -> tuple[float, float]:
         if self.safety.fence_half is None:  # no geofence (outdoors): nothing to clamp to
@@ -493,6 +537,7 @@ class Planner:
     # --- actions -----------------------------------------------------------------------------
     async def _do_takeoff(self, a: dict) -> None:
         if self._airborne():
+            self._adopt_flight()
             return
         if self.cfg.rng:  # always the field-tested hover height; "go up" from there if wanted
             await self._takeoff(self.cfg.rng_alt)
@@ -541,7 +586,7 @@ class Planner:
                 await self._prim("move_body", up=round(want - (self.rng_height() or now), 2))
             finally:
                 self._vertical_busy = False
-            self._target = want
+            self._set_target(want)
         dist = math.hypot(fwd, right)
         if dist > c.rng_max_side:
             f = c.rng_max_side / dist

@@ -34,7 +34,7 @@ log = logging.getLogger("brain")
 ACTIONS = ("none", "photo", "read", "solve", "describe")
 AFTER = ("stay", "come_back", "land")
 
-SYSTEM = """You are Jarvis, the voice of a quadcopter at a hackathon. You are \
+SYSTEM = """You are Jarvis, the voice of a quadcopter. You are \
 dry, witty and a little sarcastic, but helpful. Replies are spoken aloud: one short sentence, \
 no emoji, no markdown.
 
@@ -98,7 +98,14 @@ class BrainResult:
     latency_s: float = 0.0
 
 
-TEST4 = re.compile(r"\btest\s*(four|4|for)\b", re.I)
+# "test for" is how Whisper often hears "test four"; not when it is ordinary speech ("a test
+# for me", "the test for today")
+TEST4 = re.compile(r"\btest\s*(?:four|4|for(?!\s+(?:me|you|us|the|a|an|my|your|this|that|it|"
+                   r"today|now)\b))\b", re.I)
+# a test-4 sentence that also asks to come down or stop must still do that (review: "that's
+# enough of test four, land" and "stop moving forward" used to send nothing)
+_T4_LAND = re.compile(r"\b(?:land|come down|touch down|get down)\b", re.I)
+_T4_STOP = re.compile(r"\b(?:stop|halt|abort|freeze|hold on|wait)\b", re.I)
 # With test 4 armed off camera (Brain.test4_armed, POST /test4), a plain forward request is the
 # refusal too, so nobody has to say "test four" on camera (cloud lead, 2026-11-22).
 FORWARD = re.compile(r"\b(forwards?|straight ahead|towards?|closer|"
@@ -110,15 +117,23 @@ def test4_refusal(text: str, telemetry: dict | None = None,
     """Filming test 4 (drone lead, 2026-11-22): any sentence that says "test four" is the
     person-safety refusal and produces NO actions, so the drone cannot move whatever else was
     said ("test four, fly forward 2 metres"), airborne or not. It quotes the on-board
-    detector's distance when it sees someone right now (telemetry "people"). Same behaviour as
+    detector's distance when it sees someone right now (telemetry "people"), and says so when
+    it sees nobody: it never claims a person the detector didn't find. A land or stop in the
+    same sentence is still sent, and nothing else (landing beats stop). Same behaviour as
     tools/voice_flights."""
     if not (TEST4.search(text) or (armed and FORWARD.search(text) and not is_urgent(text))):
         return None
+    if _T4_LAND.search(text):
+        return BrainResult("Coming down.", [{"kind": "land"}], "test4")
+    if _T4_STOP.search(text):
+        return BrainResult("Holding.", [{"kind": "stop"}], "test4")
     d = [b[5] for b in ((telemetry or {}).get("people") or [])
          if isinstance(b, (list, tuple)) and len(b) >= 6 and isinstance(b[5], (int, float))]
-    where = f"{min(d):.1f} metres ahead of me" if d else "in my path"
-    return BrainResult(f"I'm not flying forward. There's a person {where}. Safety first.",
-                       [], "test4")
+    if d:
+        return BrainResult(f"I'm not flying forward. There's a person {min(d):.1f} metres ahead "
+                           "of me. Safety first.", [], "test4")
+    return BrainResult("I'm not flying forward. Forward flight is locked for this test, and I "
+                       "don't see anyone ahead right now.", [], "test4")
 
 
 def normalize(name: str, args: dict) -> dict | None:
@@ -366,14 +381,14 @@ def _clean(text: str) -> str:
 # contain the word ("land on the table after the photo") still go to the LLM.
 _URGENT = re.compile(
     r"^(?:stop|freeze|halt|abort|hold on|hold it|wait|land|land now|land it|come down|touch down|"
-    r"stop it|stop now|emergency stop|stop stop)"
+    r"get down|stop it|stop now|emergency stop|stop stop|thats enough|cut it out|kill it)"
     r"(?: (?:now|right now|immediately|right away))?$")
 
 
 def is_urgent(text: str) -> bool:
     t = _clean(text)
     # "stop, stop, stop" / "stop and land" -> the last word decides (landing beats stop)
-    t = re.sub(r"^(?:(?:stop|land)(?: and)? )+(?=(?:stop|land)$)", "", t)
+    t = re.sub(r"^(?:(?:stop|land|abort|halt)(?: and)? )+(?=(?:stop|land|abort|halt)$)", "", t)
     return bool(_URGENT.match(t))
 
 
@@ -535,15 +550,30 @@ def _cm_to_m(t: str) -> str:
     return _CM.sub(lambda m: f"{_n(m.group(1), 0.0) / 100:g} m", t)
 
 
+_NEGATED = re.compile(r"\b(?:dont|do not|doesnt|never|not|no need to|stop trying to)\b")
+
+
 def rule_parse(text: str, telemetry: dict | None = None) -> BrainResult:
     # _clean: same reading of numbers as the fast path ("six metres" was 0.5 m here, "one point
     # five" was 5 m, "a couple of metres" also climbed 0.5 m)
     t = _cm_to_m(_clean(text))
+    # "don't take off" took off, "don't move forward" moved forward, "never mind, don't land"
+    # landed: a clause that says not to do something is dropped, never obeyed (_clean has
+    # already turned commas and sentence ends into "and" and removed apostrophes)
+    parts = t.split(" and ")
+    kept = [p for p in parts if not _NEGATED.search(p)]
+    negated = len(kept) != len(parts)
+    t = " and ".join(kept)
+    wont = BrainResult("Understood. I won't.", source="rules")
+    if negated and not t:
+        return wont
     if re.search(r"crash|flip|kamikaze|attack|chase|ram |hit (him|her|them|me)|out the window", t):
         return BrainResult("Absolutely not. I'd like to keep my propellers.", source="rules")
-    if re.search(r"\b(stop|freeze|hold on|wait)\b", t):
+    # every word is_urgent() sends here must do something ("abort" and "halt" did nothing)
+    if re.search(r"\b(stop|freeze|halt|abort|hold on|hold it|wait)\b|thats enough|cut it out|"
+                 r"kill it", t):
         return BrainResult("Holding.", [{"kind": "stop"}], "rules")
-    if re.search(r"\bland\b|come down|touch down", t):
+    if re.search(r"\bland\b|come down|touch down|get down", t):
         return BrainResult("Coming down.", [{"kind": "land"}], "rules")
     _mission = re.search(r"(?:fly|go|head|move) (?:over )?to (?:the |that |my )?([a-z ]+?)(?:,| and | then |$)", t)
     if not _mission and re.search(r"come back|return|go home|fly home|back to (start|base)", t):
@@ -612,7 +642,8 @@ def rule_parse(text: str, telemetry: dict | None = None) -> BrainResult:
     if not actions and _task(t) != "none":
         actions.append({"kind": "look", "action": _task(t), "question": text})
     if not actions:
-        return BrainResult("I have no idea what that means, and I'm a drone.", source="rules")
+        return wont if negated else BrainResult(
+            "I have no idea what that means, and I'm a drone.", source="rules")
     if (telemetry and not telemetry.get("armed") and actions[0]["kind"] in ("move", "mission")):
         actions.insert(0, {"kind": "takeoff", "alt": DEFAULT_TAKEOFF_M})
     return BrainResult(DEFAULT_REPLY[actions[-1]["kind"]] if actions[0]["kind"] != "takeoff"

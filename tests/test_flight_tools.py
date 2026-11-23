@@ -51,3 +51,12 @@ def test_gps_profile_keeps_rangefinder_height_and_failsafes():
     assert g["GPS_AUTO_CONFIG"][0] == 0        # field 2026-11-22: "GPS 1 still configuring"
     for k in ("FS_GCS_ENABLE", "FS_EKF_ACTION", "FLTMODE6"):
         assert g[k] == PROFILE[k]
+
+
+def test_profile_sets_the_failsafes_the_pilot_layer_depends_on():
+    """Review: transmitter loss and the low-battery action were set nowhere. Every profile
+    (indoor, outdoor, GPS + rangefinder) carries them, so the preflight checks them too."""
+    from tools.fc_profile import profile_for
+    for prof in (profile_for(), profile_for(outdoor=True), profile_for(gps=True)):
+        assert prof["FS_THR_ENABLE"][0] == 3 and prof["BATT_FS_LOW_ACT"][0] == 1
+        assert prof["BATT_LOW_VOLT"][0] == 10.5 and prof["FS_GCS_ENABLE"][0] == 5

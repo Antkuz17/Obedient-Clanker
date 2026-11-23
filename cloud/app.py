@@ -367,7 +367,7 @@ def create_app(s: Settings | None = None, ai: AI | None = None) -> FastAPI:
         yield
         await ai.aclose()
 
-    app = FastAPI(title="Hope Drone cloud", lifespan=lifespan)
+    app = FastAPI(title="Obedient Clanker cloud", lifespan=lifespan)
     app.state.hub = hub
 
     @app.get("/", response_class=HTMLResponse)

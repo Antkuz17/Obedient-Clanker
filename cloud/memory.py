@@ -5,8 +5,8 @@
     hits = await mem.search("my keys")   # [{id, caption, n, e, alt, yaw, t, jpeg_url, score}]
 
 Captions come from the vision model (station.vision "caption"), embeddings from
-EMBED_MODEL. Vectors live in SQLite as float32 blobs and are searched with numpy: a hackathon
-has hundreds of frames, not millions, so no vector DB. Score = cosine similarity, plus a bonus
+EMBED_MODEL. Vectors live in SQLite as float32 blobs and are searched with numpy: a flying
+session has hundreds of frames, not millions, so no vector DB. Score = cosine similarity, plus a bonus
 when a query word appears in the caption (embeddings are fuzzy about small objects like keys),
 plus a small recency bonus so "where did I leave X" answers with the latest sighting.
 """

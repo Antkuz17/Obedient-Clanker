@@ -864,3 +864,72 @@ def test_stale_station_gap_never_fires_when_disarmed_or_in_pilot_land():
     srv._last_hb = time.monotonic() - 722.6
     srv.safety_tick(time.monotonic())
     assert srv.exec.failsafe is None
+
+
+# --- review fixes (2026-11-22) ------------------------------------------------------------------
+def test_gate_checks_even_a_small_forward_step_for_people():
+    """"forward 0.2" was below the old 0.2 m threshold: no person check, so repeating it crept
+    up to someone. Any forward travel is checked now; backing away still isn't."""
+    g = SafetyGate(SafetyConfig(**LIMITS))
+    near = Perception(person_m=0.6)
+    for fwd in (0.05, 0.1, 0.2):
+        assert "person" in g.check("move_body", {"fwd": fwd}, FLYING, True, near).reason, fwd
+    assert g.check("move_body", {"fwd": -0.2}, FLYING, True, near).ok
+    assert g.check("move_body", {"right": 0.2}, FLYING, True, near).ok
+    cfg = SafetyConfig(**LIMITS)
+    cfg.require_person_detector = True   # real drone, detector dead: no forward step at all
+    assert "detector" in SafetyGate(cfg).check("move_body", {"fwd": 0.1}, FLYING, True).reason
+
+
+class _FakeMav:
+    """Records what MavVehicle sends; no link."""
+    target_system = target_component = 1
+
+    def __init__(self):
+        self.sent = []
+        self.mav = self
+
+    def __getattr__(self, name):
+        if name.endswith("_send"):
+            return lambda *a: self.sent.append((name[:-5], a))
+        raise AttributeError(name)
+
+
+def _mav_on_ground(mode: str):
+    from edge import mav
+    v = mav.MavVehicle("udpin:127.0.0.1:0", gps=True)
+    v.m = _FakeMav()
+    v.s.connected, v.s.mode = True, mode
+    return v, mav
+
+
+def test_takeoff_does_not_arm_when_the_fc_refuses_guided(monkeypatch):
+    """The FC stayed in the pilot's AltHold (it refuses GUIDED with no position estimate) and the
+    edge armed it there anyway: props spinning on the ground until the takeoff timed out."""
+    v, mav = _mav_on_ground("ALT_HOLD")
+    monkeypatch.setattr(mav, "GUIDED_WAIT_S", 0.3)
+    v._takeoff(1.0)
+    M = mav.M
+    cmds = [a[2] for name, a in v.m.sent if name == "command_long"]
+    assert M.MAV_CMD_COMPONENT_ARM_DISARM not in cmds and M.MAV_CMD_NAV_TAKEOFF not in cmds
+    assert v.takeoff_failed and "GUIDED" in v.last_error
+
+
+def test_takeoff_arms_once_the_fc_reports_guided(monkeypatch):
+    v, mav = _mav_on_ground("ALT_HOLD")
+    monkeypatch.setattr(mav, "GUIDED_WAIT_S", 2.0)
+    M = mav.M
+
+    def fc():  # the FC: GUIDED shortly after the request, armed shortly after the arm command
+        time.sleep(0.2)
+        v.s.mode = "GUIDED"
+        while not any(n == "command_long" and a[2] == M.MAV_CMD_COMPONENT_ARM_DISARM
+                      for n, a in list(v.m.sent)):
+            time.sleep(0.02)
+        v.s.armed = True
+    import threading
+    threading.Thread(target=fc, daemon=True).start()
+    v._takeoff(1.0)
+    cmds = [a[2] for name, a in v.m.sent if name == "command_long"]
+    assert cmds.index(M.MAV_CMD_COMPONENT_ARM_DISARM) < cmds.index(M.MAV_CMD_NAV_TAKEOFF)
+    assert not v.takeoff_failed

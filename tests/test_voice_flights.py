@@ -60,8 +60,10 @@ async def test_test4_sends_nothing_even_in_flying_mode(rig):
     assert hub.edge.connected                           # ...although the link was up
     assert not sim.s.armed and (sim.s.n, sim.s.e, sim.s.alt) == (0.0, 0.0, 0.0)
     replies = [e["text"] for e in hub.events if e["kind"] == "reply"]
-    assert len(replies) == 3 and all("not flying forward" in t and "person" in t for t in replies)
-    assert any(e["kind"] == "alert" for e in hub.events)
+    # nobody is in front of the camera: it refuses, but never claims a person it didn't see
+    assert len(replies) == 3 and all("not flying forward" in t and "don't see anyone" in t
+                                     and "person" not in t for t in replies)
+    assert not any(e["kind"] == "alert" for e in hub.events)   # no PERSON AHEAD banner either
     await hub.command("rise and hover")                 # control: a real preset DOES send
     await asyncio.sleep(0.5)
     assert "takeoff" in sent
@@ -82,4 +84,5 @@ async def test_test4_quotes_a_real_detection(rig):
     feed.cancel()
     assert r["person_m"] == pytest.approx(2.3)
     assert "2.3 metres ahead" in [e["text"] for e in hub.events if e["kind"] == "reply"][-1]
+    assert any(e["kind"] == "alert" and "2.3 m ahead" in e["text"] for e in hub.events)
     assert sent == []
