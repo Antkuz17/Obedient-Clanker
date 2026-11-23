@@ -1,6 +1,6 @@
 # Status
 
-Last updated: 2026-11-22. Update this at the end of every work session. Open work is in
+Last updated: 2026-11-23. Update this at the end of every work session. Open work is in
 [TODO.md](TODO.md); the detailed session-by-session history is in git (`git log -- docs/STATUS.md`).
 
 ## What works
@@ -16,7 +16,7 @@ safety pilot on the transmitter):
 - QNX side, measured on the drone: priority plan, C watchdog (worst wake-up under 1 ms),
   supervisor restarts, fault tests with the drone disarmed ([qnx.md](qnx.md)).
 
-**In the simulator only** (`python -m station.dev`, 312 tests):
+**In the simulator only** (`python -m station.dev`, 349 tests):
 
 - The whole voice → brain → planner → gate → vehicle chain, including missions to a named
   object, closed-loop approach, visual memory and recall.
@@ -32,7 +32,30 @@ safety pilot on the transmitter):
   is GPS, the gate doesn't check flow, and there is no fallback to it.
 - Palm stop, the forward obstacle sensor's hardware, a public cloud deployment.
 
-## Latest changes: review fixes (2026-11-22)
+## Latest changes: everyday navigation (2026-11-23, cloud lead)
+
+`station/` only; no protocol or edge change (it uses the existing `goto`, `move_body`, `yaw`,
+`hover`). **Sim only: not flown.**
+
+| Say | Action | How it flies |
+|---|---|---|
+| "go north 3 m", "head south-west", "face east" | `compass {north, east, up, face}` | `goto` from the settled position; `yaw` absolute |
+| "go up to 1 m", "fly at 80 cm", "go higher / lower" | `height {alt}` / move up ±0.5 | rng: moves the rangefinder target (still capped at `rng_max_alt`) |
+| "hover for 5 seconds, then land" | `wait {seconds}` (≤ 60) | `hover`, then sleep |
+| "fly in a square / triangle / circle", "out and back" | `pattern {shape, size, side}` | corner-to-corner `move_body` legs (the edge builds them on its last target, so the shape closes); rng: shrunk so no leg is over 2 m |
+| "go back to where you were", "undo that", "…and come back" after a move | `retrace` | absolute `goto` to where the plan (or the last moving plan) started |
+| "do that again", "once more" | repeats the last flight plan | brain, no LLM |
+
+Also: the LLM is told to make every call in one reply (the reasoning model was returning one
+step, or none); it's asked once more when it returns nothing; its history records what each
+plan did; a `takeoff alt=N` while flying becomes `height`; with no key, the fast path runs before
+the rules. Rules fallback fixes: "go up to 3 metres" climbed 0.5 m; "…and come back the way
+you came" dropped the move. **Meaning change:** "1 metre left, then come back" now goes back
+1 m (retrace) instead of to the takeoff point; "come back" on its own is still home.
+Checked: 349 tests (`test_station.py`: sim flights of each shape, compass, height, retrace),
+and a probe of ~40 phrasings against the live Vultr LLM.
+
+## Review fixes (2026-11-22)
 
 **`edge/` and `tools/` rows need a SITL run and the drone lead's review before flying.**
 Not run: ArduPilot SITL, the real drone.
