@@ -164,7 +164,7 @@ async def test_sentences_still_go_to_the_llm(text):
     ("Move forward one meter and turn left 90 degrees.", [("fwd", 1.0), ("yaw_deg", -90.0)]),
     ("Jarvis, go back 50 centimetres please.", [("fwd", -0.5)]),
     ("Go up half a metre and turn around.", [("up", 0.5), ("yaw_deg", 360.0)]),
-    ("1 metre left, then come back", [("right", -1.0), ("home", None)]),
+    ("1 metre left, then come back", [("right", -1.0), ("retrace", None)]),  # back where it was, not the takeoff point
     ("turn right 45°", [("yaw_deg", 45.0)]),
     ("forward 1 metre then land", [("fwd", 1.0), ("land", None)])])
 async def test_simple_commands_skip_the_llm(text, want):
@@ -1579,3 +1579,194 @@ async def test_rng_height_corrections_cannot_wind_up(rig):
     ups = [u for op, u in sent if op == "move_body"]
     assert ups and sum(ups) == pytest.approx(p.cfg.rng_fix_total, abs=0.02)   # 3 x 0.15, then no more
     assert sim.state().armed and sim.state().alt < 1.3
+
+
+# --- everyday navigation: compass, height, wait, patterns, retrace, repeat (2026-11-23) -------
+SETTLE = 0.6  # s at 10x: the edge calls a move done within pos_tolerance, then it closes in
+@pytest.mark.parametrize("text, want", [
+    ("go north 3 metres", [("compass", {"north": 3.0, "east": 0.0, "face": None})]),
+    ("fly 5 metres to the west", [("compass", {"north": 0.0, "east": -5.0, "face": None})]),
+    ("face east", [("compass", {"north": 0.0, "east": 0.0, "face": 90.0})]),
+    ("turn to face the south-west", [("compass", {"face": 225.0})]),
+    ("go up to 1.5 metres", [("height", {"alt": 1.5})]),
+    ("fly at 80 centimetres", [("height", {"alt": 0.8})]),
+    ("rise to 1 metre", [("height", {"alt": 1.0})]),
+    ("go higher", [("move", {"up": 0.5})]),
+    ("a little lower", [("move", {"up": -0.5})]),
+    ("go 1 metre higher", [("move", {"up": 1.0})]),
+    ("hover for five seconds then land", [("wait", {"seconds": 5.0}), ("land", {})]),
+    ("wait a few seconds and come back", [("wait", {"seconds": 3.0}), ("home", {})]),
+    ("fly in a square", [("pattern", {"shape": "square", "size": None, "side": "right"})]),
+    ("fly a 3 metre square to the left", [("pattern", {"shape": "square", "size": 3.0, "side": "left"})]),
+    ("do a triangle 2 metres wide", [("pattern", {"shape": "triangle", "size": 2.0})]),
+    ("fly in a circle", [("pattern", {"shape": "circle"})]),
+    ("do a full circle", [("move", {"yaw_deg": 360.0})]),  # the filming spin, not a flown circle
+    ("go forward 2 metres and come back", [("move", {"fwd": 2.0}), ("retrace", {})]),
+    ("forward 3 metres and back", [("move", {"fwd": 3.0}), ("retrace", {})]),
+    ("go back to where you were", [("retrace", {})]),
+    ("undo that", [("retrace", {})]),
+    ("come back", [("home", {})]),  # alone it's still "come to me"
+    ("go north and then land", [("compass", {"north": 2.0}), ("land", {})]),
+])
+async def test_everyday_navigation_skips_the_llm(text, want):
+    ai = FakeAI({"content": "should not be asked", "tool_calls": []})
+    r = await Brain(ai).think(text, {"armed": True, "alt": 1.0})
+    assert ai.calls == [] and r.source == "fast", r
+    assert [a["kind"] for a in r.actions] == [k for k, _ in want]
+    for a, (_, fields) in zip(r.actions, want):
+        for k, v in fields.items():
+            assert a[k] == (pytest.approx(v) if isinstance(v, float) else v), (k, a)
+
+
+async def test_everyday_navigation_when_landed():
+    ai = FakeAI({"content": "should not be asked", "tool_calls": []})
+    r = await Brain(ai).think("fly at 1.2 metres", {"armed": False})
+    assert r.actions == [{"kind": "takeoff", "alt": 1.2}]
+    r = await Brain(ai).think("go north 2 metres", {"armed": False})
+    assert [a["kind"] for a in r.actions] == ["takeoff", "compass"]
+
+
+def test_rules_read_heights_compass_and_retrace():
+    """LLM down: "go up to 3 metres" used to climb 0.5 m."""
+    assert rule_parse("could you go up to 3 metres", {"armed": True}).actions == [
+        {"kind": "height", "alt": 3.0}]
+    a = rule_parse("please head 4 metres east", {"armed": True}).actions[0]
+    assert a["kind"] == "compass" and a["east"] == pytest.approx(4.0)
+    assert rule_parse("ok go back to where you were", {"armed": True}).actions == [
+        {"kind": "retrace"}]
+    assert rule_parse("could you go a bit higher", {"armed": True}).actions[0]["up"] == 0.5
+
+
+async def test_llm_new_tools_and_takeoff_while_flying_means_height():
+    ai = FakeAI({"content": "Up and around.", "tool_calls": [
+        tool_call("takeoff", alt=3.0), tool_call("compass", north=-2, face="west"),
+        tool_call("wait", seconds=500), tool_call("pattern", shape="circle", size=2, side="left"),
+        tool_call("pattern", shape="hexagon"), tool_call("retrace"), tool_call("height", alt=0)]})
+    r = await Brain(ai).think("go higher, then south 2, face west, ...", {"armed": True})
+    assert r.actions == [
+        {"kind": "height", "alt": 3.0},  # was takeoff alt=3, which the planner ignores in flight
+        {"kind": "compass", "north": -2.0, "east": 0.0, "up": 0.0, "face": 270.0},
+        {"kind": "wait", "seconds": 60.0},
+        {"kind": "pattern", "shape": "circle", "size": 2.0, "side": "left"},
+        {"kind": "retrace"}]
+    r = await Brain(ai).think("take off to 3 metres", {"armed": False})
+    assert r.actions[0] == {"kind": "takeoff", "alt": 3.0}  # landed: a real takeoff
+
+
+async def test_do_that_again_and_the_llm_sees_what_was_done():
+    ai = FakeAI({"content": "Sure.", "tool_calls": []})
+    b = Brain(ai)
+    r = await b.think("do that again", {"armed": True})
+    assert r.actions == [] and "haven't" in r.reply
+    await b.think("go left 2 metres and turn right", {"armed": True})
+    r = await b.think("do that again", {"armed": True})
+    assert [a["kind"] for a in r.actions] == ["move", "move"] and r.actions[0]["right"] == -2.0
+    r = await b.think("once more", {"armed": False})  # landed: takes off first
+    assert [a["kind"] for a in r.actions] == ["takeoff", "move", "move"]
+    assert ai.calls == []
+    assert "[did: move right=-2" in b.history[1]["content"]
+    await b.think("stop", {"armed": True})  # urgent: not a plan to repeat
+    r = await b.think("again", {"armed": True})
+    assert [a["kind"] for a in r.actions] == ["move", "move"]
+
+
+async def test_compass_move_and_face(rig):
+    sim, edge = rig
+    p, said, _ = make_planner(sim, edge)
+    await run_plan(p, [{"kind": "takeoff", "alt": 1.0},
+                       {"kind": "move", "yaw_deg": 90.0}])  # facing east: north is to its left
+    await run_plan(p, [{"kind": "compass", "north": 2.0, "east": 0.0, "up": 0.0, "face": 180.0}], 60)
+    await asyncio.sleep(SETTLE)
+    s = sim.state()
+    assert s.n == pytest.approx(2.0, abs=0.35) and s.e == pytest.approx(0.0, abs=0.35)
+    assert s.yaw == pytest.approx(180.0, abs=5)
+
+
+async def test_height_wait_and_retrace(rig):
+    sim, edge = rig
+    p, said, _ = make_planner(sim, edge)
+    await run_plan(p, [{"kind": "height", "alt": 1.5}])  # landed: takes off, then climbs
+    await asyncio.sleep(SETTLE)
+    assert sim.state().alt == pytest.approx(1.5, abs=0.2)
+    t0 = asyncio.get_running_loop().time()
+    await run_plan(p, [{"kind": "wait", "seconds": 0.5}])
+    assert asyncio.get_running_loop().time() - t0 >= 0.5 and p.log[-1] == "hover"
+    # out and back in one plan: back to where the plan started
+    await run_plan(p, [{"kind": "move", "fwd": 2.0}, {"kind": "retrace"}], 60)
+    await asyncio.sleep(SETTLE)
+    assert math.hypot(sim.state().n, sim.state().e) < 0.4
+    # "undo that": back to where the last plan that moved started
+    await run_plan(p, [{"kind": "move", "right": 2.0}], 60)
+    await run_plan(p, [{"kind": "retrace"}], 60)
+    await asyncio.sleep(SETTLE)
+    assert math.hypot(sim.state().n, sim.state().e) < 0.4
+
+
+async def test_retrace_with_nowhere_to_go(rig):
+    sim, edge = rig
+    p, said, _ = make_planner(sim, edge)
+    await run_plan(p, [{"kind": "retrace"}])
+    assert "nowhere to go back" in said[-1]
+
+
+@pytest.mark.parametrize("shape", ["square", "triangle", "circle", "out_and_back"])
+async def test_patterns_come_back_to_the_start(rig, shape):
+    sim, edge = rig
+    p, said, _ = make_planner(sim, edge)
+    await run_plan(p, [{"kind": "takeoff", "alt": 1.0}])
+    seen = []
+    poll = asyncio.create_task(_track(sim, seen))
+    await run_plan(p, [{"kind": "pattern", "shape": shape, "size": 2.0, "side": "left"}], 120)
+    await asyncio.sleep(SETTLE)
+    poll.cancel()
+    s = sim.state()
+    assert math.hypot(s.n, s.e) < 0.4, (shape, s.n, s.e)
+    far = max(seen, key=lambda q: math.hypot(*q))
+    top = 2.0 * math.sqrt(2) if shape == "square" else 2.0  # a square's far corner is a diagonal
+    assert top - 0.5 < math.hypot(*far) < top + 0.4  # it really went out that far
+    assert all(e <= 0.4 for _, e in seen)  # "left" of a drone facing north is west
+
+
+async def _track(sim, seen):
+    while True:
+        s = sim.state()
+        seen.append((s.n, s.e))
+        await asyncio.sleep(0.05)
+
+
+async def test_rng_pattern_is_shrunk_to_the_field_cap(rig):
+    sim, edge = rig
+    p, said = rng_planner(sim, edge)  # rng_max_side 2 m, as flown
+    await run_plan(p, [{"kind": "takeoff"}])
+    await run_plan(p, [{"kind": "pattern", "shape": "square", "size": 4.0, "side": "right"}], 120)
+    assert any("keep the square to 2.0" in s for s in said)
+    assert not any("at a time out here" in s for s in said)  # no leg hit the per-command cap
+    await asyncio.sleep(SETTLE)
+    assert math.hypot(sim.state().n, sim.state().e) < 0.4
+    await run_plan(p, [{"kind": "height", "alt": 2.0}])  # past what the rangefinder holds
+    assert "only lets me fly up to 1.0" in said[-1]
+    await run_plan(p, [{"kind": "land"}])
+
+
+def test_rules_keep_the_moves_before_coming_back():
+    a = rule_parse("go west 2 metres and come back the way you came", {"armed": True}).actions
+    assert [x["kind"] for x in a] == ["compass", "retrace"] and a[0]["east"] == pytest.approx(-2.0)
+
+
+async def test_llm_asked_again_when_it_returns_nothing():
+    class Flaky(FakeAI):
+        def __init__(self):
+            super().__init__(None)
+            self.n = 0
+
+        async def chat(self, messages, tools=None):
+            self.calls.append("chat")
+            self.n += 1
+            return ({"content": "", "tool_calls": []} if self.n == 1 else
+                    {"content": "West and back.", "tool_calls": [
+                        tool_call("compass", east=-2), tool_call("retrace")]})
+    ai = Flaky()
+    r = await Brain(ai).think("take a little trip west and come back the way you came",
+                              {"armed": True})
+    assert ai.calls == ["chat", "chat"] and r.source == "llm"
+    assert [a["kind"] for a in r.actions] == ["compass", "retrace"]

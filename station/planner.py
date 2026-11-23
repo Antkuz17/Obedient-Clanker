@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import logging
 import math
 import re
@@ -46,8 +47,32 @@ OnPhoto = Callable[[Frame, str], Awaitable[None]]
 
 POINTING = re.compile(r"point")
 # plans starting with one of these send a flight step first: the reply waits for its verdict
-DEFER_REPLY = ("takeoff", "move", "home", "stop", "land")
+DEFER_REPLY = ("takeoff", "move", "home", "stop", "land", "compass", "height", "pattern",
+               "retrace")
 SPIN_DPS = 30.0  # deg/s for a full turn: what tools/auto_hover --test spin flew
+# the running plan's {"start": (n, e, h), "moved": bool}: per asyncio task, because a stop or
+# land plan runs beside the plan it cancels
+_PLAN: contextvars.ContextVar[dict | None] = contextvars.ContextVar("plan", default=None)
+MOVE_OPS = ("move_body", "goto", "return_home")
+
+
+def pattern_points(shape: str, size: float, side: str) -> list[tuple[float, float]]:
+    """The corners of a pattern as (fwd, right) offsets from the start, in the order flown;
+    the last one is the start again. size = side, circle diameter, or out-and-back distance."""
+    sg = -1.0 if side == "left" else 1.0
+    s = size
+    if shape == "square":
+        return [(s, 0.0), (s, sg * s), (0.0, sg * s), (0.0, 0.0)]
+    if shape == "triangle":
+        return [(s, 0.0), (s / 2, sg * s * math.sqrt(3) / 2), (0.0, 0.0)]
+    if shape == "circle":  # an octagon through the start, centred size/2 to the side
+        r, n = s / 2, 8
+        return [(round(r * math.sin(2 * math.pi * k / n), 3),
+                 round(sg * r * (1 - math.cos(2 * math.pi * k / n)), 3)) for k in range(1, n)] + [
+                (0.0, 0.0)]
+    if shape == "out_and_back":
+        return [(s, 0.0), (0.0, 0.0)]
+    raise ValueError(f"unknown shape {shape}")
 
 
 class PlanAborted(Exception):
@@ -88,6 +113,8 @@ class PlannerConfig:
     rng_sink_s: float = 3.0        # ... for this long. Not "below target": it flies a 2 m leg
                                    # steadily 0.3-0.4 m under its target (field 02:06)
     rng_yaw_drift: float = 45.0    # deg: land if the heading drifts this far with no turn sent
+    pattern_size: float = 2.0      # m: a square's side / a circle's diameter when none is said
+    max_wait: float = 60.0         # s: longest "hover for N seconds"
 
 
 def compass(dn: float, de: float) -> str:
@@ -132,6 +159,7 @@ class Planner:
         self._our_land = False    # we sent LAND: the FC leaving GUIDED isn't the pilot
         self._fix_sum = 0.0       # net height corrections since the target was last set (m)
         self._fix_capped = False  # said once that the corrections hit rng_fix_total
+        self._retrace_to: tuple[float, float, float | None] | None = None  # where the last plan that moved started
 
     # --- public ------------------------------------------------------------------------------
     def submit(self, actions: list[dict], reply: str | None = None) -> asyncio.Task | None:
@@ -186,8 +214,24 @@ class Planner:
             self._reply = None
             await self.say(r)
 
+    def _pose(self) -> tuple[float, float, float | None] | None:
+        """(n, e, height) now; height is the rangefinder target in rng mode."""
+        if not self.tel:
+            return None
+        h = self._target if self.cfg.rng else self.tel.get("alt")
+        return self.tel.get("n", 0.0), self.tel.get("e", 0.0), h
+
     async def _run(self, actions: list[dict], reply: str | None = None) -> None:
         self._reply = reply
+        plan = {"start": self._pose(), "moved": False}
+        _PLAN.set(plan)
+        try:
+            await self._run_actions(actions)
+        finally:
+            if plan["moved"] and plan["start"] is not None:
+                self._retrace_to = plan["start"]
+
+    async def _run_actions(self, actions: list[dict]) -> None:
         try:
             for a in actions:
                 await getattr(self, f"_do_{a['kind']}")(a)
@@ -241,6 +285,8 @@ class Planner:
         if not ack["ok"]:
             raise CommandRejected(ack["reason"])
         self._accepted = True
+        if op in MOVE_OPS and (plan := _PLAN.get()) is not None:
+            plan["moved"] = True
         if self._reply:  # the edge took the first step: now "On it." is true (don't block on TTS)
             asyncio.ensure_future(self._flush_reply())
         if self.on_approved:
@@ -600,6 +646,101 @@ class Planner:
             dist = math.hypot(fwd, right)
         if a.get("yaw_deg"):
             await self._turn(a["yaw_deg"])
+
+    async def _do_compass(self, a: dict) -> None:
+        """North / east metres (world frame), then face a compass heading if asked. An absolute
+        goto from where it has stopped: a body move would need the heading, and telemetry's lags
+        the edge's target right after a turn (27 deg off in the sim)."""
+        await self._ensure_airborne()
+        north, east, up = a.get("north", 0.0), a.get("east", 0.0), a.get("up", 0.0)
+        dist = math.hypot(north, east)
+        if dist >= 0.05:
+            cap = self.cfg.rng_max_side if self.cfg.rng else None
+            if cap is not None and dist > cap:
+                north, east = north * cap / dist, east * cap / dist
+                await self.say(f"I'll keep it to {cap:.0f} metres at a time out here.")
+            await self._settle()
+            await self._goto(round(self.tel.get("n", 0.0) + north, 3),
+                             round(self.tel.get("e", 0.0) + east, 3))
+        if up:
+            await self._do_move({"up": up})
+        if a.get("face") is not None:
+            await self._face(a["face"])
+
+    async def _do_height(self, a: dict) -> None:
+        """To a height above the ground: the rangefinder target in rng mode, else the FC's."""
+        await self._ensure_airborne()
+        if self.cfg.rng:
+            now = self._target if self._target is not None else (self.rng_height() or self.cfg.rng_alt)
+        else:
+            # the edge calls a climb done within tolerance and relative moves build on its
+            # target: read the height once it has stopped, not while it's still coasting up
+            await self._settle()
+            now = self.tel.get("alt", 0.0)
+        up = round(a["alt"] - now, 2)
+        if abs(up) >= 0.05:
+            await self._do_move({"up": up})
+
+    async def _settle(self, timeout: float = 3.0) -> None:
+        """Wait (at most `timeout`) until telemetry says the drone has stopped moving."""
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            t = self.tel
+            if max(abs(t.get(k) or 0.0) for k in ("vn", "ve", "vd")) < 0.1:
+                return
+            await asyncio.sleep(0.1)
+
+    async def _do_wait(self, a: dict) -> None:
+        """Hover in place: stop whatever the edge is doing, then hold for the time asked."""
+        if self._airborne():
+            await self._prim("hover")
+        await asyncio.sleep(max(0.0, min(float(a.get("seconds", 0.0)), self.cfg.max_wait)))
+
+    async def _do_pattern(self, a: dict) -> None:
+        """A square / triangle / circle / out-and-back from here, ending back here. Sent as
+        corner-to-corner body moves: the edge builds each on its last *target* and heading (not
+        the measured position), so the shape closes even when a leg stops a little short."""
+        await self._ensure_airborne()
+        shape, side = a["shape"], a.get("side") or "right"
+        size = a.get("size") or self.cfg.pattern_size
+        legs = self._legs(pattern_points(shape, size, side))
+        longest = max(math.hypot(*leg) for leg in legs)
+        if self.cfg.rng and longest > self.cfg.rng_max_side:
+            # out here a command flies at most rng_max_side: shrink the shape, don't distort it
+            size *= self.cfg.rng_max_side / longest
+            legs = self._legs(pattern_points(shape, size, side))
+            if a.get("size"):  # they asked for a size: say it's smaller
+                await self.say(f"I'll keep the {shape.replace('_', ' ')} to "
+                               f"{size:.1f} metres out here.")
+        for fwd, right in legs:
+            await self._do_move({"fwd": round(fwd, 3), "right": round(right, 3)})
+
+    @staticmethod
+    def _legs(pts: list[tuple[float, float]]) -> list[tuple[float, float]]:
+        prev, legs = (0.0, 0.0), []
+        for p in pts:
+            legs.append((p[0] - prev[0], p[1] - prev[1]))
+            prev = p
+        return legs
+
+    async def _do_retrace(self, a: dict) -> None:
+        """Back to where this plan started if it has moved ("forward 2 m and come back"), else
+        to where the last plan that moved started ("undo that")."""
+        plan = _PLAN.get()
+        to = plan["start"] if plan and plan["moved"] else self._retrace_to
+        if to is None:
+            raise PlanAborted("I haven't been anywhere yet, so there's nowhere to go back to.")
+        if not self._airborne():
+            raise PlanAborted("I'm on the ground. Take off first and I'll go back.")
+        n, e, h = to
+        dist = math.hypot(n - self.tel.get("n", 0.0), e - self.tel.get("e", 0.0))
+        if self.cfg.rng and dist > self.cfg.rng_max_side:
+            raise PlanAborted(f"That's {dist:.1f} metres back, and out here I only fly "
+                              f"{self.cfg.rng_max_side:.0f} at a time. Say which way and how far.")
+        if dist >= 0.15:  # absolute goto: a relative move would add the last leg's shortfall
+            await self._goto(n, e)
+        if h is not None:  # rng: the rangefinder target; else the FC's height
+            await self._do_height({"alt": h})
 
     async def _turn(self, deg: float) -> None:
         """A full turn ("do a 360") is the edge's scan primitive (tools/auto_hover --test spin):

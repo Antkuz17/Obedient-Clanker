@@ -8,6 +8,12 @@ Action kinds (the command schema, PRD "Still to decide" #2):
 
   takeoff {alt}                       land {}            stop {}           home {}
   move    {fwd, right, up, yaw_deg}   body frame, metres / degrees, any subset
+  compass {north, east, up, face}     world frame: "go north 3 m", "face east" (face = heading
+                                      0-360, or None to keep the heading)
+  height  {alt}                       absolute height above the ground: "go up to 1 m"
+  wait    {seconds}                   hover in place: "hover for 5 seconds, then land"
+  pattern {shape, size, side}         square | triangle | circle | out_and_back, flown as moves
+  retrace {}                          back to where the last move started: "undo that"
   mission {target, action, question, after}
           fly to a named object: scan until found, stop ~1 m short, then do `action`
           action: none | photo | read | solve | describe;  after: stay | come_back | land
@@ -21,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 
@@ -33,12 +40,19 @@ log = logging.getLogger("brain")
 
 ACTIONS = ("none", "photo", "read", "solve", "describe")
 AFTER = ("stay", "come_back", "land")
+SHAPES = ("square", "triangle", "circle", "out_and_back")
+HEADINGS = {"north": 0.0, "north east": 45.0, "northeast": 45.0, "east": 90.0,
+            "south east": 135.0, "southeast": 135.0, "south": 180.0, "south west": 225.0,
+            "southwest": 225.0, "west": 270.0, "north west": 315.0, "northwest": 315.0}
+HIGHER_M = 0.5    # "go higher" / "a bit lower"
+MAX_WAIT_S = 60.0  # longest "hover for N seconds"
 
 SYSTEM = """You are Jarvis, the voice of a quadcopter. You are \
 dry, witty and a little sarcastic, but helpful. Replies are spoken aloud: one short sentence, \
 no emoji, no markdown.
 
-Turn the user's request into tool calls, in order. Rules:
+Turn the user's request into tool calls, in order. Make ALL the calls for the whole request \
+in this one reply: the drone runs them one after another, and you never get a second turn. Rules:
 - Distances in metres, angles in degrees. "a bit" = 0.5 m. "turn around", "spin around", "do a 360", "a full turn" = yaw_deg 360 (one full turn); "face the other way" / "turn back" = 180.
 - Positive fwd = forward, positive right = right, positive up = up, positive yaw = clockwise.
 - Flying to a named thing ("the door", "the red poster") is a mission, not a move.
@@ -50,6 +64,19 @@ Turn the user's request into tool calls, in order. Rules:
 flying area or distance limit. Its safety system on board still checks every move. If a request is \
 dangerous to people or the drone (crash into something, flip, chase people), make NO tool \
 call and refuse with attitude.
+- Compass directions ("go north 3 metres", "head south-west", "face east") are compass, \
+never move. North and east are positive; south and west negative. "Go / head / fly <direction>" \
+with no distance flies 2 m that way; only "face" / "turn to" just turns.
+- A height ("go up to 1 metre", "fly at 1.5 metres", "go to 2 metres high") is height. \
+"Higher" / "lower" with no number = move up / down 0.5. Never call takeoff while flying.
+- "Hover / wait for N seconds" is wait. A square, triangle or circle is pattern (size = side, \
+or diameter for a circle; default 2 m); "go out N metres and come back" is pattern out_and_back.
+- retrace returns to where this request started if it has moved, else to where the last \
+move started. After moves in the same request, "come back", "return", "go back to where you \
+started", "the way you came" is retrace: "fly 2 m forward, 3 m right, then go back to where \
+you started" = move, move, retrace. Alone, "go back to where you were" / "undo that" is \
+retrace, but a bare "go back" / "back up" means move backwards (fwd -1), and "come home" / \
+"return to the start" is home.
 - If the drone is landed and they ask for a move or mission, call takeoff first (1.0 m).
 - Chit-chat: no tool call, just answer.
 Current drone state: {state}"""
@@ -70,6 +97,21 @@ TOOLS = [
     _tool("move", "Relative move in the drone's own frame, then an optional turn.",
           {"fwd": _num, "right": _num, "up": _num,
            "yaw_deg": {**_num, "description": "turn, clockwise positive"}}),
+    _tool("compass", "Move by compass direction and/or turn to face a compass heading.",
+          {"north": {**_num, "description": "metres north (negative = south)"},
+           "east": {**_num, "description": "metres east (negative = west)"},
+           "up": _num,
+           "face": {**_num, "description": "heading to face: 0 north, 90 east, 180 south, 270 west"}}),
+    _tool("height", "Climb or descend to an absolute height above the ground.",
+          {"alt": {**_num, "description": "metres above the ground"}}, ["alt"]),
+    _tool("wait", "Hover in place for some seconds before the next step.",
+          {"seconds": _num}, ["seconds"]),
+    _tool("pattern", "Fly a shape from where it is, ending back at the start.",
+          {"shape": {"type": "string", "enum": list(SHAPES)},
+           "size": {**_num, "description": "metres: side, circle diameter, or out-and-back distance"},
+           "side": {"type": "string", "enum": ["left", "right"],
+                    "description": "which way it turns (default right)"}}, ["shape"]),
+    _tool("retrace", "Go back to where the drone was before its last move.", {}),
     _tool("mission", "Fly to a named object, then optionally do something there.",
           {"target": {"type": "string", "description": "the object, e.g. 'door', 'red poster'"},
            "action": {"type": "string", "enum": list(ACTIONS)},
@@ -87,7 +129,12 @@ DEFAULT_REPLY = {
     "takeoff": "Lifting off.", "land": "Coming down.", "stop": "Holding.",
     "home": "Heading home.", "move": "On it.", "mission": "On my way.",
     "look": "Let me have a look.", "recall": "Let me think back.",
+    "compass": "On it.", "height": "Changing height.", "wait": "Hovering.",
+    "pattern": "Here goes.", "retrace": "Going back.",
 }
+# plans that fly: "do that again" repeats the last one of these
+FLIGHT_KINDS = ("takeoff", "move", "home", "compass", "height", "wait", "pattern", "retrace",
+                "mission")
 
 
 @dataclass
@@ -155,6 +202,34 @@ def normalize(name: str, args: dict) -> dict | None:
         a = {"kind": "move", "fwd": f("fwd"), "right": f("right"), "up": f("up"),
              "yaw_deg": f("yaw_deg")}
         return a if any(a[k] for k in ("fwd", "right", "up", "yaw_deg")) else None
+    if name == "compass":
+        face = args.get("face")
+        if isinstance(face, str):  # "north" instead of 0
+            face = HEADINGS.get(face.strip().lower().replace("-", " "))
+        try:
+            face = None if face is None or face == "" else float(face) % 360.0
+        except (TypeError, ValueError):
+            face = None
+        a = {"kind": "compass", "north": f("north"), "east": f("east"), "up": f("up"),
+             "face": face}
+        return a if any(a[k] for k in ("north", "east", "up")) or face is not None else None
+    if name == "height":
+        alt = f("alt", -1.0)
+        return {"kind": "height", "alt": alt} if alt > 0 else None
+    if name == "wait":
+        s = f("seconds")
+        return {"kind": "wait", "seconds": min(s, MAX_WAIT_S)} if s > 0 else None
+    if name == "pattern":
+        shape = str(args.get("shape") or "").strip().lower().replace(" ", "_").replace("-", "_")
+        if shape not in SHAPES:
+            return None
+        size = f("size") or None
+        if size is not None and size <= 0:
+            return None
+        side = "left" if str(args.get("side") or "").lower() == "left" else "right"
+        return {"kind": "pattern", "shape": shape, "size": size, "side": side}
+    if name == "retrace":
+        return {"kind": "retrace"}
     if name == "mission":
         target = str(args.get("target") or "").strip()
         if not target:
@@ -180,11 +255,38 @@ def state_summary(tel: dict | None) -> str:
             f"battery={tel.get('battery_v', 0):.1f} V")
 
 
+def did(actions: list[dict]) -> str:
+    """What a plan was, for the LLM's history: '[did: move fwd=2 | wait seconds=5]'. Without it
+    the LLM only saw its own spoken lines and couldn't tell what "the same but left" was."""
+    if not actions:
+        return ""
+    parts = []
+    for a in actions:
+        args = " ".join(f"{k}={v:g}" if isinstance(v, float) else f"{k}={v}"
+                        for k, v in a.items() if k != "kind" and v not in (0, 0.0, None, ""))
+        parts.append(f"{a['kind']} {args}".strip())
+    return " [did: " + " | ".join(parts) + "]"
+
+
+AGAIN = re.compile(r"(?:(?:do|try) (?:that|it|this|the same(?: thing)?) )?(?:again|one more time|"
+                   r"once more)|repeat(?: that| it| the last (?:one|move|command))?|same again|"
+                   r"(?:do )?the same(?: thing)? again|encore")
+
+
 class Brain:
     def __init__(self, ai: AI | None):
         self.ai = ai
         self.history: list[dict] = []  # last few user/assistant turns, for "do that again"
         self.test4_armed = False  # filming test 4: plain "move forward" is refused, nothing sent
+        self.last_flight: list[dict] = []  # the last plan that flew: "do that again"
+
+    def _remember(self, text: str, r: BrainResult) -> BrainResult:
+        self.history += [{"role": "user", "content": text},
+                         {"role": "assistant", "content": r.reply + did(r.actions)}]
+        acts = [a for a in r.actions if a["kind"] != "takeoff"]  # "again" while flying: no takeoff
+        if acts and all(a["kind"] in FLIGHT_KINDS for a in acts):
+            self.last_flight = [dict(a) for a in acts]
+        return r
 
     async def think(self, text: str, telemetry: dict | None = None) -> BrainResult:
         text = text.strip()
@@ -192,33 +294,36 @@ class Brain:
             return BrainResult("I didn't catch that.", source="rules")
         if (r := test4_refusal(text, telemetry, self.test4_armed)) is not None:  # before anything that can fly
             return r
-        if self.ai is None or is_urgent(text):
+        if is_urgent(text):
             return rule_parse(text, telemetry)  # urgent: skip the LLM round trip (~0.7 s)
+        if AGAIN.fullmatch(_clean(text)):
+            if not self.last_flight:
+                return BrainResult("Do what again? I haven't flown anything yet.", source="fast")
+            acts = [dict(a) for a in self.last_flight]
+            if telemetry and not telemetry.get("armed"):
+                acts.insert(0, {"kind": "takeoff", "alt": DEFAULT_TAKEOFF_M})
+            return self._remember(text, BrainResult("Once more, then.", acts, "fast"))
+        if self.ai is None:  # no key: the strict fast path, then the looser rules
+            return self._remember(text, fast_parse(text, telemetry) or rule_parse(text, telemetry))
         if r := fast_parse(text, telemetry):  # plain "forward 1 m, turn left": no LLM either
-            self.history += [{"role": "user", "content": text},
-                             {"role": "assistant", "content": r.reply}]
-            return r
+            return self._remember(text, r)
         msgs = [{"role": "system", "content": SYSTEM.replace("{state}", state_summary(telemetry))},
                 *self.history[-6:], {"role": "user", "content": text}]
-        try:
-            m = await self.ai.chat(msgs, tools=TOOLS)
-        except MissingKey:
-            return rule_parse(text, telemetry)
-        except Exception as e:  # network, 5xx, bad json: never leave the user hanging
-            log.warning("LLM failed (%s); using rules", e)
-            r = rule_parse(text, telemetry)
-            return r
-        actions = []
-        for tc in m.get("tool_calls") or []:
-            fn = tc.get("function", {})
+        for attempt in (1, 2):
             try:
-                args = json.loads(fn.get("arguments") or "{}")
-            except json.JSONDecodeError:
-                args = {}
-            if a := normalize(fn.get("name", ""), args if isinstance(args, dict) else {}):
-                actions.append(a)
-        reply = (m.get("content") or "").strip()
-        reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.S).strip()
+                m = await self.ai.chat(msgs, tools=TOOLS)
+            except MissingKey:
+                return rule_parse(text, telemetry)
+            except Exception as e:  # network, 5xx, bad json: never leave the user hanging
+                log.warning("LLM failed (%s); using rules", e)
+                r = rule_parse(text, telemetry)
+                return r
+            actions, reply = self._read_llm(m, telemetry)
+            if reply or actions:
+                break
+            # the reasoning model sometimes returns nothing at all (1 in 2 for "take a little
+            # trip west and come back the way you came", 2026-11-23); a second ask usually works
+            log.info("LLM returned nothing (attempt %d)", attempt)
         if not reply and not actions:
             # the LLM said nothing and planned nothing ("can you fly?" got "Hmm." in the field):
             # the rules may still know it; if not, say what it can do instead of a shrug
@@ -229,9 +334,29 @@ class Brain:
                      "'take a photo' or 'land'.")
         if not reply:
             reply = DEFAULT_REPLY[actions[0]["kind"]]
-        self.history += [{"role": "user", "content": text},
-                         {"role": "assistant", "content": reply}]
-        return BrainResult(reply, actions, "llm", self.ai.last_latency.get("chat", 0.0))
+        return self._remember(text, BrainResult(reply, actions, "llm",
+                                                self.ai.last_latency.get("chat", 0.0)))
+
+    @staticmethod
+    def _read_llm(m: dict, telemetry: dict | None) -> tuple[list[dict], str]:
+        actions = []
+        for tc in m.get("tool_calls") or []:
+            fn = tc.get("function", {})
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+            except json.JSONDecodeError:
+                args = {}
+            args = args if isinstance(args, dict) else {}
+            if a := normalize(fn.get("name", ""), args):
+                # "go higher" while flying came back as takeoff alt=3, which the planner ignores
+                # when airborne: a takeoff to a height while flying means go to that height
+                if (a["kind"] == "takeoff" and args.get("alt") and telemetry
+                        and telemetry.get("armed")):
+                    a = {"kind": "height", "alt": a["alt"]}
+                actions.append(a)
+        reply = (m.get("content") or "").strip()
+        reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.S).strip()
+        return actions, reply
 
 
 # --- rule fallback ----------------------------------------------------------------------------
@@ -424,6 +549,48 @@ _F_HOME = re.compile(r"come back(?: here| to me| home| over here| to the start)?
 _F_LAND = re.compile(r"(?:land|come down|touch down|set down|set it down)(?: now| here| it| right here| please)?")
 _F_HOLD = re.compile(r"hover(?: there| here| in place)?|stay(?: there| here| put| still| where you are)?|hold(?: position| still| there| it there)|wait there")
 _F_FLY = re.compile(r"fly|start flying|get flying|go fly")
+# compass ("go north 3 m", "5 m to the south east", "face west"); _clean has made "north-east"
+# "north east"
+_F_CDIR = r"(north(?: ?east| ?west)?|south(?: ?east| ?west)?|east|west)(?:wards?)?"
+_F_CMOVE1 = re.compile(_FVERB + r"(?:to the |towards? the |due )?" + _F_CDIR + r" (?:by |for )?"
+                       + _FNUM + _FUNIT)
+_F_CMOVE2 = re.compile(_FVERB + _FNUM + _FUNIT + r" (?:to the |towards? the |due )?" + _F_CDIR)
+_F_CBARE = re.compile(_FVERB + r"(?:to the |towards? the |due )?" + _F_CDIR)
+_F_FACE = re.compile(r"(?:face|turn to face|turn|point|look|rotate|yaw)(?: (?:to|towards))?"
+                     r"(?: the)? " + _F_CDIR)
+# an absolute height ("go up to 1 metre", "fly at 1.5 m", "descend to 80 cm", "hover at 1 m")
+_F_HEIGHT = re.compile(r"(?:(?:go|fly|climb|rise|descend|drop|come|get|move|hover|stay|hold|"
+                       r"level off)(?: (?:up|down|back))? )?(?:to|at) (?:a height of |an "
+                       r"altitude of )?" + _FNUM + _FUNIT + r"(?: (?:high|up|off the ground|"
+                       r"above the ground|altitude|height|in the air))?")
+_F_HIGHER = re.compile(r"(?:(?:go|fly|get|move|come|climb|drop|rise|sink) )?(?:a (?:little )?bit "
+                       r"|a little |slightly |(?:" + _FNUM + _FUNIT + r") )?(higher|lower)"
+                       r"(?: (?:a (?:little )?bit|a little|slightly))?")
+_F_WAIT = re.compile(r"(?:hover|wait|stay|hold(?: position)?|pause|sit tight|stay put|hang)"
+                     r"(?: (?:there|here|in place|still|right there))?(?: for)? "
+                     r"(\d+(?:\.\d+)?|one|a few|a couple of|a couple) (?:seconds?|secs?|s)")
+_F_SHAPE = re.compile(r"(?:(?:fly|do|make|draw|trace|go|move)(?: (?:in|around in|around|round "
+                      r"in))? )?(?:a |an )?(?:" + _FNUM + _FUNIT + r" )?(square|box|triangle|"
+                      r"circle)(?: (?:of |with sides of |about |with a diameter of |thats )?"
+                      + _FNUM + _FUNIT + r"(?: (?:wide|across|big|sides?|on each side|each "
+                      r"side|diameter))?)?(?: (?:to|on|towards) (?:the |your )?(left|right))?")
+_F_CIRCLE2 = re.compile(r"circle(?: around)?(?: (?:to|on) (?:the |your )?(left|right))?")
+_F_RETRACE = re.compile(
+    r"(?:go |come |fly |head |get )?back (?:to )?where you (?:were|came from|just were)|"
+    r"(?:come|go|fly|head) back the (?:same )?way you came|retrace(?: your steps)?|"
+    r"undo(?: that| it| the last (?:one|move))?|take that back|reverse that|"
+    r"(?:go |come )?back to your last (?:spot|position|place)")
+# after a move in the same sentence, these mean "back to where you started this": "go forward
+# 2 m and come back" used to fly to the takeoff point, "forward 3 m and back" flew back 2 m
+_F_BACKAGAIN = re.compile(r"(?:come|go|fly|head) back|back(?: again)?")
+_SHAPE_NAMES = {"square": "square", "box": "square", "triangle": "triangle", "circle": "circle"}
+_WAIT_WORDS = {"one": 1.0, "a few": 3.0, "a couple of": 2.0, "a couple": 2.0}
+
+
+def _compass_move(word: str, d: float) -> dict:
+    b = math.radians(HEADINGS[word])
+    return {"kind": "compass", "north": round(d * math.cos(b), 3),
+            "east": round(d * math.sin(b), 3), "up": 0.0, "face": None}
 _F_SPLIT = re.compile(r" (?:and then|then|and|after that) ")
 
 
@@ -455,8 +622,62 @@ def fast_parse(text: str, telemetry: dict | None = None) -> BrainResult | None:
             alt = _fdist(m.group(1), m.group(2)) if m.group(1) else DEFAULT_TAKEOFF_M
             if not 0.3 <= alt <= 5.0:
                 return None
-            if not any(a["kind"] == "takeoff" for a in actions):
+            if airborne and m.group(1) and not re.match(r"take ?off|lift off|launch", c):
+                # "rise to 1 metre" while flying: go to that height
+                actions.append({"kind": "height", "alt": alt})
+            elif not any(a["kind"] == "takeoff" for a in actions):
                 actions.append({"kind": "takeoff", "alt": alt})
+            continue
+        if m := _F_HEIGHT.fullmatch(c):
+            alt = _fdist(m.group(1), m.group(2))
+            if not 0.3 <= alt <= 5.0:
+                return None  # too low or too high to be a hover height: the LLM can say so
+            actions.append({"kind": "takeoff", "alt": alt} if landed and not actions
+                           else {"kind": "height", "alt": alt})
+            continue
+        if m := _F_HIGHER.fullmatch(c):
+            d = _fdist(m.group(1), m.group(2)) if m.group(1) else HIGHER_M
+            if d <= 0 or (not airborne and not actions):
+                return None  # "go higher" on the ground: the LLM can say it's landed
+            mv["up"] = d if m.group(3) == "higher" else -d
+            actions.append(mv)
+            continue
+        if m := _F_WAIT.fullmatch(c):
+            n = m.group(1)
+            s = _WAIT_WORDS[n] if n in _WAIT_WORDS else float(n)
+            if not 0 < s <= MAX_WAIT_S:
+                return None
+            actions.append({"kind": "wait", "seconds": s})
+            continue
+        moved = any(a["kind"] in ("move", "compass", "height") and any(
+            a.get(k) for k in ("fwd", "right", "up", "north", "east", "alt")) for a in actions)
+        if _F_RETRACE.fullmatch(c) or (moved and _F_BACKAGAIN.fullmatch(c)):
+            actions.append({"kind": "retrace"})
+            continue
+        if (m := _F_SHAPE.fullmatch(c)) or (m2 := _F_CIRCLE2.fullmatch(c)):
+            if m:
+                num, unit = (m.group(1), m.group(2)) if m.group(1) else (m.group(4), m.group(5))
+                size = _fdist(num, unit) if num else None
+                shape, side = _SHAPE_NAMES[m.group(3)], m.group(6) or "right"
+            else:
+                size, shape, side = None, "circle", m2.group(1) or "right"
+            if size is not None and not 0 < size <= 20:
+                return None
+            actions.append({"kind": "pattern", "shape": shape, "size": size, "side": side})
+            continue
+        if m := _F_FACE.fullmatch(c):
+            actions.append({"kind": "compass", "north": 0.0, "east": 0.0, "up": 0.0,
+                            "face": HEADINGS[m.group(1)]})
+            continue
+        if (m := _F_CMOVE1.fullmatch(c)) or (m2 := _F_CMOVE2.fullmatch(c)):
+            word, d = ((m.group(1), _fdist(m.group(2), m.group(3))) if m
+                       else (m2.group(3), _fdist(m2.group(1), m2.group(2))))
+            if d <= 0:
+                return None
+            actions.append(_compass_move(word, d))
+            continue
+        if (m := _F_CBARE.fullmatch(c)) and len(clauses) > 1:  # "go north then land": one leg
+            actions.append(_compass_move(m.group(1), BARE_MOVE_M))
             continue
         if _F_HOLD.fullmatch(c):
             # "rise and hover", "go left 2 m and stay there": it holds after a step anyway.
@@ -535,7 +756,7 @@ def fast_parse(text: str, telemetry: dict | None = None) -> BrainResult | None:
     if any(a["kind"] == "land" for a in actions[:-1]):
         return None  # "land and then go forward": odd, the LLM can sort it out
     if (telemetry and not telemetry.get("armed")
-            and actions[0]["kind"] in ("move", "home")):
+            and actions[0]["kind"] in ("move", "home", "compass", "pattern")):
         actions.insert(0, {"kind": "takeoff", "alt": DEFAULT_TAKEOFF_M})
     reply = DEFAULT_REPLY[actions[0]["kind"]] if len(actions) == 1 else "On it."
     return BrainResult(reply, actions, "fast")
@@ -575,6 +796,15 @@ def rule_parse(text: str, telemetry: dict | None = None) -> BrainResult:
         return BrainResult("Holding.", [{"kind": "stop"}], "rules")
     if re.search(r"\bland\b|come down|touch down|get down", t):
         return BrainResult("Coming down.", [{"kind": "land"}], "rules")
+    # "come back the way you came" isn't home; after moves in the same sentence it comes last
+    # ("go west 2 m and come back the way you came" used to drop the move)
+    retrace = False
+    if m := _F_RETRACE.search(t):
+        t = (t[:m.start()] + t[m.end():]).strip()
+        if not re.search(r"\b(?:forward|ahead|back|left|right|up|down|north|south|east|west|"
+                         r"higher|lower)\b", t):
+            return BrainResult("Going back.", [{"kind": "retrace"}], "rules")
+        retrace = True
     _mission = re.search(r"(?:fly|go|head|move) (?:over )?to (?:the |that |my )?([a-z ]+?)(?:,| and | then |$)", t)
     if not _mission and re.search(r"come back|return|go home|fly home|back to (start|base)", t):
         return BrainResult("Heading home.", [{"kind": "home"}], "rules")
@@ -590,6 +820,15 @@ def rule_parse(text: str, telemetry: dict | None = None) -> BrainResult:
     if re.search(r"(where|what|wherever) i'?m pointing|pointing at", t):
         actions.append({"kind": "mission", "target": "where I'm pointing", "action": _task(t),
                         "question": text, "after": "stay"})
+    elif not actions and (m := re.search(
+            r"\b(?:go|fly|climb|rise|descend|drop|get|come|hover|stay|move)(?: (?:up|down))? "
+            r"(?:to|at) " + _NUM + r" ?m\b", t)):
+        # "go up to 3 metres" is a height, not "up" + a default 0.5 m (it used to climb 0.5)
+        actions.append({"kind": "height", "alt": _n(m.group(1), DEFAULT_TAKEOFF_M)})
+    elif m := re.search(r"\b" + _F_CDIR + r" (?:by |for )?" + _NUM + r" ?m\b|" + _NUM +
+                        r" ?m (?:to the |due )?" + _F_CDIR, t):
+        word, num = (m.group(1), m.group(2)) if m.group(1) else (m.group(4), m.group(3))
+        actions.append(_compass_move(word, _n(num, BARE_MOVE_M)))
     elif m := _mission:
         target = m.group(1).strip()
         after = "come_back" if re.search(r"come back|return", t) else "stay"
@@ -626,6 +865,8 @@ def rule_parse(text: str, telemetry: dict | None = None) -> BrainResult:
                 mv["up"] += d
             elif word == "down":
                 mv["up"] -= d
+        if not mv["up"] and (m := re.search(r"\b(higher|lower)\b", td)):
+            mv["up"] = HIGHER_M if m.group(1) == "higher" else -HIGHER_M
         if re.search(r"turn around|spin around|360|three sixty|full (?:turn|spin|circle)", t):
             mv["yaw_deg"] = 360.0
         elif re.search(r"turn back|other way|180|one eighty", t):
@@ -644,6 +885,8 @@ def rule_parse(text: str, telemetry: dict | None = None) -> BrainResult:
     if not actions:
         return wont if negated else BrainResult(
             "I have no idea what that means, and I'm a drone.", source="rules")
+    if retrace:
+        actions.append({"kind": "retrace"})
     if (telemetry and not telemetry.get("armed") and actions[0]["kind"] in ("move", "mission")):
         actions.insert(0, {"kind": "takeoff", "alt": DEFAULT_TAKEOFF_M})
     return BrainResult(DEFAULT_REPLY[actions[-1]["kind"]] if actions[0]["kind"] != "takeoff"
