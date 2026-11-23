@@ -1,12 +1,10 @@
-# Hope Drone Don't Go Kaboom
+# Obedient Clanker
 
 A voice-controlled drone with a personality. You talk to it like Jarvis ("rise and do a 360",
 "go two metres to the left and take a photo", "land") and it flies, answers back, and refuses
-anything unsafe. Built at Hack Western 13 (Nov 20–22, 2026).
+anything unsafe.
 
 > Edge for reflexes, cloud for intelligence. Vultr thinks; QNX keeps it alive.
-
-Tracks: **Best Use of QNX** and **Best Use of Vultr**.
 
 ---
 
@@ -21,7 +19,7 @@ Tracks: **Best Use of QNX** and **Best Use of Vultr**.
 7. [Safety, in layers](#safety-in-layers)
 8. [Vultr: the cloud brain](#vultr-the-cloud-brain)
 9. [The dashboard](#the-dashboard)
-10. [Judging criteria](#judging-criteria)
+10. [What's notable](#whats-notable)
 11. [Challenges we ran into](#challenges-we-ran-into)
 12. [Accomplishments, lessons, what's next](#accomplishments-lessons-whats-next)
 13. [Tech stack](#tech-stack)
@@ -249,7 +247,9 @@ No single layer is trusted. A bad command has to get past all of these:
    optical-flow quality, and distance to people ahead. Refusals come back with a reason that
    Jarvis reads out and the dashboard shows.
 4. **The person detector (QNX)** stops a forward move already in progress if someone gets too
-   close, and with the detector down, forward moves can be refused entirely.
+   close, and with the detector down, forward moves are refused entirely. It only watches the
+   path ahead (one forward camera, about 45° wide): sideways and backward steps of half a metre
+   or less, drift, and landings are not covered by it.
 5. **Guards in flight (laptop):** land if the rangefinder is lost for 1 s, if the drone sinks to
    within 10 cm of the ground, if it turns more than 45° on its own, or reads above its limit.
 6. **The watchdog (QNX):** no heartbeat from the laptop for 1 s → hold position; 5 s → land.
@@ -302,9 +302,9 @@ More detail: [docs/models.md](docs/models.md).
 
 ---
 
-## Judging criteria
+## What's notable
 
-### Innovation & creativity
+### The ideas
 
 - **Voice as the whole interface** for people whose hands are busy: no joystick, no app full of
   buttons. Say what you want in plain English; the drone works out the flight.
@@ -315,7 +315,7 @@ More detail: [docs/models.md](docs/models.md).
   vision) lives on Vultr; everything that keeps people safe lives on the drone, on a real-time
   OS, and keeps working with the cloud or the laptop gone.
 
-### Technical complexity
+### The engineering
 
 - **A real flight computer on a real-time OS:** QNX 8 on a Pi 5 riding on the drone, talking
   MAVLink to ArduPilot over a hand-written USB link (QNX has no driver for the flight
@@ -327,11 +327,11 @@ More detail: [docs/models.md](docs/models.md).
   1 ms, and process restarts in tens of milliseconds.
 - **Sensor fusion that survives the real world:** optical flow indoors, GPS outdoors, and an
   ultrasonic rangefinder for height.
-- **A full stack in two days:** cloud app, speech-to-text, LLM tool calling, vision, a live
+- **A full stack:** cloud app, speech-to-text, LLM tool calling, vision, a live
   dashboard, a planner, a wire protocol, a safety gate and the embedded side, all integrated
   and flown.
 
-### Completeness
+### What works today
 
 Working on the real drone, by voice, from the dashboard:
 
@@ -347,10 +347,20 @@ Known limits:
 - The airframe is heavy for its 3S battery (about 80% throttle to hover), so sideways flight
   needs a well-charged pack; on a tired one the drone sinks and lands itself.
 - The forward ultrasonic obstacle sensor isn't wired yet, so only people (not objects) are
-  detected ahead.
+  detected ahead, and the person detector's distance estimate has not been calibrated against a
+  tape measure.
+- The height sensor reaches the flight controller through the Pi. If the Pi loses power, the
+  flight controller still lands on its own after 2 s and GPS still holds it in place, but it
+  descends on the barometer, which reads prop wash as height near the ground. Wiring the
+  HC-SR04 straight to the flight controller would remove this.
+- Outdoors the down camera's optical flow is still computed and sent to the flight controller,
+  but position comes from GPS: flow is not fused, not checked by the gate and not a fallback.
+- The filmed "test four" refusal is a scripted lock on forward flight. It quotes the detector's
+  distance when the detector sees someone and says it sees nobody when it doesn't. The real
+  gate refusal is the same forward command without the words "test four".
 - Hand-gesture control (palm to stop) is designed but not implemented.
 
-### Design
+### Dashboard design
 
 - One screen that reads left to right, from what you said to what the motors did.
 - One accent colour; status colours only for state (amber = refused, green = approved,
@@ -441,7 +451,8 @@ Known limits:
 | `shared/` | The protocol between the laptop and the drone |
 | `station/` | Laptop: brain, planner, voice in and out, vision tasks |
 | `cloud/` | Vultr app and the dashboard |
-| `docs/` | Design, hardware, QNX and model notes |
+| `tools/` | Deploy, preflight, flight tests, the process supervisor, the simulator harness |
+| `docs/` | Design and protocol ([PRD](docs/PRD.md)), how it all connects ([flow](docs/flow.md)), flying it ([RUN_FLIGHTS](docs/RUN_FLIGHTS.md)), status and open items |
 
 ## Flying safely
 

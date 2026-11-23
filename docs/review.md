@@ -1,7 +1,7 @@
 # Plan review (2026-11-21)
 
 Three independent reviews of [flow.md](flow.md), [PRD.md](PRD.md) and the `edge/` code: a QNX
-judge's view, a check of every external connection, and an adversarial safety and architecture
+outsider's view, a check of every external connection, and an adversarial safety and architecture
 review. Code findings marked ✔ were spot-checked against the source; the others are the
 reviewer's reading and should be confirmed when fixing them.
 
@@ -31,7 +31,7 @@ reviewer's reading and should be confirmed when fixing them.
 | Phone mic over HTTPS | Works | iOS Safari < 18.4 records only mp4/AAC: always `ffmpeg → 16 kHz mono wav` before Whisper |
 | Vultr LLM + tool calling | Works | `https://api.vultrinference.com/v1/chat/completions`; tool calling is documented for `kimi-k2-instruct`. Check `GET /v1/models` first |
 | **Vultr speech-to-text** | **Doesn't exist** (only chat, prompt, TTS); vision models are unnamed | **faster-whisper on our own Vultr VM** (CPU is enough: `small.en` int8 about 1 s per clip; GPU if credits allow). Laptop as fallback. TTS: ElevenLabs, with Vultr TTS as fallback |
-| Vultr GPU via MLH credits | Unknown (a Vultr-run event this month excluded GPUs) | Ask at the booth; plan CPU + Serverless Inference |
+| Vultr GPU on our credits | Unknown (a Vultr-run event this month excluded GPUs) | Ask Vultr; plan CPU + Serverless Inference |
 | HTTPS on a Vultr VM | Works | Caddy + domain A record; `sslip.io` if DNS is slow |
 | Laptop → cloud WSS | Works | Ping every 15–20 s, reconnect with backoff |
 | **iPhone hotspot for the Pi ↔ laptop LAN** | **Risky.** Apple doesn't guarantee client-to-client traffic, and iOS 18 broke multicast | Travel router if available; otherwise fixed IPs, no mDNS, and test it |
@@ -53,7 +53,7 @@ reviewer's reading and should be confirmed when fixing them.
   process (`--no-video` on the core).
 - CPU is fine (LK at 320×240 takes a few ms; SSD-MobileNet about 40 ms).
 
-## D. QNX judging
+## D. The QNX story
 
 - **Weakest point today: nothing QNX-specific runs on QNX yet.** The grabber, flow, vision,
   supervisor, USB transport and jitter graph are all still planned.

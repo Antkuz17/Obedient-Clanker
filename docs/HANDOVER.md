@@ -1,44 +1,22 @@
-# Handover: drone side (as of 2026-11-21 evening)
+# Handover: drone side
 
 **To fly the real drone from any laptop (field setup, GPS, voice flights): [RUN_FLIGHTS.md](RUN_FLIGHTS.md).**
 
-For anyone picking this up cold, human or Claude. Read this, then [TODO.md](TODO.md) and
-[STATUS.md](STATUS.md). The plan and the A↔B contract are in [PRD.md](PRD.md); the end-to-end
-wiring is in [flow.md](flow.md); the QNX facts verified on the board are in [qnx.md](qnx.md).
+For anyone picking this up cold, human or Claude. Read this, then [STATUS.md](STATUS.md) (what
+works) and [TODO.md](TODO.md) (what's open). The design and the laptop ↔ drone contract are in
+[PRD.md](PRD.md); the end-to-end wiring is in [flow.md](flow.md); the QNX facts verified on the
+board are in [qnx.md](qnx.md).
 
 ## Where things stand
 
-**Verified on the real drone:**
-- Preflight is ALL GO (`tools/preflight.py`).
-- Motors: order and direction are correct (`tools/motor_test.py`, props off).
-- The computer arms and lands it from the laptop.
-- Manual tethered AltHold hover: it lifts.
-- The black box records every flight.
-
-**Two autonomous hover tries, neither lifted** (details in TODO.md under "tethered GUIDED hover"):
-1. The baro read prop wash as a ~1 m climb while the rangefinder said 0.16 m, so the FC cut
-   throttle on the ground. There was also a violent tilt from a 3.7°/4.2° level offset and a
-   back-left-heavy frame.
-2. The tilt was fixed (level calibration and balance: 0° tilt, all motors equal), but the baro
-   still faked a climb. `auto_hover`'s height cross-check caught it and landed.
-
-**Fix applied for try 3 (not yet flown):**
-- `EK3_SRC1_POSZ=2`: the rangefinder is the main height source.
-- `EK3_RNG_USE_HGT=70`.
-- Foam over the FC baro (done by the pilot).
-- The real-drone ceiling is 1.5 m.
-
-**Next action:** charge the batteries, then:
-
-```
-python -m tools.system_check
-python -m tools.deploy_pi --run "python3 -m tools.preflight"
-python -m tools.auto_hover
-python -m tools.flight_report --pi
-```
-
-Only run `auto_hover` if the preflight says ALL GO; `flight_report` analyses the flight from the
-black box.
+- **Flown outdoors** on GPS (sideways) + rangefinder (height), by voice from the dashboard:
+  takeoff, hover, a full turn, "land" mid-flight. Sideways legs work on a full pack and sink
+  on a tired one (about 80% throttle to hover).
+- **Indoors on optical flow it has not held position in the air:** flow quality fell to 0 at
+  hover throttle (vibration). Indoors, use demo mode (below): nothing flies.
+- Computer takeoff uses the rangefinder to decide the height (`--rng`): the flight
+  controller's own estimate drifts up on the ground with the motors spinning.
+- The black box records every flight (`tools/flight_report.py --pi`).
 
 ## Who does what
 
@@ -64,7 +42,8 @@ black box.
 
 ## Getting into the Pi
 
-- **SSH:** `qnxuser` / `qnxuser` (root password `root`, `sudo` works) at **192.168.68.131** on the
+- **SSH:** the QNX quick-start image's default login (the tools read `QNX_USER` / `QNX_PASS`;
+  `sudo` works; **change the defaults before using a shared network**) at **192.168.68.131** on the
   `bootie` Wi-Fi. `qnxpi.local` does not resolve on Windows.
 - **Code location:** `/data/home/qnxuser/hope`.
 - **If it vanishes from the network:** put a script at `/boot/onboot` on the SD card. It runs as
@@ -116,7 +95,7 @@ sudo sh -c 'slay -f camgrab; slay -f hbwd; slay -f python3; nohup ~/hope/start_s
 
 ## Demo mode (no flying indoors)
 
-The indoor demo: talk to the laptop, Jarvis answers through the JBL (Bluetooth to the laptop),
+Indoors: talk to the laptop, Jarvis answers through the JBL (Bluetooth to the laptop),
 the drone never moves. Turn it on with
 `python -m tools.deploy_pi --stations 192.168.68.130,192.168.68.100 --demo`, then restart the
 stack; turn it off by running the same without `--demo`. In demo mode (`edge/demo.py`):
@@ -163,13 +142,16 @@ stack; turn it off by running the same without `--demo`. In demo mode (`edge/dem
 
 ## Safety configuration (the real drone)
 
-- **FC failsafes:** `FS_GCS_ENABLE=5` (Land), `FS_GCS_TIMEOUT=2`, `FS_EKF_ACTION=1`.
-  Battery: `BATT_LOW_VOLT 10.5`. `BATT_AMP_OFFSET=0.82`: the uncalibrated current sensor read
+- **FC failsafes** (all in `tools/fc_profile.py`, checked by the preflight): `FS_GCS_ENABLE=5`
+  (Land), `FS_GCS_TIMEOUT=2`, `FS_EKF_ACTION=1`, `FS_THR_ENABLE=3` (transmitter lost → Land;
+  bench-check the receiver's failsafe), `BATT_LOW_VOLT=10.5` with `BATT_FS_LOW_ACT=1` (Land)
+  on sag-compensated voltage. `BATT_AMP_OFFSET=0.82`: the uncalibrated current sensor read
   33 A at idle. `BATT_AMP_PERVLT` still needs calibrating against the charger's mAh.
 - **Edge slow-and-low profile** (`edge/__main__.py`, whenever it runs with `--mav`):
   - ceiling 1.5 m, takeoff ≤ 1.2 m, ≤ 2 m per move;
-  - 0.5 m/s horizontal, climb and descent; accel 2, jerk 5;
-  - flow quality ≥ 50; battery: refuse moves below 10.6 V, land below 10.2 V;
+  - 0.5 m/s horizontal and descent, 1.0 m/s climb; accel 2, jerk 5;
+  - flow quality ≥ 50 (not checked with `--gps`); battery under load: refuse moves below
+    10.0 V, land below 9.6 V;
   - forward moves refused unless the person detector is alive.
   - `--full-limits` opts out; only do that once the drone has proven itself.
 - **The edge never fights the pilot.** It only acts in GUIDED or a LAND it started itself. The
@@ -197,42 +179,9 @@ stack; turn it off by running the same without `--demo`. In demo mode (`edge/dem
 - **Windows-only test failures:** test_camera restarted-grabber, test_jitter rate and
   test_supervisor killed-child. They pass on macOS and are not Pi bugs.
 
-## Open items: who does what next (2026-11-21 evening)
+## Open items
 
-The indoor demo: talk to the laptop, Jarvis answers on the JBL, the drone (demo mode) judges
-every command with its real safety gate but never flies. Run it with
-`python -m station --edge 192.168.68.131 --local --mic` (Enter to talk, Enter to send; needs
-`pip install sounddevice`). Verified with typed commands against the real drone.
-
-**Drone lead (Anton): the software-heavy and drone-heavy work**
-- [ ] QNX demo on screen against the real drone (with Claude): dashboard on the laptop with the
-      live safety-loop jitter, supervisor restarts (`slay` a process, watch it come back),
-      jitter under a CPU hog with and without real-time priority, slog2 live.
-- [ ] Rehearse the voice demo with your own voice (only typed commands are tested).
-- [ ] Person detector distance: stand at 1, 2 and 3 m in front of the forward camera.
-      Inference on the Pi measured: 50-80 ms, 7.5-8 Hz.
-- [ ] Measure the forward C270's horizontal field of view (45 deg assumed): tape + one photo.
-- [ ] Transmitter on, preflight fully GO.
-- [ ] Wire the forward HC-SR04 (Arduino D11/D12; code ready), then `--require-obstacle-sensor`.
-- [ ] When flying is allowed: hover try 3 (spike filter in), a real move, Wi-Fi pull, braking,
-      `BATT_AMP_PERVLT`. Demo mode off first (`deploy_pi --stations ...` without `--demo`).
-- [ ] Devpost: the QNX / on-board half.
-
-**Cloud lead (teammate): station/ and cloud/**
-- [x] Demo wording (2026-11-21 night): the brain's reply now waits for the edge's verdict on
-      the first flight step (spoken if accepted, dropped if refused); demo-mode sarcastic lines
-      have no "Safety says no:" prefix (real gate reasons keep it). Tests in test_station /
-      test_demo. Not yet heard through the JBL against the real drone.
-- [x] `locate()`: root cause was the VLM's reasoning eating all 120 tokens (empty reply). Fixed
-      with `think=False`; `check_ai` 15/15. The real forward frame was a wall at the time, so
-      still try "fly to the door" with a door in view. Note: at 1 m up the C270 can't see the
-      bottom of anything closer than ~3 m, so close objects come back as an upper bound and
-      the planner won't fly to them (by design).
-- [x] `rule_parse` reads centimetres.
-- [x] Dashboard auth: decided (cloud lead, 2026-11-21): no PIN. It only runs on the laptop.
-- [x] Cloud VM deploy: decided (cloud lead, 2026-11-21): not deploying to the public internet.
-- [ ] Vultr demo rehearsal (docs/demo.md) and the Devpost cloud half (docs/devpost-cloud.md).
-- Keys: replaced 2026-11-21 evening, `check_ai` 15/15 PASS (night), voice to response est. 1.7 s.
+See [TODO.md](TODO.md).
 
 ## Rules that bit us
 

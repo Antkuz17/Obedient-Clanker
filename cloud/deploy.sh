@@ -40,7 +40,7 @@ mkdir -p "$DIR/data" && chown -R hope "$DIR/data" "$DIR/.env"
 echo "== service"
 cat > /etc/systemd/system/hope-cloud.service <<EOF
 [Unit]
-Description=Hope Drone cloud
+Description=Obedient Clanker cloud
 After=network-online.target
 [Service]
 User=hope

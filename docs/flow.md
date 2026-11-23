@@ -11,6 +11,13 @@ change one there, change it here.
 > *safe* runs on the drone, on QNX, and doesn't need the laptop or the cloud.
 > **The AI suggests, QNX decides.**
 
+> **How it flies today:** outdoors, the flight controller holds sideways position on **GPS**
+> and height on the rangefinder (`fc_profile --gps`, `edge --gps`). Optical flow is still
+> computed and sent, but in that mode it is not fused, not checked by the gate and not a
+> fallback. Indoors (no `--gps`) flow + rangefinder is the position source; it has not held
+> position in the air yet. The cloud app currently runs on the laptop (only the models are on
+> Vultr), so "the cloud died" below means the laptop's app or its internet.
+
 ## 1. The devices
 
 | Device | Where | Job | Code |
@@ -88,12 +95,14 @@ is QNX `SCHED_FIFO`: a higher number always runs first when the CPU is busy; nor
 | **60** | `hbwd`: heartbeat watchdog | C, pinned to CPU 3 | Gets a "pet" from the core after every complete safety tick. Sends the FC its GCS heartbeat. **No pet for 250 ms → stops the heartbeat and, if the drone is armed in GUIDED/LAND, commands LAND (3×, 100 ms apart)**. Leaves pilot modes alone | 50 Hz |
 | **50** | `usb_relay` (root) | Python | The only path to the FC: USB ↔ UDP :14555 (core) and :14556 (aux inlet) | as fast as data comes |
 | **45** | `edge` core | Python | Protocol server :7000, safety gate, executor, **50 Hz safety loop** (station watchdog, battery, position-lost, pilot takeover, re-checks the running move), FC heartbeat, flight log | 50 Hz loop, 10 Hz telemetry |
-| **44** | `edge.flow` | Python + OpenCV | Down camera → Lucas-Kanade flow → `OPTICAL_FLOW` straight to the FC (aux inlet); quality to the core | ~15–30 Hz |
-| **43** | `camgrab_down` | C (`libcamapi`) | Down camera, 320×240 → shared memory | 30 fps |
 | **42** | `rangefinder` (root) | Python | Arduino over USB → `DISTANCE_SENSOR` straight to the FC | ~18 Hz |
-| **40** | `camgrab_fwd` | C | Forward camera, 640×480 → shared memory | 30 fps |
-| (planned) | `edge/vision` | Python + TFLite | Person / palm detection → UDP :7001. **Not written yet** | 5–10 Hz |
+| *21–24* | *QNX's USB and Wi-Fi drivers* | — | *The OS's own drivers: heavy compute must stay below them* | — |
+| **20** | `edge.flow` | Python + OpenCV | Down camera → Lucas-Kanade flow → `OPTICAL_FLOW` straight to the FC (aux inlet); quality to the core | ~15–30 Hz |
+| **19** | `camgrab_down` | C (`libcamapi`) | Down camera, 320×240 → shared memory | 30 fps |
+| **18** | `camgrab_fwd` | C | Forward camera, 640×480 → shared memory | 30 fps |
+| **11** | `edge.vision` | Python + TFLite | Person detection (SSD-MobileNet) → UDP :7001. Palm stop is not implemented (`palm` is always false) | ~7.5 Hz |
 | **10** | `edge.video` | Python | MJPEG + JPEG with pose on :8080 | 10–15 fps |
+| **5** | `blackbox`, `camrec` | Python | Flight recorder: telemetry and camera frames | — |
 | normal | `supervisor` | Python | Starts everything, restarts the dead, logs restart times. Ignores SIGHUP (survives the SSH session ending) | — |
 | — | laptop + cloud | — | Not real-time at all, on purpose | — |
 
@@ -111,11 +120,11 @@ Ranked by "what goes wrong if this one is starved of CPU for half a second":
    that uses it.
 3. **`edge` core (45): the brain stem.** The safety gate and the station watchdog. It must stay
    above the sensors so that a sensor process spinning out can't stop it from landing.
-4. **Position sensing (44, 43, 42): flow, down camera, rangefinder.** Without them the FC
-   doesn't know where it is and drifts. They're above the forward camera because holding
-   position matters more than seeing ahead.
-5. **`camgrab_fwd` (40): forward camera.** Feeds the person detector (safety) and the video
-   (not safety). Below position sensing, above video.
+4. **`rangefinder` (42): height.** Light I/O, so it can sit above the drivers; without it the
+   FC has no height.
+5. **Everything heavy sits below QNX's own USB and Wi-Fi drivers (21–24):** flow (20), the
+   cameras (19, 18) and the person detector (11). At 40–44 they starved the drivers: USB ring
+   overruns, Wi-Fi timeouts and the camera service dying.
 6. **`edge.video` (10): lowest on purpose.** It's for the demo and for the laptop's AI. Under
    load *this* is what stutters, not the safety loop.
 7. **Laptop and cloud: not real-time.** They only suggest. Any of them can die; section 5 says
@@ -137,8 +146,8 @@ gets lost, and the closer the backstop is to the motors.
 | An AI model / key (LLM, STT, TTS) | Brain falls back to the regex parser; TTS falls back ElevenLabs → `chatterbox` → text only. Typed commands still work | Station / cloud | immediate |
 | **The laptop, or its Wi-Fi** | Heartbeats stop: the edge **hovers after 1 s, lands after 5 s**. The laptop itself, if alive, treats 3 s without telemetry as a dead link, cancels the plan and reconnects | Edge watchdog (core) | 1 s / 5 s |
 | `edge.video` | No video on the dashboard; `locate()` can't find targets. Flight is unaffected. Supervisor restarts it. If the *core* is gone, `X-Pose-Age` grows and the station refuses to place targets with a pose older than 0.5 s | Supervisor | ~0.1–0.2 s |
-| `camgrab_fwd` | Video freezes; the person detector (when it exists) goes stale → after 1 s the gate treats "no detector" as "maybe a person": **forward moves refused**. Restarted | Gate + supervisor | ~0.2 s (measured 143–208 ms to a new frame) |
-| Person detector (`edge/vision`) | Stale after 1 s → forward moves refused on the real drone (by design; `--no-person-check` overrides for the bench). Today it doesn't exist, so forward moves are always refused on the real drone | Gate | 1 s |
+| `camgrab_fwd` | Video freezes; the person detector goes stale → after 1 s the gate treats "no detector" as "maybe a person": **forward moves refused**. Restarted | Gate + supervisor | ~0.2 s (measured 143–208 ms to a new frame) |
+| Person detector (`edge/vision`) | Stale after 1 s → forward moves refused on the real drone (by design; `--no-person-check` overrides for the bench). Supervisor restarts it (measured 73 ms) | Gate | 1 s |
 | `edge.flow` or `camgrab_down` | Flow quality → 0. A running move is stopped after 0.5 s of bad flow and the drone holds; new moves refused. The FC loses horizontal velocity; if its position estimate goes bad the core lands after 1 s (and ArduPilot's EKF failsafe, `FS_EKF_ACTION=1`, lands too). Restarted | Executor + gate + FC | 0.5 s / 1 s |
 | `rangefinder` | The FC loses height; the EKF loses position → core lands after 1 s, FC's EKF failsafe as backup. Restarted | Core + FC | ~1 s |
 | **`edge` core** (crash, hang, `slay`) | hbwd stops getting pets → **LAND within ~250 ms**. Flow and height go straight to the FC, so it lands with a position estimate, not blind. Without hbwd, the FC's own GCS failsafe lands after 2 s. Supervisor restarts the core (measured ~4 ms respawn, ~120 ms serving) | hbwd, then FC | 0.25 s / 2 s |
@@ -146,8 +155,9 @@ gets lost, and the closer the backstop is to the motors.
 | `hbwd` | Lose the fast backstop. The core still heartbeats the FC, so normal flight continues. Supervisor restarts it | Supervisor | ms |
 | **`usb_relay`** | The FC hears nothing from the Pi: no heartbeat, no flow, no height → FC GCS failsafe lands after 2 s, EKF failsafe too. Supervisor restarts it and the core re-sends speed limits and the EKF origin when the link comes back | FC failsafes + supervisor | 2 s |
 | `supervisor` | Children keep running but nothing restarts them any more | — | — |
-| **The whole Pi** (power, crash) | Same as the relay: FC GCS failsafe → LAND | ArduPilot (`FS_GCS_ENABLE=5`, `FS_GCS_TIMEOUT=2`) | 2 s |
-| Battery low | Below 10.6 V: new moves refused. Below 10.2 V for 2 s: auto-land (2 s so throttle sag doesn't end a flight) | Gate / core; ArduPilot battery failsafe as backup | 2 s |
+| **The whole Pi** (power, crash) | Same as the relay: FC GCS failsafe → LAND. The rangefinder goes with the Pi, so the FC descends on the barometer (GPS still holds it sideways outdoors) | ArduPilot (`FS_GCS_ENABLE=5`, `FS_GCS_TIMEOUT=2`) | 2 s |
+| Battery low | Under load, below 10.0 V: new moves refused. Below 9.6 V for 2 s: auto-land (2 s so throttle sag doesn't end a flight) | Gate / core; ArduPilot battery failsafe (10.5 V sag-compensated → Land) as backup | 2 s |
+| The transmitter's signal | FC radio failsafe → LAND (`FS_THR_ENABLE=3`; needs the receiver's failsafe set) | ArduPilot | ~1 s |
 | **Everything** | Safety pilot flips **SwA down = Land** | FlySky → receiver → FC | ~0.2 s |
 
 ### The pilot always wins
@@ -165,13 +175,13 @@ Limits live in `edge/config.py`:
 
 | Rule | Limit |
 |---|---|
-| Altitude window | 0.3–5 m, normal hover 2 m (outdoors, 2026-11-21) |
-| Geofence | **Off** (outdoors). `fence_half` restores ±N m around the first takeoff of this edge run |
-| Single move | ≤ 3 m |
-| Speed | 0.5 m/s horizontal, 0.3 m/s vertical, 45°/s yaw, scan ≤ 30°/s |
-| Battery | Moves refused below 10.6 V; auto-land below 10.2 V |
-| Optical flow quality | Moves refused below 50 (0–255) |
-| Person ahead | Forward moves refused if a person is closer than 1.0 m, or if no detector is running (real drone) |
+| Altitude window | Real drone: 0.3–1.5 m, takeoff ≤ 1.2 m (`edge/__main__.py` slow-and-low profile; `--full-limits` uses `edge/config.py`: 5 m) |
+| Geofence | **Off.** `fence_half` in `edge/config.py` restores ±N m around the first takeoff of this edge run |
+| Single move | Real drone: ≤ 2 m |
+| Speed | Real drone: 0.5 m/s horizontal and descent, 1.0 m/s climb |
+| Battery (under load) | Moves refused below 10.0 V; auto-land below 9.6 V |
+| Optical flow quality | Moves refused below 50 (0–255). **Not checked with `--gps`** |
+| Person ahead | A move with any forward travel is refused if it would end within 1.0 m of a person (estimate read 30% closer), or if no detector is running (real drone). Moves over 0.5 m turn to face their path first. Sideways / backward steps of 0.5 m or less are not checked |
 | State | Moves need armed + GUIDED + a healthy position estimate. `stop`, `hover`, `land` always accepted unless the pilot has another mode. Landing beats stop |
 
 On top of the gate: one task at a time, a new command cancels the running one, `stop` always
@@ -190,13 +200,14 @@ what makes that a guarantee rather than a hope.
 ## 8. Network setup
 
 The Pi and the laptop must be on **one Wi-Fi where they can reach each other**: a travel router,
-or the venue Wi-Fi if it has no client isolation and no login page. An iPhone hotspot is last
+or any Wi-Fi with no client isolation and no login page. An iPhone hotspot is last
 resort (client-to-client traffic isn't guaranteed); use fixed IPs, not mDNS. The laptop reaches
 Vultr through the same Wi-Fi; phones reach Vultr over any internet.
 
 ## 9. Open questions
 
-1. A second camera QNX can drive (the `081b` webcam fails on QNX; needs a second C270 or C920).
-2. Real C270 field of view (now assumed 45° horizontal) and `locate()` on real frames.
-3. Check on the bench that the FC still receives `OPTICAL_FLOW` and `DISTANCE_SENSOR` with the
+1. Real C270 field of view (now assumed 45° horizontal), the person detector's distance against
+   a tape measure, and `locate()` on real frames.
+2. Real braking distance and the Wi-Fi pull (hover, then land) on the real drone.
+3. In flight: that the FC still receives `OPTICAL_FLOW` and `DISTANCE_SENSOR` with the
    core stopped (the direct sensor path).

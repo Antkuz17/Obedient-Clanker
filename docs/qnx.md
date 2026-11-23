@@ -1,20 +1,8 @@
-# QNX track
+# QNX on the drone
 
-## Prize wording
-
-> Build an embedded system that uses AI. Your project must run on QNX OS and use at least one
-> open-source AI module from QNX. Judges will look for a use case where real-time performance
-> or reliability matters, a creative use of AI, and a demo running on embedded hardware.
-
-## How we fit
-
-| Requirement | Our answer |
-|---|---|
-| Embedded system that uses AI | The QNX Pi 5 rides **on the drone** as its flight computer |
-| Must run on QNX | Everything the drone does in flight runs on QNX: both cameras, optical flow, the safety gate, the watchdog and MAVLink to the flight controller |
-| Open-source AI module from QNX | **TensorFlow Lite** from qnx-ports runs person detection on board, with QNX's **OpenCV** port for optical flow. The Devpost write-up names and links both |
-| Real-time / reliability matters | 30 Hz optical flow feeds position hold; person detection stops the drone; the watchdog lands it if the link dies; every command passes the safety gate |
-| Demo on embedded hardware | A drone flying with QNX inside it |
+The QNX Pi 5 rides **on the drone** as its flight computer. Everything the drone does in flight
+runs on it: both cameras, optical flow, the person detector (TensorFlow Lite, QNX port), the
+safety gate, the watchdogs and MAVLink to the flight controller.
 
 **Rule:** the AI that matters for safety runs on the Pi. The cloud LLM is a convenience layer.
 With the laptop or cloud dead, the drone still holds position and lands safely.
@@ -33,13 +21,12 @@ With the laptop or cloud dead, the drone still holds position and lands safely.
 
 Use real-time priorities (`SCHED_FIFO`): watchdog and safety first, flow next, AI last.
 
-## Demo moments
+## Fault tests
 
-1. **Pull the laptop's Wi-Fi mid-hover.** The watchdog lands the drone; show the timestamp log.
-2. **A person steps in front.** On-board AI stops the drone; show the inference latency.
-3. **Kill the vision process live** (`slay`). It restarts while the safety loop keeps running.
-4. **Max out the CPU.** The control loop's jitter graph stays flat.
-5. **Tell the AI "fly up 10 m".** The safety gate rejects it and shows the reason.
+`tools/qnx_faults.py` (also on the voice page's QNX panel; drone disarmed) causes each failure
+and measures the recovery: kill the person detector, freeze the safety core, kill QNX's camera
+service. Pulling the laptop's Wi-Fi mid-hover (hover, then land) has only been run in the
+simulator.
 
 ## Verified on our Pi (2026-11-21)
 
@@ -90,20 +77,20 @@ Use real-time priorities (`SCHED_FIFO`): watchdog and safety first, flow next, A
   - The supervisor must keep the user's groups when dropping root (camera needs `sensor`).
   - hbwd links with `-lsocket` on QNX.
   - The C270 drops to 8–15 fps in dim light: light the floor under the drone.
-- **HAM and adaptive partitioning are not available.** For demo 3 we write our own supervisor
-  that restarts a crashed process; for demo 4 we use `SCHED_FIFO` priorities.
+- **HAM and adaptive partitioning are not available.** We wrote our own supervisor
+  that restarts a crashed process, and use `SCHED_FIFO` priorities.
 - Wi-Fi config the Pi actually reads: `/data/var/etc/settings/wpa_supplicant.conf` (seeded from
   `/boot`). The serial console is the Pi 5's 3-pin debug connector (`/dev/ser10`), not GPIO
   pins 8/10.
 - If it ever disappears from the network: put a `/boot/onboot` script on the SD card. The
   image runs it as root at boot (`mount_fs.sh`), so it can write diagnostics back to `/boot`.
 
-## Track evidence (measured on the drone, 2026-11-22)
+## Measured on the drone (2026-11-22)
 
 Live on the voice page's "Running on QNX" panel (`tools/qnx_status.py`, polled over SSH) and
 reproducible with `tools/qnx_faults.py`.
 
-| Track asks for | What we show | Measured |
+| Property | What does it | Measured |
 |---|---|---|
 | Runs on QNX | The QNX Pi 5 **rides on the drone** and runs everything it does in flight: both cameras (QNX camera API, C), optical flow, the person detector, the safety gate, the C watchdog, MAVLink to the flight controller | `QNX 8.0.0 RaspberryPi5 aarch64le`, 4 cores, 13 supervised processes |
 | Open-source AI module from QNX | **TensorFlow Lite** (QNX port, `apk` package `python3-tflite-runtime 2.21.0-r1`) runs the on-board person detector (SSD-MobileNet); **OpenCV** (QNX port, `python3-opencv 4.12.0-r1`, `libopencv_optflow`) runs the optical flow that feeds the flight controller | detector 7.5 Hz, 84-87 ms/frame on the Pi |
@@ -112,14 +99,13 @@ reproducible with `tools/qnx_faults.py`.
 | Real-time engineering | Found a 433 ms stall of the FIFO-60 loop: it printed its log to the SD card and a busy card blocked it. Moved logging to a lock-free ring + normal-priority logger thread | same SD stress: 433 ms -> **0.86 ms**, 0 late, 0 lines dropped |
 | Reliability | Our supervisor (QNX has no HAM on this image) restarts any process; a C watchdog lands the drone if the core hangs; sensor_keeper restarts QNX's camera service | detector SIGKILL -> respawn **73 ms**; safety core frozen 3 s -> watchdog noticed in **260 ms**, flow 10 Hz + rangefinder 10.3 Hz kept reaching the FC; camera service killed -> back in **3.6 s**, cameras streaming in 4.6 s |
 | Observability | Every start, crash, restart and safety refusal goes to QNX's system log (slog2 buffer set `hope`) | `slog2info -w -b hope` |
-| Embedded demo | The drone itself; the page shows the QNX proof live | |
 
 Earlier finding, same theme: with flow/vision/camgrab at FIFO 40-45 they starved QNX's USB and
 Wi-Fi drivers (USB `RING_OVERRUN`, the camera service died); the priority plan above fixed it.
 
 ## Pi 5 setup (QNX quick-start image)
 
-- **Login:** `qnxuser` / `qnxuser`. Root password `root` (`su`).
+- **Login:** the QNX quick-start image's default user (the tools read `QNX_USER` / `QNX_PASS`). **Change the default passwords before putting the Pi on a shared network.**
 - **SSH:** `ssh qnxuser@qnxpi.local`. On Windows add `-m hmac-sha2-256`.
 - **Wi-Fi:** `wpa_supplicant.conf` on the SD card's `/boot` partition; the interface is `bcm0`.
 - **Packages:** `apk`. Fix the clock first (`ntpdate`), then run:
@@ -150,11 +136,10 @@ Wi-Fi drivers (USB `RING_OVERRUN`, the camera service died); the priority plan a
   That gives `/dev/ser1`. Flight controller: `SERIAL1_PROTOCOL = 2`, `SERIAL1_BAUD = 115`,
   flow control off.
 - **Pi 4 (Linux) fallback** if QNX blocks the onboard role: the Pi 4 flies, and the QNX Pi runs
-  the safety gate on the ground. Weaker for the track.
+  the safety gate on the ground. Not used.
 
-## Ask at the QNX booth
+## Open questions
 
-Answered on the board (see "Verified on our Pi"). Still worth asking:
 1. Is there a GStreamer source or Python binding for the QNX camera API, so OpenCV can read it?
 2. Is there an official way to get HAM or adaptive partitioning on this image?
 
@@ -166,6 +151,3 @@ Answered on the board (see "Verified on our Pi"). Still worth asking:
 - [Pi GPIO UART on QNX](https://www.qnx.com/developers/docs/qnxeverywhere/com.qnx.doc.interfacing/topic/rpi/rpi_GPIO_UART.html)
 - [devc-serusb](https://www.qnx.com/developers/docs/8.0/com.qnx.doc.neutrino.utilities/topic/d/devc-serusb.html)
 - [pip on QNX 8](https://devblog.qnx.com/use-pip-with-python-on-qnx-8-0/)
-- Past QNX winners: [Beats By Air](https://devpost.com/software/beats-by-air),
-  [Hack the 6ix recap](https://qnx.software/en/blog/2026/hack-the-6ix-2025),
-  [cuHacking 6 recap](https://qnx.software/en/blog/2026/qnx-at-cuhacking-6)

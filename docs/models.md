@@ -19,9 +19,9 @@ dangerous ones"; tools `move(fwd, right, up, yaw_deg)` and `task(target, action,
 | Job | Candidates on Vultr | Notes |
 |---|---|---|
 | **Brain** (speech text → one tool call) | `glm-5.3-flash` (fastest), `qwen3.8-flash-next` | Both verified above |
-| **Speech-to-text** | `whisper-large-v3-turbo`, `qwen3-asr-1.7b`, `voxtral-mini-4b-realtime` (streaming over `/v1/realtime`) | **Hosted, so no VM needed** (corrects PRD D8). Still convert iOS audio to 16 kHz mono wav |
+| **Speech-to-text** | `whisper-large-v3-turbo`, `qwen3-asr-1.7b`, `voxtral-mini-4b-realtime` (streaming over `/v1/realtime`) | **Hosted, so no VM needed.** Still convert iOS audio to 16 kHz mono wav |
 | **Vision Q&A** (read / solve / describe) | `qwen3.8-27b` (vision listed), `glm-5.3-flash`, `qwen3.8-flash-next` (take images) | Test on real frames; can these also return bounding boxes for "find the red thing"? |
-| **Text-to-speech** | `chatterbox` (voice cloning), `qwen3-tts-12hz-1.7b` (voice design / cloning), `auk`, `auk-flash` (evaluation licence only) | A cloned Jarvis-style voice on Vultr keeps it on-track; ElevenLabs is the alternative |
+| **Text-to-speech** | `chatterbox` (voice cloning), `qwen3-tts-12hz-1.7b` (voice design / cloning), `auk`, `auk-flash` (evaluation licence only) | A cloned Jarvis-style voice on Vultr keeps everything on one provider; ElevenLabs is the alternative |
 | **Visual memory** | `qwen3-embedding-4b` (text embeddings of captions), `bge-reranker-v2-m3` | Caption frames with a vision model, embed captions, rerank results |
 | **Not hosted** | Open-vocabulary detectors (OWLv2, Grounding DINO, YOLO-World) | If the vision models can't give boxes, run one on the GPU laptop or a Vultr GPU VM |
 

@@ -1,11 +1,12 @@
 # CLAUDE.md
 
-Voice-controlled indoor drone for Hack Western 13 (Nov 20–22, 2026). Tracks: Best Use of QNX,
-Best Use of Vultr. Two people.
+Obedient Clanker: a voice-controlled drone. Vultr for speech, the LLM and vision; QNX on a Raspberry Pi 5 on the
+drone for the safety gate and everything real-time; ArduPilot flies it. Flown outdoors on GPS
+with an ultrasonic rangefinder for height. Two people.
 
 **Flying the real drone (any laptop):** [docs/RUN_FLIGHTS.md](docs/RUN_FLIGHTS.md).
 
-**Read first:** [docs/HANDOVER.md](docs/HANDOVER.md) (current state, how to run everything, gotchas), then [docs/PRD.md](docs/PRD.md) (the plan, the split, the contracts), [docs/TODO.md](docs/TODO.md) (the to-do list), then
+**Read first:** [docs/HANDOVER.md](docs/HANDOVER.md) (current state, how to run everything, gotchas), then [docs/PRD.md](docs/PRD.md) (the design and the contracts), [docs/TODO.md](docs/TODO.md) (the to-do list), then
 [docs/STATUS.md](docs/STATUS.md) (what's built, what's verified, what's next). Hardware and
 flight details: `docs/hardware.md`, `docs/flight-setup.md`, `docs/qnx.md`.
 
@@ -71,4 +72,4 @@ macOS: AirPlay Receiver listens on :7000, so `edge --sim` on the default port fa
   + OpenCV only. No new pip dependencies there without checking they install on QNX.
 - Safety limits live in `edge/config.py`. Tune them there, not inline.
 - Keep `docs/STATUS.md` current at the end of every work session: done, verified, next.
-- Commit in small logical commits on `main` (the team works on main during the hackathon).
+- Commit in small logical commits on `main` (the team works on main).

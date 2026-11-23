@@ -59,7 +59,7 @@ is still **TBD**.
 
 - **EKF origin is required.** The Pi sends `SET_GPS_GLOBAL_ORIGIN` at startup; without it you
   get "Need Position Estimate".
-- **Compass:** heading still comes from the compass. Recalibrate at the venue, including the
+- **Compass:** heading still comes from the compass. Recalibrate where you fly, including the
   motor-interference calibration (`COMPASS_MOT`).
 - **GUIDED:** with the origin set and flow working, `SET_POSITION_TARGET_LOCAL_NED` velocity and
   position commands work.

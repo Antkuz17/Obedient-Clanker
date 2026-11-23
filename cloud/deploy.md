@@ -4,7 +4,7 @@
 `scp .env root@<vm-ip>:/root/hope.env && ssh root@<vm-ip> 'bash -s' < cloud/deploy.sh <domain>`.
 The script does steps 2–5 below (packages, service, Caddy HTTPS, health check).
 
-Needs (docs/TODO.md "CRITICAL"): a Vultr VM, a domain whose A record points at it, and the keys.
+Needs: a Vultr VM, a domain whose A record points at it, and the keys.
 
 1. **VM:** Vultr Cloud Compute, Ubuntu 24.04, the smallest plan is enough (the models are
    hosted; the VM only relays and stores memory frames). Open ports 22, 80, 443.
@@ -18,7 +18,7 @@ Needs (docs/TODO.md "CRITICAL"): a Vultr VM, a domain whose A record points at i
 3. **Run it as a service** (`/etc/systemd/system/hope-cloud.service`):
    ```ini
    [Unit]
-   Description=Hope Drone cloud
+   Description=Obedient Clanker cloud
    After=network-online.target
    [Service]
    WorkingDirectory=/root/hope

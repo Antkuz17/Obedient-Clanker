@@ -102,7 +102,7 @@ heading. Weak points, most serious first:
 - Flow-only position hold works (every simulator pass so far used simulated GPS).
 - QNX will run two USB cameras at once, and power them.
 - The camera grabber compiles on QNX.
-- The Pi and laptop can reach each other on the venue Wi-Fi.
+- The Pi and laptop can reach each other on a shared Wi-Fi.
 - The Vultr vision models can return object locations.
 
 One assumption is now closed: ArduPilot's `AP_OpticalFlow_MAV.cpp` on master does read the
@@ -190,7 +190,7 @@ beats land the drone. **Read only.**
 **Read only.**
 
 ### 13. The Pi has default passwords written in the docs
-[qnx.md](qnx.md) lists the login and root passwords, and the plan prefers venue Wi-Fi. Anyone
+[qnx.md](qnx.md) lists the login and root passwords, and the plan prefers a shared Wi-Fi. Anyone
 on that network could log in as root. `--station-ip` is also optional
 (`edge/__main__.py:45`). **Read only.**
 
@@ -219,7 +219,7 @@ on that network could log in as root. `--station-ip` is also optional
 | 10 | Heartbeat margin | Read (1 Hz vs `FS_GCS_TIMEOUT=2`, now set on the real FC) | ✅ | Fixable: send at 5 Hz |
 | 11 | Armed on the ground after a failed takeoff | n/a | Plausible | Fixable: disarm on takeoff timeout if still on the ground |
 | 12 | Battery auto-land has no debounce | n/a | ✅ | Fixable: require about 3 s below the threshold |
-| 13 | Default passwords, optional allowlist | n/a | ✅ | Fixable: change the Pi passwords before the venue; make `--station-ip` required with `--mav` |
+| 13 | Default passwords, optional allowlist | n/a | ✅ | Fixable: change the Pi passwords before using a shared network; make `--station-ip` required with `--mav` |
 | 14 | **New:** client ack race (`shared/client.py`): a fast ack raised `KeyError` | ✅ 5 tests failed on Windows | ✅ | **Fixed** (local future reference); suite 34 passed + 2 SITL skipped |
 | — | Positioning: flow (PRD) or ArUco (README)? | n/a | ✅ Flow | D1 stands; README is stale. ArUco has no code; treat it as an idea, not a fallback |
 | — | Demo target: bench/tethered QNX + sim voice | n/a | Partly | Aim for real flight; keep the bench/tethered QNX demo ready as the fallback (D15). Not cutting scope now |

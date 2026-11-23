@@ -1,6 +1,6 @@
 # Running the real drone from any laptop (flights + voice)
 
-For the cloud lead's laptop or anyone else's. Written 2026-11-22 after the first field tests.
+For the cloud lead's laptop or anyone else's. Written after the first field tests (2026-11-22).
 Windows: use `python`. macOS: use `.venv/bin/python` (or activate the venv). Everything below
 runs **from the laptop**; the drone side is updated by the tools themselves.
 
@@ -146,10 +146,12 @@ python -m tools.voice_flights --edge <pi> --demo    # http://127.0.0.1:8200 (no 
 **Test 4: the person-safety refusal (works outdoors, any mode).** Say "test four" or "hey
 drone, fly forward" on the voice page. **Nothing is sent to the drone** (no takeoff, no move), in
 any mode, even mid-flight, so it cannot move; `tests/test_voice_flights.py` proves zero commands
-reach a connected drone in normal flying mode. Jarvis: "I'm not flying forward. There's a person
-in my path. Safety first." with a red PERSON AHEAD banner. If the on-board detector sees someone
-at that moment it quotes the real distance ("2.3 metres ahead") and the page draws the live box,
-so have a person stand in front of the drone for the clip. (The table-only variant with the
+reach a connected drone in normal flying mode. With a person in front of the camera Jarvis says
+"I'm not flying forward. There's a person 2.3 metres ahead of me. Safety first.", with a red
+PERSON AHEAD banner and the live box, so have a person stand in front of the drone for the clip.
+With nobody in view it still refuses, but says so ("Forward flight is locked for this test, and
+I don't see anyone ahead right now") and shows no banner: it never claims a person the detector
+didn't find. A "land" or "stop" in the same sentence is always sent. (The table-only variant with the
 edge in `--demo` mode, where the pretend move is stopped by a person walking in, is in
 `edge/executor.py _demo_forward`.)
 
