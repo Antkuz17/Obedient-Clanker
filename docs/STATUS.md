@@ -153,6 +153,24 @@ position (altitude used to sag about 0.1 m per command).
   refused "go up 2 m", land). **Not flown yet**: first real flight = "take off", then "land", pilot on SwA.
   Fallback: `tools.voice_flights` (8200).
 
+## Voice: general phrasings (2026-11-22 evening, cloud lead with Claude; `station/brain.py` only)
+
+- The field fixes were one phrase at a time; they all came down to wording. New `_clean()` in the
+  brain, used by the fast path, the rules and `is_urgent`: drops wake words anywhere ("land the
+  drone", "drone, stop"), filler ("um"), politeness; sentence dots become "and" ("Rise. Turn
+  around. Land."); spoken numbers become digits ("six", "one point five", "two and a half",
+  "a couple of metres", "one eighty"); Whisper's "to/too metres" = 2; feet -> metres.
+- New phrasings: "turn 90 degrees to the left", "rotate 180", "hover / hold position" (hold in
+  the air, take off on the ground), "come back here", "take a selfie", bare "go up", "can you
+  fly?" on the ground. "Rise and hover" is one takeoff (was two).
+- Safety: "Hey drone, stop." is urgent now (it used to wait for an LLM call). The rules parser
+  (LLM down) read "six metres" as 0.5 m, "one point five" as 5 m, "3 feet" as 0.5 m: fixed.
+- The LLM answering with no plan and no words ("Hmm.") falls back to the rules, else says
+  what it can do.
+- Verified: 55 new tests, probe of ~95 field-style transcripts. Suite: 3 failures, all from
+  earlier uncommitted presentation-mode edits (`edge/executor.py` `False and` -> 2 in
+  test_demo; `station.py` "lost the link" only after telemetry -> test_station_reconnects_to_edge).
+
 ## Field night 2026-11-22, end state (cloud lead with Claude; **drone lead: please review**)
 
 - Flown from the dashboard (`demo_laptop --edge 127.0.0.1:7400 --rng` over `tools/v6_tunnel.py`):

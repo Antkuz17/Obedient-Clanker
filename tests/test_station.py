@@ -1374,3 +1374,106 @@ async def test_rng_flying_low_is_not_sinking(rig):
     assert sim.state().armed and not any("sinking" in s for s in said)
     p.rng_height = lambda: 0.05                        # now it really is about to touch
     await until(lambda: any("sinking" in s for s in said), 6)
+
+
+# --- general voice phrasings (from the 2026-11-21/22 field tests) ---------------------------
+# Every field failure was wording, not meaning: punctuation, wake words, filler, spoken numbers,
+# Whisper's "to" for "two". These go through one clean-up (brain._clean) shared by all parsers.
+def _plan(r):
+    out = []
+    for a in r.actions:
+        args = {k: v for k, v in a.items() if k not in ("kind", "question") and v}
+        out.append((a["kind"], args) if args else a["kind"])
+    return out
+
+
+AIR, GROUND = {"armed": True}, {"armed": False}
+
+
+@pytest.mark.parametrize("text, tel, want", [
+    # wake words, filler, sentences
+    ("Hey Drone. Rise up.", GROUND, [("takeoff", {"alt": 1.0})]),
+    ("Um, take off.", GROUND, [("takeoff", {"alt": 1.0})]),
+    ("Take off, please.", GROUND, [("takeoff", {"alt": 1.0})]),
+    ("Rise. Turn around. Land.", GROUND,
+     [("takeoff", {"alt": 1.0}), ("move", {"yaw_deg": 360.0}), "land"]),
+    ("Rise and hover.", GROUND, [("takeoff", {"alt": 1.0})]),          # one takeoff, not two
+    ("Land the drone.", AIR, ["land"]),
+    ("Thanks, now land.", AIR, ["land"]),
+    # spoken numbers
+    ("Move six meters to the left.", AIR, [("move", {"right": -6.0})]),
+    ("Go one point five meters forward.", AIR, [("move", {"fwd": 1.5})]),
+    ("Go two and a half meters forward.", AIR, [("move", {"fwd": 2.5})]),
+    ("Take off to one and a half meters.", GROUND, [("takeoff", {"alt": 1.5})]),
+    ("Go a couple meters to the right.", AIR, [("move", {"right": 2.0})]),
+    ("Go forward to meters.", AIR, [("move", {"fwd": 2.0})]),         # Whisper's "to"
+    ("Go 3 feet forward.", AIR, [("move", {"fwd": 0.91})]),
+    # turns
+    ("Turn 90 degrees to the left.", AIR, [("move", {"yaw_deg": -90.0})]),
+    ("Turn left for 90 degrees.", AIR, [("move", {"yaw_deg": -90.0})]),
+    ("Rotate 180 degrees.", AIR, [("move", {"yaw_deg": 180.0})]),
+    ("Turn right one eighty.", AIR, [("move", {"yaw_deg": 180.0})]),
+    # holding, coming back, photos, bare commands
+    ("Hover.", AIR, ["stop"]),
+    ("Hold position.", AIR, ["stop"]),
+    ("Hover.", GROUND, [("takeoff", {"alt": 1.0})]),
+    ("Come back here.", AIR, ["home"]),
+    ("Take a selfie.", AIR, [("look", {"action": "photo"})]),
+    ("Hey drone, go up.", GROUND, [("takeoff", {"alt": 1.0})]),
+    ("Hey drone, go up.", AIR, [("move", {"up": 0.5})]),
+    ("Can you fly?", GROUND, [("takeoff", {"alt": 1.0})]),
+])
+def test_fast_path_reads_everyday_phrasings(text, tel, want):
+    r = fast_parse(text, tel)
+    assert r is not None and _plan(r) == want
+
+
+@pytest.mark.parametrize("text, tel", [
+    ("Can you fly?", AIR),          # already flying: fly where? the LLM asks
+    ("Go left.", AIR),              # no distance: the LLM asks
+    ("Go down.", GROUND),
+    ("What is up?", AIR),           # direction words in chit-chat
+    ("Calm down.", AIR),
+    ("Take off right now.", AIR),
+    ("Turn 90.", AIR),              # which way?
+    ("One more thing, go left two meters.", AIR),
+    ("Fly to the door and take a photo.", AIR),
+    ("Stop and go forward 2 meters.", AIR),
+])
+def test_fast_path_leaves_the_unclear_to_the_llm(text, tel):
+    assert fast_parse(text, tel) is None
+
+
+@pytest.mark.parametrize("text, urgent", [
+    ("Hey drone stop.", True), ("Drone, stop!", True), ("Stop the drone.", True),
+    ("Stop, stop, stop.", True), ("Okay, land.", True), ("Um, stop.", True),
+    ("Stop and go forward 2 meters.", False), ("Land on the table after the photo.", False),
+])
+def test_spoken_stop_skips_the_llm_whatever_the_wording(text, urgent):
+    from station.brain import is_urgent
+    assert is_urgent(text) is urgent
+
+
+@pytest.mark.parametrize("text, key, want", [
+    ("Move six meters to the left.", "right", -6.0),      # was 0.5 m
+    ("Go one point five meters forward.", "fwd", 1.5),    # was 5 m
+    ("Go a couple meters to the right.", "right", 2.0),   # was 0.5 m right AND 0.5 m up
+    ("Go five meters to the left.", "right", -5.0),       # was 0.5 m
+    ("Go 3 feet forward.", "fwd", 0.91),                  # was 0.5 m
+    ("Turn 90 degrees to the left.", "yaw_deg", -90.0),   # was nothing
+])
+def test_rule_parse_reads_numbers_like_the_fast_path(text, key, want):
+    """The rules fly the drone when the LLM is down: they must read numbers the same way."""
+    r = rule_parse(text, AIR)
+    moves = [a for a in r.actions if a["kind"] == "move"]
+    assert len(moves) == 1 and moves[0][key] == pytest.approx(want)
+    assert all(not moves[0][k] for k in ("fwd", "right", "up", "yaw_deg") if k != key)
+
+
+async def test_llm_saying_nothing_falls_back_to_the_rules():
+    """'can you fly?' got 'Hmm.' in the field: no reply and no tool call is never the answer."""
+    ai = FakeAI({"content": "", "tool_calls": []})
+    r = await Brain(ai).think("could you please fly up a bit", AIR)
+    assert r.source == "rules" and [a["kind"] for a in r.actions] == ["move"]
+    r = await Brain(ai).think("how are you", AIR)
+    assert r.actions == [] and "Try" in r.reply

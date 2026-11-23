@@ -204,8 +204,16 @@ class Brain:
                 actions.append(a)
         reply = (m.get("content") or "").strip()
         reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.S).strip()
+        if not reply and not actions:
+            # the LLM said nothing and planned nothing ("can you fly?" got "Hmm." in the field):
+            # the rules may still know it; if not, say what it can do instead of a shrug
+            r = rule_parse(text, telemetry)
+            if r.actions:
+                return r
+            reply = ("I didn't get that. Try 'rise', 'go left two metres', 'do a 360', "
+                     "'take a photo' or 'land'.")
         if not reply:
-            reply = DEFAULT_REPLY[actions[0]["kind"]] if actions else "Hmm."
+            reply = DEFAULT_REPLY[actions[0]["kind"]]
         self.history += [{"role": "user", "content": text},
                          {"role": "assistant", "content": reply}]
         return BrainResult(reply, actions, "llm", self.ai.last_latency.get("chat", 0.0))
@@ -239,19 +247,133 @@ def _task(t: str) -> str:
     return "none"
 
 
+# --- what Whisper writes -> one plain form -------------------------------------------------------
+# Field tests (2026-11-21/22) kept failing on the *wording*, not the meaning: "Hey, drone. Rise.",
+# "go five meters to the left", "Um, take off", "land the drone", "one point five meters",
+# "go forward to meters" (Whisper's "to" for "two"). Every parser reads `_clean(text)`, so a new
+# phrasing is fixed once here instead of once per regex.
+_ONES = {"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+         "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13,
+         "fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
+         "nineteen": 19}
+_TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70,
+         "eighty": 80, "ninety": 90}
+_DIGIT = {**{k: v for k, v in _ONES.items() if v < 10}, "oh": 0}
+_UNIT_WORD = r"(?:m|meters?|metres?|cm|centimet(?:er|re)s?|feet|foot|ft|degrees?)\b"
+
+
+def _num_at(w: list[str], i: int) -> tuple[float, int] | None:
+    """A spoken number starting at w[i] -> (value, words used), or None.
+    'six', 'forty five', 'a hundred and eighty', 'one eighty', 'two and a half', 'one point five'."""
+    def small(j):  # 0-99
+        if j < len(w) and w[j] in _TENS:
+            v, j = _TENS[w[j]], j + 1
+            if j < len(w) and w[j] in _ONES and 0 < _ONES[w[j]] < 10:
+                v, j = v + _ONES[w[j]], j + 1
+            return v, j
+        if j < len(w) and w[j] in _ONES:
+            return _ONES[w[j]], j + 1
+        if j < len(w) and re.fullmatch(r"\d+", w[j]):
+            return int(w[j]), j + 1
+        return None
+    j = i
+    if j < len(w) and w[j] in ("a", "one") and j + 1 < len(w) and w[j + 1] == "hundred":
+        v, j = 100, j + 2
+        if j + 1 < len(w) and w[j] == "and" and (s := small(j + 1)):
+            v, j = v + s[0], s[1]
+        elif s := small(j):
+            v, j = v + s[0], s[1]
+    elif s := small(j):
+        v, j = s
+        # "one eighty", "three sixty", "two seventy": headings said as two numbers
+        if 0 < v < 10 and j < len(w) and w[j] in _TENS and w[i] in _ONES:
+            v, j = v * 100 + _TENS[w[j]], j + 1
+    else:
+        return None
+    if j + 1 < len(w) and w[j] == "point" and w[j + 1] in _DIGIT:  # "one point five"
+        frac, j = "", j + 1
+        while j < len(w) and w[j] in _DIGIT:
+            frac, j = frac + str(_DIGIT[w[j]]), j + 1
+        v = float(f"{v}.{frac}")
+    if w[j:j + 3] == ["and", "a", "half"]:  # "two and a half"
+        v, j = v + 0.5, j + 3
+    return v, j - i
+
+
+def _numbers(t: str) -> str:
+    """Spoken numbers -> digits: 'go six metres left' -> 'go 6 metres left'. Vague amounts get a
+    number too ('a couple of metres' = 2, 'a few' = 3, 'half a metre' = 0.5, 'a metre' = 1), but
+    only when a unit follows, so 'do a 360' and 'a bit' keep their meaning."""
+    t = re.sub(r"\b(?:a )?couple(?: of)? (?=" + _UNIT_WORD + ")", "2 ", t)
+    t = re.sub(r"\ba few (?=" + _UNIT_WORD + ")", "3 ", t)
+    t = re.sub(r"(?<!and )(?<!and a )\b(?:a half|half an?|half) (?=" + _UNIT_WORD + ")", "0.5 ", t)
+    t = re.sub(r"\b(?:to|too) (?=(?:meters?|metres?|feet)\b)", "2 ", t)    # Whisper: "two"
+    t = re.sub(r"\b(?:for) (?=(?:meters?|metres?|feet)\b)", "4 ", t)       # Whisper: "four"
+    w, out, i = t.split(), [], 0
+    while i < len(w):
+        if w[i] in ("a", "an") and i + 1 < len(w) and re.fullmatch(_UNIT_WORD, w[i + 1]):
+            out.append("1")
+            i += 1
+            continue
+        n = _num_at(w, i)
+        if n and not (w[i] == "one" and n[1] == 1 and not (
+                i + 1 < len(w) and re.fullmatch(_UNIT_WORD, w[i + 1]))):
+            out.append(f"{n[0]:g}")  # a lone "one" stays a word unless a unit follows
+            i += n[1]
+            continue
+        out.append(w[i])
+        i += 1
+    t = " ".join(out)
+    t = re.sub(r"(\d+(?:\.\d+)?) ?(?:feet|foot|ft)\b",
+               lambda m: f"{round(float(m.group(1)) * 0.3048, 2):g} m", t)
+    t = re.sub(r"(\d+(?:\.\d+)?) ?(?:meters?|metres?|m)\b", r"\1 m", t)
+    t = re.sub(r"(\d+(?:\.\d+)?) ?(?:cm|centimet(?:er|re)s?)\b", r"\1 cm", t)
+    t = re.sub(r"(\d+(?:\.\d+)?) ?degrees?\b", r"\1 degrees", t)
+    return t
+
+
+_OPENERS = re.compile(
+    r"^(?:(?:hey|hi|ok|okay|alright|all right|yo|so|well|now|thanks|thank you|um|uh|"
+    r"i want you to|id like you to|i would like you to|i need you to|can you|could you|"
+    r"would you|will you|go ahead and|lets|just|please|and|then) )+")
+_CLOSERS = re.compile(r"(?: (?:please|thanks|thank you|for me|real quick))+$")
+
+
+def _clean(text: str) -> str:
+    """Lower case, no wake words / filler / politeness, sentences and commas joined by 'and',
+    numbers as digits with unit 'm' / 'cm' / 'degrees'. 'Hey, drone. Um, go one point five
+    meters to the left, please.' -> 'go 1.5 m to the left'."""
+    t = text.lower().replace("°", " degrees").replace("’", "'").replace("'", "")
+    t = re.sub(r"(?<=\d)-(?=\d)", " ", t).replace("-", " ")
+    # the drone's names, anywhere: "hey drone", "okay jarvis", "land the drone", "drone, stop"
+    t = re.sub(r"\b(?:(?:hey|hi|ok|okay|yo|alright)\W+)?(?:the |my |our )?(?:drone|jarvis)\b",
+               " ", t)
+    t = re.sub(r"\b(?:um+|uh+|uhm|erm|hmm+)\b", " ", t)
+    t = re.sub(r"(?<!\d)\.|\.(?!\d)", " and ", t)          # sentence dots, not "1.5"
+    t = re.sub(r"[,;:!?]", " and ", t)
+    t = re.sub(r"[^a-z0-9. ]+", " ", t)
+    t = " ".join(t.split())
+    t = _numbers(t)
+    t = re.sub(r"\b(?:and )+", "and ", t)                  # "turn around, and land" -> one "and"
+    t = re.sub(r"(?: and)+$", "", t)
+    t = _OPENERS.sub("", t)
+    t = re.sub(r"(?: and)+$", "", _CLOSERS.sub("", t))     # "take off, please" -> "take off"
+    return t.strip()
+
+
 # A short utterance that is only "stop" / "land" (and friends) goes straight to the rules, so a
 # spoken panic stop costs speech-to-text only, not an LLM call too. Longer sentences that merely
 # contain the word ("land on the table after the photo") still go to the LLM.
 _URGENT = re.compile(
-    r"^(?:(?:hey |ok |okay )?jarvis,? )?(?:please )?"
-    r"(?:stop|freeze|halt|abort|hold on|hold it|wait|land|land now|land it|come down|touch down)"
-    r"(?: (?:now|right now|please|immediately))?$")
+    r"^(?:stop|freeze|halt|abort|hold on|hold it|wait|land|land now|land it|come down|touch down|"
+    r"stop it|stop now|emergency stop|stop stop)"
+    r"(?: (?:now|right now|immediately|right away))?$")
 
 
 def is_urgent(text: str) -> bool:
-    t = re.sub(r"[^a-z ]+", " ", text.lower())
-    t = " ".join(t.split())
-    t = re.sub(r"^(?:(?:stop|land) )+(?=(?:stop|land)$)", "", t)  # "stop stop stop" -> "stop"
+    t = _clean(text)
+    # "stop, stop, stop" / "stop and land" -> the last word decides (landing beats stop)
+    t = re.sub(r"^(?:(?:stop|land)(?: and)? )+(?=(?:stop|land)$)", "", t)
     return bool(_URGENT.match(t))
 
 
@@ -270,18 +392,23 @@ _FNUM = (r"(\d+(?:\.\d+)?|" + "|".join(sorted((re.escape(k) for k in _FWORDS), k
 _FUNIT = r" ?(m|metres?|meters?|cm|centimetres?|centimeters?)"
 _FDIR = r"(forwards?|ahead|backwards?|back|left|right|up|down)"
 _FVERB = r"(?:(?:come back|head back|move|go|fly|head|drift|slide|climb|drop|descend|rise|come) )?"
-_F_TAKEOFF = re.compile(r"(?:take ?off|lift off|launch|rise|go up and hover|hover)(?: (?:to )?" + _FNUM + _FUNIT + r")?")
+_F_TAKEOFF = re.compile(r"(?:take ?off|lift off|launch|rise(?: up)?|get up|go up and hover)(?: (?:to )?" + _FNUM + _FUNIT + r")?")
 _F_MOVE1 = re.compile(_FVERB + r"(?:to (?:the |your )?)?" + _FDIR + r" (?:by |for )?" + _FNUM + _FUNIT)        # forward 1 metre
 _F_MOVE2 = re.compile(_FVERB + _FNUM + _FUNIT + r" (?:to (?:the |your )?)?" + _FDIR)                   # 1 metre forward
-_F_TURN = re.compile(r"(?:turn|rotate|spin|yaw) (?:to the )?(left|right)"
-                     r"(?: (?:by )?" + _FNUM + r"(?: ?degrees?)?)?")
-_F_AROUND = re.compile(r"(?:(?:turn|spin|rotate)(?: all the way)? around|(?:do )?(?:a )?(?:full )?(?:360|three sixty)(?: degrees?)?(?: turn| spin)?|(?:do )?a full (?:turn|spin|circle)|spin)")
-_F_BACK = re.compile(r"(?:turn back|face the other way|turn 180|do a 180|one eighty)")
+_F_TURN = re.compile(r"(?:turn|rotate|spin|yaw) (?:to (?:the |your )?)?(left|right)"
+                     r"(?: (?:by |for )?" + _FNUM + r"(?: ?degrees?)?)?")
+_F_TURN2 = re.compile(r"(?:turn|rotate|spin|yaw) (?:by )?" + _FNUM +                     # turn 90 degrees to the left
+                      r"(?: ?degrees?)? (?:to (?:the |your )?)?(left|right)")
+_F_AROUND = re.compile(r"(?:(?:turn|spin|rotate)(?: all the way)? around|(?:do )?(?:a )?(?:full )?(?:360|three sixty)(?: degrees?)?(?: turn| spin)?|(?:do )?a full (?:turn|spin|circle|rotation)|spin|(?:turn|rotate|spin) 360(?: degrees)?)")
+_F_BACK = re.compile(r"(?:turn back|face the other way|turn 180|do a 180|one eighty|(?:turn|rotate|spin) 180(?: degrees)?)")
 _F_BARE = re.compile(_FVERB + r"(?:to the )?" + _FDIR)  # no distance
 BARE_MOVE_M = 2.0  # m for "go left" with no distance (one leg; the Pi's gate caps a move at 2 m)
-_F_PHOTO = re.compile(r"(?:take|snap|grab|get) (?:a |me a )?(?:photo|picture|pic|shot|snapshot)(?: (?:of|at) (?:this|that|it|here|me|us|them))?")
-_F_HOME = re.compile(r"come back|come home|go home|fly home|return home|go back home")
-_F_LAND = re.compile(r"(?:land|come down|touch down|set down)(?: now)?")
+BARE_UPDOWN_M = 0.5  # m for a bare "go up" / "go down"
+_F_PHOTO = re.compile(r"(?:(?:take|snap|grab|get) (?:a |me a |us a )?(?:photo|picture|pic|shot|snapshot|selfie)|photo|picture|say cheese)(?: (?:of|at|with) (?:this|that|it|here|me|us|them|everyone))?")
+_F_HOME = re.compile(r"come back(?: here| to me| home| over here| to the start)?|come here|come over here|come to me|come home|go home|fly home|head home|fly back home|return(?: home| to me| to the start| to base)?|go back home")
+_F_LAND = re.compile(r"(?:land|come down|touch down|set down|set it down)(?: now| here| it| right here| please)?")
+_F_HOLD = re.compile(r"hover(?: there| here| in place)?|stay(?: there| here| put| still| where you are)?|hold(?: position| still| there| it there)|wait there")
+_F_FLY = re.compile(r"fly|start flying|get flying|go fly")
 _F_SPLIT = re.compile(r" (?:and then|then|and|after that) ")
 
 
@@ -297,24 +424,15 @@ def _fdist(num: str, unit: str) -> float:
 
 def fast_parse(text: str, telemetry: dict | None = None) -> BrainResult | None:
     """The whole utterance as simple flying clauses, or None (then the LLM decides)."""
-    t = text.lower().replace("°", " degrees").replace("-", " ")
-    # wake words before punctuation turns into "and": Whisper writes "Hey, drone. Rise and ..."
-    t = re.sub(r"^\W*(?:(?:hey|ok|okay|alright|all right|yo)\W+)?(?:(?:jarvis|drone)\b\W*)?", "", t)
-    t = re.sub(r"(?<!\d)\.|\.(?!\d)", " ", t)          # sentence dots, not "1.5"
-    t = re.sub(r"[,;:!?]", " and ", t)
-    t = re.sub(r"[^a-z0-9. ]+", " ", t)
-    t = " ".join(t.split())
-    t = re.sub(r"^(?:(?:hey |ok |okay )?(?:jarvis|drone) )?(?:please )?(?:and )?", "", t)
-    # conversational openers: "I want you to rise, turn around and land" (field 2026-11-21: this
-    # went to the LLM, which dropped the turn and the landing)
-    t = re.sub(r"^(?:(?:i want you to|i'?d like you to|i would like you to|i need you to|can you|"
-               r"could you|would you|will you|go ahead and|let'?s|now|just|please) )+", "", t)
-    t = re.sub(r"(?: and)? please$", "", t).strip()
-    t = re.sub(r"\b(?:and )+", "and ", t)              # "turn around, and land" -> one "and"
-    t = re.sub(r"^and |(?: and)+$", "", t).strip()
-    clauses = [c for c in _F_SPLIT.split(t) if c and c != "and"]
-    if not clauses or len(clauses) > 4:
+    # _clean: wake words, filler, "I want you to ..." (field 2026-11-21: that went to the LLM,
+    # which dropped the turn and the landing), sentence dots as "and", spoken numbers as digits
+    t = _clean(text)
+    clauses = [_OPENERS.sub("", _CLOSERS.sub("", c) + " ").strip() for c in _F_SPLIT.split(t)]
+    clauses = [c for c in clauses if c and c != "and"]
+    if not clauses or len(clauses) > 5:
         return None
+    landed = bool(telemetry) and not telemetry.get("armed")
+    airborne = bool(telemetry) and bool(telemetry.get("armed"))
     actions: list[dict] = []
     for c in clauses:
         mv = {"kind": "move", "fwd": 0.0, "right": 0.0, "up": 0.0, "yaw_deg": 0.0}
@@ -322,7 +440,25 @@ def fast_parse(text: str, telemetry: dict | None = None) -> BrainResult | None:
             alt = _fdist(m.group(1), m.group(2)) if m.group(1) else DEFAULT_TAKEOFF_M
             if not 0.3 <= alt <= 5.0:
                 return None
-            actions.append({"kind": "takeoff", "alt": alt})
+            if not any(a["kind"] == "takeoff" for a in actions):
+                actions.append({"kind": "takeoff", "alt": alt})
+            continue
+        if _F_HOLD.fullmatch(c):
+            # "rise and hover", "go left 2 m and stay there": it holds after a step anyway.
+            # Alone: hold here when flying, take off when landed, else let the LLM decide.
+            if actions:
+                continue
+            if len(clauses) == 1 and airborne:
+                actions.append({"kind": "stop"})
+                continue
+            if landed or not telemetry:
+                actions.append({"kind": "takeoff", "alt": DEFAULT_TAKEOFF_M})
+                continue
+            return None
+        if _F_FLY.fullmatch(c) and len(clauses) == 1:  # "fly" / "can you fly?" on the ground
+            if not landed:
+                return None  # already up: fly where? the LLM can ask
+            actions.append({"kind": "takeoff", "alt": DEFAULT_TAKEOFF_M})
             continue
         if _F_PHOTO.fullmatch(c):
             actions.append({"kind": "look", "action": "photo", "question": text})
@@ -337,14 +473,22 @@ def fast_parse(text: str, telemetry: dict | None = None) -> BrainResult | None:
             mv["yaw_deg"] = 360.0
         elif _F_BACK.fullmatch(c):
             mv["yaw_deg"] = 180.0
-        elif m := _F_TURN.fullmatch(c):
-            deg = _fnum(m.group(2), 90.0)
+        elif (m := _F_TURN.fullmatch(c)) or (m2 := _F_TURN2.fullmatch(c)):
+            side, num = (m.group(1), m.group(2)) if m else (m2.group(2), m2.group(1))
+            deg = _fnum(num, 90.0)
             if not 0 < deg <= 360:
                 return None
-            mv["yaw_deg"] = deg if m.group(1) == "right" else -deg
-        elif (m := _F_BARE.fullmatch(c)) and len(clauses) > 1:  # "rise, go left, then right": one leg
+            mv["yaw_deg"] = deg if side == "right" else -deg
+        elif (m := _F_BARE.fullmatch(c)) and (len(clauses) > 1 or m.group(1) in ("up", "down")):
+            # "rise, go left, then right": one leg each. Alone, only up/down (small and
+            # obvious); a bare "go left" goes to the LLM, which can ask how far.
             word = m.group(1)
             d = BARE_MOVE_M
+            if word == "up" and not actions and landed:
+                actions.append({"kind": "takeoff", "alt": DEFAULT_TAKEOFF_M})  # "hey drone, go up"
+                continue
+            if word == "down" and not actions and not airborne:
+                return None
             if word.startswith(("forward", "ahead")):
                 mv["fwd"] = d
             elif word.startswith("back"):
@@ -352,9 +496,9 @@ def fast_parse(text: str, telemetry: dict | None = None) -> BrainResult | None:
             elif word in ("left", "right"):
                 mv["right"] = d if word == "right" else -d
             elif word == "up":
-                mv["up"] = 0.5
+                mv["up"] = BARE_UPDOWN_M
             else:
-                mv["up"] = -0.5
+                mv["up"] = -BARE_UPDOWN_M
         else:
             m = _F_MOVE1.fullmatch(c)
             if m:
@@ -371,6 +515,8 @@ def fast_parse(text: str, telemetry: dict | None = None) -> BrainResult | None:
                          "right": ("right", 1), "up": ("up", 1), "down": ("up", -1)}[word]
             mv[key] = sign * d
         actions.append(mv)
+    if not actions:
+        return None
     if any(a["kind"] == "land" for a in actions[:-1]):
         return None  # "land and then go forward": odd, the LLM can sort it out
     if (telemetry and not telemetry.get("armed")
@@ -390,7 +536,9 @@ def _cm_to_m(t: str) -> str:
 
 
 def rule_parse(text: str, telemetry: dict | None = None) -> BrainResult:
-    t = _cm_to_m(text.lower().strip(" .!?"))
+    # _clean: same reading of numbers as the fast path ("six metres" was 0.5 m here, "one point
+    # five" was 5 m, "a couple of metres" also climbed 0.5 m)
+    t = _cm_to_m(_clean(text))
     if re.search(r"crash|flip|kamikaze|attack|chase|ram |hit (him|her|them|me)|out the window", t):
         return BrainResult("Absolutely not. I'd like to keep my propellers.", source="rules")
     if re.search(r"\b(stop|freeze|hold on|wait)\b", t):
@@ -428,7 +576,8 @@ def rule_parse(text: str, telemetry: dict | None = None) -> BrainResult:
             _DIR + r" (?:by )?" + _NUM + _UNIT, td)]  # "back 1 metre"
         taken = {h[0] for h in hits}
         hits += [(m.start(2), m.group(2), m.group(1)) for m in re.finditer(
-            r"(?:" + _NUM + _UNIT + r" )?" + _DIR, td) if m.start(2) not in taken]  # "1 m back"
+            r"(?:" + _NUM + _UNIT + r" (?:to (?:the |your )?)?)?" + _DIR, td)
+            if m.start(2) not in taken]  # "1 m back", "5 m to the left"
         # a bare direction word is everyday speech ("take off right now", "calm down",
         # "what's up"): it only counts with a distance or a movement verb (review3 #9)
         moving = re.search(r"\b(move|go|fly|head|back up|come|drift|slide|climb|rise|"
@@ -451,9 +600,13 @@ def rule_parse(text: str, telemetry: dict | None = None) -> BrainResult:
             mv["yaw_deg"] = 360.0
         elif re.search(r"turn back|other way|180|one eighty", t):
             mv["yaw_deg"] = 180.0
-        elif m := re.search(r"(?:turn|rotate|spin|yaw) (left|right)(?: by)?(?: " + _NUM + r")?", t):
+        elif m := re.search(r"(?:turn|rotate|spin|yaw) (?:to the )?(left|right)(?: by| for)?(?: " + _NUM + r")?", t):
             deg = _n(m.group(2), 90.0)
             mv["yaw_deg"] = deg if m.group(1) == "right" else -deg
+        elif m := re.search(r"(?:turn|rotate|spin|yaw) (?:by )?" + _NUM +
+                            r"(?: degrees)? (?:to (?:the |your )?)?(left|right)", t):
+            deg = _n(m.group(1), 90.0)  # "turn 90 degrees to the left"
+            mv["yaw_deg"] = deg if m.group(2) == "right" else -deg
         if any(mv[k] for k in ("fwd", "right", "up", "yaw_deg")):
             actions.append(mv)
     if not actions and _task(t) != "none":
