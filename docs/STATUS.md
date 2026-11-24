@@ -32,7 +32,30 @@ safety pilot on the transmitter):
   is GPS, the gate doesn't check flow, and there is no fallback to it.
 - Palm stop, the forward obstacle sensor's hardware, a public cloud deployment.
 
-## Latest changes: everyday navigation (2026-11-23, cloud lead)
+## Test scripts + square fix (2026-11-23, cloud lead)
+
+Three new scripts that check the software end to end:
+
+- `tools/person_gate_check.py`: the edge's real gate with the real drone's limits and a fake
+  detector that places people around the drone. 11 PASS, 2 GAP: a sideways / backward step of
+  0.5 m or less doesn't turn to look, so a person beside or behind is never checked. Climbs and
+  descents are never checked either (no up/down sensor).
+- `tools/nav_check.py`: phrases → brain → planner (rangefinder mode) → gate → sim; built-in
+  suite of 16 phrases or `--say ...`, `--llm` for the real model. ALL PASS.
+- `tools/phrase_check.py`: dry run, prints what the brain makes of each phrase.
+
+**Fixed (`station/planner.py`):** with the real drone's 2 m cap per move, "fly in a square"
+stopped after one side. The edge measures the next leg from where the drone stopped (up to
+0.3 m short), so the second 2 m side counted as 2.3 m and was refused. Patterns are now shrunk
+to the cap minus that 0.3 m (default square: 1.7 m). Test:
+`test_rng_default_square_fits_the_real_drones_2m_cap`.
+
+**Fixed (`station/brain.py`):** "fly out and back" flew *backward* 0.5 m and "go out 1 metre
+and come back" only went home (split on "and" into "out" + "back"). Both paths (fast and the
+rules fallback) now give the `out_and_back` pattern. "Turn around" stays a full 360° turn on
+purpose (the filming preset); "face the other way" is the 180°.
+
+## Everyday navigation (2026-11-23, cloud lead)
 
 `station/` only; no protocol or edge change (it uses the existing `goto`, `move_body`, `yaw`,
 `hover`). **Sim only: not flown.**
