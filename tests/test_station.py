@@ -1566,6 +1566,9 @@ async def test_rng_height_corrections_cannot_wind_up(rig):
     sim, edge = rig
     p, said = rng_planner(sim, edge)
     await run_plan(p, [{"kind": "takeoff", "alt": 1.0}])
+    # where takeoff leaves it depends on timing (at 10x the sim climbs 3 m/s, so a busy machine
+    # stops it ~0.2 m higher): judge the rise from here, not a fixed height (it was alt < 1.3)
+    start = sim.state().alt
     real = p.rng_height
     p.rng_height = lambda: 0.45 if real() is not None else None   # reads 0.25 m low, always
     sent = []
@@ -1578,7 +1581,8 @@ async def test_rng_height_corrections_cannot_wind_up(rig):
     await asyncio.sleep(7.0)
     ups = [u for op, u in sent if op == "move_body"]
     assert ups and sum(ups) == pytest.approx(p.cfg.rng_fix_total, abs=0.02)   # 3 x 0.15, then no more
-    assert sim.state().armed and sim.state().alt < 1.3
+    s = sim.state()
+    assert s.armed and s.alt - start < p.cfg.rng_fix_total + 0.1, (start, s.alt)
 
 
 # --- everyday navigation: compass, height, wait, patterns, retrace, repeat (2026-11-23) -------
