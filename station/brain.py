@@ -856,6 +856,10 @@ def rule_parse(text: str, telemetry: dict | None = None) -> BrainResult:
                         r" ?m (?:to the |due )?" + _F_CDIR, t):
         word, num = (m.group(1), m.group(2)) if m.group(1) else (m.group(4), m.group(3))
         actions.append(_compass_move(word, _n(num, BARE_MOVE_M)))
+    elif m := re.search(r"\b(?:go|fly|head|move|drift)(?: (?:to the|towards the|towards|due))? "
+                        + _F_CDIR + r"(?=$| and | then )", t):  # not "go to the north door"
+        # a bare "go north" did nothing here; same small step as a bare "go left" (0.5 m)
+        actions.append(_compass_move(m.group(1), 0.5))
     elif m := _mission:
         target = m.group(1).strip()
         after = "come_back" if re.search(r"come back|return", t) else "stay"

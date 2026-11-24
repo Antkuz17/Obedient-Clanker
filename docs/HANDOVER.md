@@ -2,8 +2,8 @@
 
 **To fly the real drone from any laptop (field setup, GPS, voice flights): [RUN_FLIGHTS.md](RUN_FLIGHTS.md).**
 
-For anyone picking this up cold, human or Claude. Read this, then [STATUS.md](STATUS.md) (what
-works) and [TODO.md](TODO.md) (what's open). The design and the laptop ↔ drone contract are in
+For anyone picking this up cold, human or Claude. Read this, then your local STATUS.md (what
+works) and TODO.md (what's open), both git-ignored. The design and the laptop ↔ drone contract are in
 [PRD.md](PRD.md); the end-to-end wiring is in [flow.md](flow.md); the QNX facts verified on the
 board are in [qnx.md](qnx.md).
 
@@ -181,7 +181,7 @@ stack; turn it off by running the same without `--demo`. In demo mode (`edge/dem
 
 ## Open items
 
-See [TODO.md](TODO.md).
+See your local `docs/TODO.md` (git-ignored).
 
 ## Rules that bit us
 

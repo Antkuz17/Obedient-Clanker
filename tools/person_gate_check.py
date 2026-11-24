@@ -10,7 +10,7 @@ blind spot. They are not failures, but you should know about them before flying 
     .venv/bin/python -m tools.person_gate_check --only walk_in
 
 The sim drone stops instantly and the fake detector never misses, so this checks the gate's
-logic; real stopping distance and detector accuracy are field tests (docs/TODO.md).
+logic; real stopping distance and detector accuracy are field tests.
 """
 from __future__ import annotations
 
@@ -255,7 +255,7 @@ async def main(a) -> int:
         det.people = []
         await attempt(edge, "hover")
     print("\nNot covered here (no sensor at all): people below the drone on landing, people "
-          "behind it on a short backward step. See docs/TODO.md > Software.")
+          "behind it on a short backward step.")
 
     await attempt(edge, "land")
     det_task.cancel()

@@ -26,7 +26,7 @@ import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
-from edge.config import ExecConfig, SafetyConfig, flight_time
+from edge.config import SafetyConfig, flight_time
 from shared.client import CommandRejected, EdgeClient
 
 from . import vision
@@ -101,7 +101,11 @@ class PlannerConfig:
     rng_max_alt: float = 1.2       # land if the rangefinder reads above this
     rng_no_echo: float = 1.9       # readings above this are "no echo" (the sensor reports ~2.0)
     rng_tol: float = 0.12          # correct the height when it's off by more than this
-    max_leg: float = 2.0           # rng: longest single sideways move (the Pi's gate caps it)
+    max_leg: float = 1.5           # rng: longest single primitive sent. The Pi's gate caps a
+                                   # move at 2 m measured in 3D from where the drone *is*: up to
+                                   # 0.3 m short of its last target, and the commanded height
+                                   # differs from the real one by the rangefinder corrections,
+                                   # so 2.0 m legs were refused as 2.0x m (tools/nav_check)
     rng_max_side: float = 2.0      # rng: a sideways command flies at most this far (field: 5 m
                                    # in 2 m legs turned to face each leg and wandered off)
     rng_fix_max: float = 0.15      # m per height correction (0.3 knocked it from 0.8 m to the floor)
@@ -557,7 +561,9 @@ class Planner:
             d = math.hypot(n - cn, e - ce)
             if d < 0.15:
                 return
-            f = 1.0 if self.cfg.max_step is None else min(1.0, (self.cfg.max_step - 0.1) / d)
+            leg = self.cfg.max_leg if self.cfg.rng else (
+                None if self.cfg.max_step is None else self.cfg.max_step - 0.1)
+            f = 1.0 if leg is None else min(1.0, leg / d)
             await self._prim("goto", n=round(cn + f * (n - cn), 3), e=round(ce + f * (e - ce), 3))
             if f >= 1.0:
                 return
@@ -599,6 +605,11 @@ class Planner:
         await self._prim("stop")
 
     async def _do_home(self, a: dict) -> None:
+        if self.cfg.rng and self.home is not None:
+            # one return_home from more than 2 m out was refused by the Pi's per-move cap, so
+            # after a few 2 m moves "come back" couldn't bring it back: go home in legs
+            await self._goto(*self.home)
+            return
         await self._prim("return_home")
 
     async def _do_move(self, a: dict) -> None:
@@ -705,12 +716,11 @@ class Planner:
         size = a.get("size") or self.cfg.pattern_size
         legs = self._legs(pattern_points(shape, size, side))
         longest = max(math.hypot(*leg) for leg in legs)
+        # each side is flown in legs of at most max_leg (_rng_move), so a 2 m side fits the
+        # Pi's 2 m cap; the shape itself is capped at what one command may fly
         caps = [c for c in (self.cfg.rng_max_side if self.cfg.rng else None, self.cfg.max_step)
                 if c]
-        # The edge builds each leg on its last *target* but measures the step against the cap
-        # from where the drone *is*, up to pos_tolerance short of it: a 2 m square's second
-        # side came out as 2.3 m and was refused (tools/nav_check, 2026-11-23). Keep that spare.
-        cap = min(caps) - ExecConfig.pos_tolerance if caps else None
+        cap = min(caps) if caps else None
         if cap is not None and longest > cap:
             # out here a command flies at most rng_max_side: shrink the shape, don't distort it
             size *= cap / longest

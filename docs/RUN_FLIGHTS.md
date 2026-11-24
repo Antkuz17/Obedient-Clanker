@@ -90,7 +90,7 @@ A new preflight is needed before every flight. The page shows the drone's camera
 which flight it picked, Jarvis's reply, the flight log and live charts (real height vs the FC's
 estimate, the track from above, battery).
 
-### From the dashboard (one page for everything; not flown yet, see STATUS.md)
+### From the dashboard (one page for everything)
 ```sh
 python -m tools.demo_laptop --edge <pi> --rng
 ```

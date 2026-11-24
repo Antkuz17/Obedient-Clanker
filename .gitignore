@@ -12,3 +12,8 @@ edge/camgrab/camgrab
 edge/vision/models/
 # flight recordings copied from the Pi (blackbox); keep them out of git
 logs/
+# local status / to-do / review notes: not in the repo
+docs/STATUS.md
+docs/TODO.md
+docs/review.md
+docs/review2.md

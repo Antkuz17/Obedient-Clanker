@@ -6,8 +6,8 @@ with an ultrasonic rangefinder for height. Two people.
 
 **Flying the real drone (any laptop):** [docs/RUN_FLIGHTS.md](docs/RUN_FLIGHTS.md).
 
-**Read first:** [docs/HANDOVER.md](docs/HANDOVER.md) (current state, how to run everything, gotchas), then [docs/PRD.md](docs/PRD.md) (the design and the contracts), [docs/TODO.md](docs/TODO.md) (the to-do list), then
-[docs/STATUS.md](docs/STATUS.md) (what's built, what's verified, what's next). Hardware and
+**Read first:** [docs/HANDOVER.md](docs/HANDOVER.md) (current state, how to run everything, gotchas), then [docs/PRD.md](docs/PRD.md) (the design and the contracts), `docs/TODO.md` (the to-do list), then
+`docs/STATUS.md` (what's built, what's next). Those two are local notes, git-ignored. Hardware and
 flight details: `docs/hardware.md`, `docs/flight-setup.md`, `docs/qnx.md`.
 
 ## Who does what
@@ -71,5 +71,5 @@ macOS: AirPlay Receiver listens on :7000, so `edge --sim` on the default port fa
   3.14 and 3.11): stdlib + pymavlink + numpy
   + OpenCV only. No new pip dependencies there without checking they install on QNX.
 - Safety limits live in `edge/config.py`. Tune them there, not inline.
-- Keep `docs/STATUS.md` current at the end of every work session: done, verified, next.
+- Keep your local `docs/STATUS.md` current at the end of every work session (git-ignored).
 - Commit in small logical commits on `main` (the team works on main).

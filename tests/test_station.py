@@ -1048,7 +1048,8 @@ async def test_rng_sideways_moves_go_in_legs_and_height_stays_in_range(rig):
     await run_plan(p, [{"kind": "takeoff"}])
     await run_plan(p, [{"kind": "move", "fwd": 0.0, "right": -5.0, "up": 0.0, "yaw_deg": 0.0}], 90)
     legs = [l for l in p.log if l.startswith("move_body")]
-    assert legs == ["move_body {'fwd': 0.0, 'right': -2.0}"] * 2 + ["move_body {'fwd': 0.0, 'right': -1.0}"]
+    # legs of at most max_leg (1.5 m: a 2 m leg could be refused by the Pi's 2 m cap)
+    assert legs == ["move_body {'fwd': 0.0, 'right': -1.5}"] * 3 + ["move_body {'fwd': 0.0, 'right': -0.5}"]
     assert sim.state().e == pytest.approx(-5.0, abs=0.3)
     await run_plan(p, [{"kind": "move", "up": 0.3}])
     assert p._target == pytest.approx(1.0) and sim.state().alt == pytest.approx(1.0, abs=0.15)
@@ -1153,8 +1154,9 @@ async def test_rng_test3_left_right_and_back(rig):
     r = fast_parse("Hey drone, rise, go left 5 metres, then right 5 metres, then come down")
     await run_plan(p, r.actions, 120)
     legs = [l for l in p.log if l.startswith("move_body") and "right" in l]
-    # capped at 2 m per command in the field (5 m in legs wandered off): one leg each way
-    assert legs == ["move_body {'fwd': 0.0, 'right': -2.0}", "move_body {'fwd': 0.0, 'right': 2.0}"]
+    # capped at 2 m per command in the field (5 m in legs wandered off), flown as 1.5 + 0.5
+    assert legs == ["move_body {'fwd': 0.0, 'right': -1.5}", "move_body {'fwd': 0.0, 'right': -0.5}",
+                    "move_body {'fwd': 0.0, 'right': 1.5}", "move_body {'fwd': 0.0, 'right': 0.5}"]
     assert abs(sim.state().e) < 0.35 and not sim.state().armed
     assert any("2 metres at a time" in s for s in said)
     assert not any("sinking" in s or "on my own" in s or "pilot" in s for s in said)
@@ -1731,9 +1733,9 @@ async def test_patterns_come_back_to_the_start(rig, shape):
     assert all(e <= 0.4 for _, e in seen)  # "left" of a drone facing north is west
 
 
-async def test_rng_default_square_fits_the_real_drones_2m_cap():
-    """With the real drone's 2 m cap per move, a 2 m square's second side was measured from
-    where the first one stopped (up to 0.3 m short) and refused as 2.3 m (tools/nav_check)."""
+@pytest.fixture
+async def capped_rig():
+    """The sim edge with the real drone's 2 m cap per move (edge/__main__.py, --mav)."""
     cfg = SafetyConfig()
     cfg.max_step = 2.0
     sim = SimVehicle(cfg, speedup=10.0)
@@ -1742,18 +1744,53 @@ async def test_rng_default_square_fits_the_real_drones_2m_cap():
     await srv.start()
     edge = await EdgeClient("127.0.0.1", srv.port).connect()
     await asyncio.sleep(0.3)  # first telemetry (the rangefinder reading) before takeoff
-    try:
-        p, said = rng_planner(sim, edge)
-        await run_plan(p, [{"kind": "takeoff"}])
-        await run_plan(p, [{"kind": "pattern", "shape": "square", "size": None,
-                            "side": "right"}], 120)
-        assert not any("Safety says no" in s for s in said), said
-        assert sum(1 for line in p.log if line.startswith("move_body")) >= 4
-        await asyncio.sleep(SETTLE)
-        assert math.hypot(sim.state().n, sim.state().e) < 0.4
-    finally:
-        await edge.close()
-        await srv.close()
+    yield sim, edge
+    await edge.close()
+    await srv.close()
+
+
+async def test_rng_default_square_fits_the_real_drones_2m_cap(capped_rig):
+    """With the real drone's 2 m cap per move, a 2 m square's second side was measured from
+    where the first one stopped (up to 0.3 m short) and refused as 2.3 m (tools/nav_check)."""
+    sim, edge = capped_rig
+    p, said = rng_planner(sim, edge)
+    await run_plan(p, [{"kind": "takeoff"}])
+    await run_plan(p, [{"kind": "pattern", "shape": "square", "size": None, "side": "right"}],
+                   120)
+    assert not any("Safety says no" in s for s in said), said
+    assert sum(1 for line in p.log if line.startswith("move_body")) >= 4
+    await asyncio.sleep(SETTLE)
+    assert math.hypot(sim.state().n, sim.state().e) < 0.4
+
+
+async def test_rng_2m_moves_after_a_height_change_fit_the_cap(capped_rig):
+    """The gate measures a move in 3D from where the drone is; after a height change the
+    commanded height differs from the real one, so a 2.0 m leg was refused as 2.0x m."""
+    sim, edge = capped_rig
+    p, said = rng_planner(sim, edge)
+    await run_plan(p, [{"kind": "takeoff"}])
+    await run_plan(p, [{"kind": "height", "alt": 0.9}])
+    for _ in range(2):
+        await run_plan(p, [{"kind": "move", "right": -2.0}], 60)
+    await run_plan(p, [{"kind": "compass", "north": 2.0, "east": 0.0, "face": None}], 60)
+    assert not any("Safety says no" in s for s in said), said
+    await asyncio.sleep(SETTLE)
+    s = sim.state()
+    assert s.e == pytest.approx(-4.0, abs=0.4) and s.n == pytest.approx(2.0, abs=0.4)
+
+
+async def test_rng_come_back_from_beyond_the_cap(capped_rig):
+    """One return_home from 4.5 m out was refused by the 2 m cap: "come back" now goes in legs."""
+    sim, edge = capped_rig
+    p, said = rng_planner(sim, edge)
+    await run_plan(p, [{"kind": "takeoff"}])
+    await run_plan(p, [{"kind": "compass", "north": 2.0, "east": 0.0, "face": None}], 60)
+    await run_plan(p, [{"kind": "compass", "north": 0.0, "east": 2.0, "face": None}], 60)
+    await run_plan(p, [{"kind": "compass", "north": 2.0, "east": 0.0, "face": None}], 60)
+    await run_plan(p, [{"kind": "home"}], 90)
+    assert not any("Safety says no" in s for s in said), said
+    await asyncio.sleep(SETTLE)
+    assert math.hypot(sim.state().n, sim.state().e) < 0.4
 
 
 @pytest.mark.parametrize("text, size", [
@@ -1779,6 +1816,16 @@ def test_out_and_back_leaves_other_back_phrases_alone():
     assert rule_parse("come back", tel).actions == [{"kind": "home"}]
 
 
+def test_rules_bare_compass_move_is_a_small_step():
+    """With no LLM, a bare "go north" did nothing; it's now the same 0.5 m as a bare "go left".
+    An object named with a compass word is still a mission."""
+    tel = {"armed": True}
+    assert rule_parse("go north", tel).actions == [
+        {"kind": "compass", "north": 0.5, "east": 0.0, "up": 0.0, "face": None}]
+    assert rule_parse("head south west", tel).actions[0]["kind"] == "compass"
+    assert rule_parse("go to the north door", tel).actions[0]["kind"] == "mission"
+
+
 async def _track(sim, seen):
     while True:
         s = sim.state()
@@ -1791,7 +1838,7 @@ async def test_rng_pattern_is_shrunk_to_the_field_cap(rig):
     p, said = rng_planner(sim, edge)  # rng_max_side 2 m, as flown
     await run_plan(p, [{"kind": "takeoff"}])
     await run_plan(p, [{"kind": "pattern", "shape": "square", "size": 4.0, "side": "right"}], 120)
-    assert any("keep the square to 1.7" in s for s in said)  # 2 m cap - 0.3 m leg slack
+    assert any("keep the square to 2.0" in s for s in said)
     assert not any("at a time out here" in s for s in said)  # no leg hit the per-command cap
     await asyncio.sleep(SETTLE)
     assert math.hypot(sim.state().n, sim.state().e) < 0.4

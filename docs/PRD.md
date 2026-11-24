@@ -2,8 +2,8 @@
 
 A drone you command by voice. Say "rise and do a 360" or "go two metres to the left and take a
 photo" and it flies, answers back, and refuses anything unsafe. This page is the design and the
-contracts between the parts. What works today is in [STATUS.md](STATUS.md); how the pieces
-connect, and what happens when one dies, is in [flow.md](flow.md).
+contracts between the parts. How the pieces connect, and what happens when one dies, is in
+[flow.md](flow.md).
 
 > Edge for reflexes, cloud for intelligence. Vultr thinks; QNX keeps it alive.
 
