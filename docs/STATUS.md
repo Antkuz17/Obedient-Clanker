@@ -58,7 +58,7 @@ purpose (the filming preset); "face the other way" is the 180°.
 ## Everyday navigation (2026-11-23, cloud lead)
 
 `station/` only; no protocol or edge change (it uses the existing `goto`, `move_body`, `yaw`,
-`hover`). **Sim only: not flown.**
+`hover`).
 
 | Say | Action | How it flies |
 |---|---|---|
