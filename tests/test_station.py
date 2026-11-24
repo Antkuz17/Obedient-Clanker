@@ -1727,6 +1727,54 @@ async def test_patterns_come_back_to_the_start(rig, shape):
     assert all(e <= 0.4 for _, e in seen)  # "left" of a drone facing north is west
 
 
+async def test_rng_default_square_fits_the_real_drones_2m_cap():
+    """With the real drone's 2 m cap per move, a 2 m square's second side was measured from
+    where the first one stopped (up to 0.3 m short) and refused as 2.3 m (tools/nav_check)."""
+    cfg = SafetyConfig()
+    cfg.max_step = 2.0
+    sim = SimVehicle(cfg, speedup=10.0)
+    srv = EdgeServer(sim, cfg, WatchdogConfig(), host="127.0.0.1", port=0,
+                     perception_port=None, flow_port=None)
+    await srv.start()
+    edge = await EdgeClient("127.0.0.1", srv.port).connect()
+    await asyncio.sleep(0.3)  # first telemetry (the rangefinder reading) before takeoff
+    try:
+        p, said = rng_planner(sim, edge)
+        await run_plan(p, [{"kind": "takeoff"}])
+        await run_plan(p, [{"kind": "pattern", "shape": "square", "size": None,
+                            "side": "right"}], 120)
+        assert not any("Safety says no" in s for s in said), said
+        assert sum(1 for line in p.log if line.startswith("move_body")) >= 4
+        await asyncio.sleep(SETTLE)
+        assert math.hypot(sim.state().n, sim.state().e) < 0.4
+    finally:
+        await edge.close()
+        await srv.close()
+
+
+@pytest.mark.parametrize("text, size", [
+    ("fly out and back", None), ("out and back", None), ("go out and come back", None),
+    ("go out 1 metre and come back", 1.0), ("go out two metres and then come back", 2.0),
+    ("fly out 3 m and back again", 3.0),
+])
+def test_out_and_back_is_the_pattern_not_a_backward_move(text, size):
+    """Split on "and" it was "out" + "back": the rules flew backward 0.5 m ("fly out and back")
+    or only went home ("go out 1 metre and come back")."""
+    want = [{"kind": "pattern", "shape": "out_and_back", "size": size, "side": "right"}]
+    tel = {"armed": True}
+    assert fast_parse(text, tel).actions == want
+    assert rule_parse(text, tel).actions == want
+    assert rule_parse(text, {"armed": False}).actions[0]["kind"] == "takeoff"
+
+
+def test_out_and_back_leaves_other_back_phrases_alone():
+    tel = {"armed": True}
+    assert [a["kind"] for a in fast_parse("go forward 2 metres and come back", tel).actions] == [
+        "move", "retrace"]
+    assert rule_parse("back up a bit", tel).actions[0]["fwd"] == -0.5
+    assert rule_parse("come back", tel).actions == [{"kind": "home"}]
+
+
 async def _track(sim, seen):
     while True:
         s = sim.state()
@@ -1739,7 +1787,7 @@ async def test_rng_pattern_is_shrunk_to_the_field_cap(rig):
     p, said = rng_planner(sim, edge)  # rng_max_side 2 m, as flown
     await run_plan(p, [{"kind": "takeoff"}])
     await run_plan(p, [{"kind": "pattern", "shape": "square", "size": 4.0, "side": "right"}], 120)
-    assert any("keep the square to 2.0" in s for s in said)
+    assert any("keep the square to 1.7" in s for s in said)  # 2 m cap - 0.3 m leg slack
     assert not any("at a time out here" in s for s in said)  # no leg hit the per-command cap
     await asyncio.sleep(SETTLE)
     assert math.hypot(sim.state().n, sim.state().e) < 0.4

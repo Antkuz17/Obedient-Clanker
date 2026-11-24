@@ -26,7 +26,7 @@ import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
-from edge.config import SafetyConfig, flight_time
+from edge.config import ExecConfig, SafetyConfig, flight_time
 from shared.client import CommandRejected, EdgeClient
 
 from . import vision
@@ -705,9 +705,15 @@ class Planner:
         size = a.get("size") or self.cfg.pattern_size
         legs = self._legs(pattern_points(shape, size, side))
         longest = max(math.hypot(*leg) for leg in legs)
-        if self.cfg.rng and longest > self.cfg.rng_max_side:
+        caps = [c for c in (self.cfg.rng_max_side if self.cfg.rng else None, self.cfg.max_step)
+                if c]
+        # The edge builds each leg on its last *target* but measures the step against the cap
+        # from where the drone *is*, up to pos_tolerance short of it: a 2 m square's second
+        # side came out as 2.3 m and was refused (tools/nav_check, 2026-11-23). Keep that spare.
+        cap = min(caps) - ExecConfig.pos_tolerance if caps else None
+        if cap is not None and longest > cap:
             # out here a command flies at most rng_max_side: shrink the shape, don't distort it
-            size *= self.cfg.rng_max_side / longest
+            size *= cap / longest
             legs = self._legs(pattern_points(shape, size, side))
             if a.get("size"):  # they asked for a size: say it's smaller
                 await self.say(f"I'll keep the {shape.replace('_', ' ')} to "

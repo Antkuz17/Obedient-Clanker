@@ -587,6 +587,17 @@ _SHAPE_NAMES = {"square": "square", "box": "square", "triangle": "triangle", "ci
 _WAIT_WORDS = {"one": 1.0, "a few": 3.0, "a couple of": 2.0, "a couple": 2.0}
 
 
+def _outback(num: str, unit: str) -> re.Pattern:
+    """"(fly) out and back", "go out 1 metre and come back": the out_and_back pattern. Split on
+    "and" it was "out" + "back": the rules flew *backward* 0.5 m, or only went home."""
+    return re.compile(r"(?:(?:fly|go|head|move|pop|zip) )?(?:out|away)(?: (?:by |for )?" + num
+                      + unit + r")?(?: (?:forwards?|ahead))?(?: and| then| and then)+ (?:(?:come|"
+                      r"fly|go|head) )?back(?: again| here| to me| to where you started)?")
+
+
+_F_OUTBACK = _outback(_FNUM, _FUNIT)
+
+
 def _compass_move(word: str, d: float) -> dict:
     b = math.radians(HEADINGS[word])
     return {"kind": "compass", "north": round(d * math.cos(b), 3),
@@ -609,6 +620,14 @@ def fast_parse(text: str, telemetry: dict | None = None) -> BrainResult | None:
     # _clean: wake words, filler, "I want you to ..." (field 2026-11-21: that went to the LLM,
     # which dropped the turn and the landing), sentence dots as "and", spoken numbers as digits
     t = _clean(text)
+    if m := _F_OUTBACK.fullmatch(_OPENERS.sub("", _CLOSERS.sub("", t) + " ").strip()):
+        size = _fdist(m.group(1), m.group(2)) if m.group(1) else None
+        if size is not None and not 0 < size <= 20:
+            return None
+        acts = [{"kind": "pattern", "shape": "out_and_back", "size": size, "side": "right"}]
+        if telemetry and not telemetry.get("armed"):
+            acts.insert(0, {"kind": "takeoff", "alt": DEFAULT_TAKEOFF_M})
+        return BrainResult(DEFAULT_REPLY["pattern"], acts, "fast")
     clauses = [_OPENERS.sub("", _CLOSERS.sub("", c) + " ").strip() for c in _F_SPLIT.split(t)]
     clauses = [c for c in clauses if c and c != "and"]
     if not clauses or len(clauses) > 5:
@@ -771,6 +790,7 @@ def _cm_to_m(t: str) -> str:
     return _CM.sub(lambda m: f"{_n(m.group(1), 0.0) / 100:g} m", t)
 
 
+_R_OUTBACK = _outback(_NUM, r" ?(?:m|metres?|meters?)?\b")
 _NEGATED = re.compile(r"\b(?:dont|do not|doesnt|never|not|no need to|stop trying to)\b")
 
 
@@ -796,6 +816,13 @@ def rule_parse(text: str, telemetry: dict | None = None) -> BrainResult:
         return BrainResult("Holding.", [{"kind": "stop"}], "rules")
     if re.search(r"\bland\b|come down|touch down|get down", t):
         return BrainResult("Coming down.", [{"kind": "land"}], "rules")
+    if m := _R_OUTBACK.search(t):
+        size = _n(m.group(1), 0.0) if m.group(1) else None
+        acts = [{"kind": "pattern", "shape": "out_and_back",
+                 "size": size if size and 0 < size <= 20 else None, "side": "right"}]
+        if telemetry and not telemetry.get("armed"):
+            acts.insert(0, {"kind": "takeoff", "alt": DEFAULT_TAKEOFF_M})
+        return BrainResult(DEFAULT_REPLY["pattern"], acts, "rules")
     # "come back the way you came" isn't home; after moves in the same sentence it comes last
     # ("go west 2 m and come back the way you came" used to drop the move)
     retrace = False
