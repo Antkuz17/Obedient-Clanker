@@ -21,7 +21,7 @@ from edge.video import SIM_WORLD, intrinsics
 from shared.client import EdgeClient
 from station import localize_stub
 from station.ai import AI
-from station.brain import Brain, fast_parse, is_urgent, rule_parse
+from station.brain import Brain, fast_parse, is_urgent, person_refusal, rule_parse
 from station.camera import Frame, Pose
 from station.config import MissingKey, Settings
 from station.localize import box_to_goal, locate, parse_box
@@ -1869,3 +1869,39 @@ async def test_llm_asked_again_when_it_returns_nothing():
                               {"armed": True})
     assert ai.calls == ["chat", "chat"] and r.source == "llm"
     assert [a["kind"] for a in r.actions] == ["compass", "retrace"]
+
+
+def _tel(*dists, armed=True):
+    return {"armed": armed, "alt": 1.0, "people": [[0, 0, 10, 10, 0.9, d] for d in dists]}
+
+
+@pytest.mark.parametrize("text,dists,refused", [
+    ("go forward", (1.0,), True),            # room 0.77 m: any forward move is refused
+    ("move closer", (1.2,), True),
+    ("forward 1 m", (2.5,), True),           # room 1.92 - 1 < 1 m clearance
+    ("forward 0.5 m", (2.5,), False),        # room 1.92 - 0.5 >= 1: the gate would allow it
+    ("go forward", (3.0,), False),           # unknown distance: never guesses a long move
+    ("go forward", (), False),               # nobody seen
+    ("forward then land", (1.0,), False),    # landing must still get through
+    ("stop moving forward", (1.0,), False),
+    ("fly towards the door", (1.0,), False), # a mission turns first; leave it to the gate
+    ("go back 1 m", (1.0,), False),
+])
+def test_person_refusal_skips_the_llm_only_when_the_gate_would_refuse(text, dists, refused):
+    r = person_refusal(text, _tel(*dists))
+    assert (r is not None) == refused
+    if r:
+        assert r.actions == [] and "person" in r.reply
+
+
+def test_person_refusal_only_in_the_air():
+    assert person_refusal("go forward", _tel(1.0, armed=False)) is None
+
+
+def test_brain_refuses_before_the_llm():
+    class NoLLM:
+        async def chat(self, *a, **k):
+            raise AssertionError("LLM called")
+    b = Brain(NoLLM())
+    r = asyncio.run(b.think("fly forward a bit", _tel(1.0)))
+    assert r.source == "person" and r.actions == []

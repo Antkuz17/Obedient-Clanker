@@ -31,6 +31,8 @@ import math
 import re
 from dataclasses import dataclass, field
 
+from edge.config import SafetyConfig
+
 from .ai import AI
 from .config import MissingKey
 
@@ -183,6 +185,41 @@ def test4_refusal(text: str, telemetry: dict | None = None,
                        "don't see anyone ahead right now.", [], "test4")
 
 
+# "forward" without "towards": "fly towards the door" is a mission that turns to face the door
+# first, so a person in front of the camera now may not be in its path.
+_AHEAD = re.compile(r"\b(forwards?|straight ahead|closer|"
+                    r"(?:move|go|fly|head|keep going) ahead(?! and))\b", re.I)
+_SAFETY = SafetyConfig()
+
+
+def person_refusal(text: str, telemetry: dict | None = None) -> BrainResult | None:
+    """Skip the LLM when a plain forward request would certainly be refused by the edge's person
+    check (edge/safety.py path_blocked) because someone is close in front of the camera right
+    now. Only a shortcut: it uses the same numbers as the gate and never refuses a move the gate
+    would allow, and the gate on the Pi still checks everything that does get sent. A distance
+    it can read ("forward 1 m") is used; otherwise it assumes the smallest checked move."""
+    if not telemetry or not telemetry.get("armed") or not _AHEAD.search(text):
+        return None
+    if _T4_LAND.search(text) or _T4_STOP.search(text) or is_urgent(text):
+        return None  # landing / stopping must still get through
+    d = [b[5] for b in (telemetry.get("people") or [])
+         if isinstance(b, (list, tuple)) and len(b) >= 6 and isinstance(b[5], (int, float))]
+    if not d:
+        return None
+    ahead = _SAFETY.forward_check_min_m
+    parsed = fast_parse(text, telemetry)
+    if parsed and parsed.actions:
+        a = parsed.actions[0]
+        if a.get("kind") != "move" or a.get("fwd", 0) <= 0 or a.get("right") or a.get("yaw_deg"):
+            return None  # not a straight-ahead move: leave it to the LLM and the gate
+        ahead = a["fwd"]
+    room = min(d) / (1 + _SAFETY.person_range_error)  # as edge/safety.py person_room
+    if room - ahead >= _SAFETY.person_close_m:
+        return None
+    return BrainResult(f"I'm not flying forward. There's a person {min(d):.1f} metres ahead "
+                       "of me. Safety first.", [], "person")
+
+
 def normalize(name: str, args: dict) -> dict | None:
     """Tool call -> action dict with clean types, or None if it's junk."""
     if name not in TOOL_NAMES:
@@ -293,6 +330,8 @@ class Brain:
         if not text:
             return BrainResult("I didn't catch that.", source="rules")
         if (r := test4_refusal(text, telemetry, self.test4_armed)) is not None:  # before anything that can fly
+            return r
+        if (r := person_refusal(text, telemetry)) is not None:  # no LLM call for a sure refusal
             return r
         if is_urgent(text):
             return rule_parse(text, telemetry)  # urgent: skip the LLM round trip (~0.7 s)
