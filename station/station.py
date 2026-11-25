@@ -312,7 +312,8 @@ class Station:
 
     # --- local mode --------------------------------------------------------------------------
     async def handle_text(self, text: str) -> None:
-        r = await self.brain.think(text, self.edge.telemetry)
+        r = await self.brain.think(text, self.edge.telemetry,
+                                   time.monotonic() - self.edge.telemetry_t)
         print(f"  [{r.source}] {r.actions}")
         if r.actions:
             self.planner.submit(r.actions, r.reply)  # spoken once the edge takes the first step

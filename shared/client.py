@@ -33,6 +33,7 @@ class EdgeClient:
         self.host, self.port = host, port
         self.on_event = on_event
         self.telemetry: dict = {}
+        self.telemetry_t = 0.0  # time.monotonic() when the last telemetry arrived
         self.events: list[dict] = []
         self._ids = itertools.count(1)
         self._acks: dict[str, asyncio.Future] = {}
@@ -117,7 +118,7 @@ class EdgeClient:
     def _dispatch(self, m: dict) -> None:
         t = m["type"]
         if t == P.TELEMETRY:
-            self.telemetry = m
+            self.telemetry, self.telemetry_t = m, time.monotonic()
         elif t == P.ACK and (f := self._acks.pop(m["id"], None)) and not f.done():
             f.set_result(m)
         elif t == P.DONE and (f := self._dones.get(m["id"])) and not f.done():

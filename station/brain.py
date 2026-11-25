@@ -32,6 +32,7 @@ import re
 from dataclasses import dataclass, field
 
 from edge.config import SafetyConfig
+from edge.safety import Perception, path_blocked
 
 from .ai import AI
 from .config import MissingKey
@@ -151,14 +152,35 @@ class BrainResult:
 # for me", "the test for today")
 TEST4 = re.compile(r"\btest\s*(?:four|4|for(?!\s+(?:me|you|us|the|a|an|my|your|this|that|it|"
                    r"today|now)\b))\b", re.I)
-# a test-4 sentence that also asks to come down or stop must still do that (review: "that's
-# enough of test four, land" and "stop moving forward" used to send nothing)
-_T4_LAND = re.compile(r"\b(?:land|come down|touch down|get down)\b", re.I)
-_T4_STOP = re.compile(r"\b(?:stop|halt|abort|freeze|hold on|wait)\b", re.I)
+# A sentence that also asks to come down or stop must still do that, even when the rest of it
+# is refused (review: "that's enough of test four, land" and "stop moving forward" used to
+# send nothing).
+LAND_WORDS = re.compile(r"\b(?:land|come down|touch down|get down)\b", re.I)
+STOP_WORDS = re.compile(r"\b(?:stop|halt|abort|freeze|hold on|wait)\b", re.I)
 # With test 4 armed off camera (Brain.test4_armed, POST /test4), a plain forward request is the
 # refusal too, so nobody has to say "test four" on camera (cloud lead, 2026-11-22).
-FORWARD = re.compile(r"\b(forwards?|straight ahead|towards?|closer|"
-                     r"(?:move|go|fly|head|keep going) ahead(?! and))\b", re.I)
+_AHEAD_WORDS = r"forwards?|straight ahead|closer|(?:move|go|fly|head|keep going) ahead(?! and)"
+FORWARD = re.compile(rf"\b(?:towards?|{_AHEAD_WORDS})\b", re.I)
+# Without "towards": "fly towards the door" is a mission that turns to face the door first, so
+# a person in front of the camera now may not be in its path.
+STRAIGHT_AHEAD = re.compile(rf"\b(?:{_AHEAD_WORDS})\b", re.I)
+# Telemetry older than this may show a person who has since gone (the edge itself drops boxes
+# after 0.5 s; the station's copy goes stale if the link stalls).
+PEOPLE_FRESH_S = 0.5
+_SAFETY = SafetyConfig()
+
+
+def nearest_person_m(telemetry: dict | None) -> float | None:
+    """Distance to the nearest person the on-board detector sees right now, or None. Telemetry
+    "people" boxes are [x0, y0, x1, y1, score, metres] (edge/vision/__main__.py)."""
+    d = [b[5] for b in ((telemetry or {}).get("people") or [])
+         if isinstance(b, (list, tuple)) and len(b) >= 6 and isinstance(b[5], (int, float))]
+    return min(d) if d else None
+
+
+def _person_ahead_reply(dist_m: float, source: str) -> BrainResult:
+    return BrainResult(f"I'm not flying forward. There's a person {dist_m:.1f} metres ahead of "
+                       "me. Safety first.", [], source)
 
 
 def test4_refusal(text: str, telemetry: dict | None = None,
@@ -172,52 +194,41 @@ def test4_refusal(text: str, telemetry: dict | None = None,
     tools/voice_flights."""
     if not (TEST4.search(text) or (armed and FORWARD.search(text) and not is_urgent(text))):
         return None
-    if _T4_LAND.search(text):
+    if LAND_WORDS.search(text):
         return BrainResult("Coming down.", [{"kind": "land"}], "test4")
-    if _T4_STOP.search(text):
+    if STOP_WORDS.search(text):
         return BrainResult("Holding.", [{"kind": "stop"}], "test4")
-    d = [b[5] for b in ((telemetry or {}).get("people") or [])
-         if isinstance(b, (list, tuple)) and len(b) >= 6 and isinstance(b[5], (int, float))]
-    if d:
-        return BrainResult(f"I'm not flying forward. There's a person {min(d):.1f} metres ahead "
-                           "of me. Safety first.", [], "test4")
+    if (d := nearest_person_m(telemetry)) is not None:
+        return _person_ahead_reply(d, "test4")
     return BrainResult("I'm not flying forward. Forward flight is locked for this test, and I "
                        "don't see anyone ahead right now.", [], "test4")
 
 
-# "forward" without "towards": "fly towards the door" is a mission that turns to face the door
-# first, so a person in front of the camera now may not be in its path.
-_AHEAD = re.compile(r"\b(forwards?|straight ahead|closer|"
-                    r"(?:move|go|fly|head|keep going) ahead(?! and))\b", re.I)
-_SAFETY = SafetyConfig()
-
-
-def person_refusal(text: str, telemetry: dict | None = None) -> BrainResult | None:
-    """Skip the LLM when a plain forward request would certainly be refused by the edge's person
-    check (edge/safety.py path_blocked) because someone is close in front of the camera right
-    now. Only a shortcut: it uses the same numbers as the gate and never refuses a move the gate
-    would allow, and the gate on the Pi still checks everything that does get sent. A distance
-    it can read ("forward 1 m") is used; otherwise it assumes the smallest checked move."""
-    if not telemetry or not telemetry.get("armed") or not _AHEAD.search(text):
+def person_refusal(text: str, telemetry: dict | None = None,
+                   telemetry_age_s: float | None = None) -> BrainResult | None:
+    """Skip the LLM when the edge's safety gate would certainly refuse a plain forward request
+    because someone is close in front of the camera right now. It asks the gate's own check
+    (edge/safety.py path_blocked), so it can never refuse a move the gate would allow; the gate
+    on the Pi still checks everything that does get sent. A distance it can read ("forward
+    1 m") is used, otherwise the smallest move the gate checks. telemetry_age_s: seconds since
+    the telemetry arrived; None = fresh (tests, tools)."""
+    if not telemetry or not telemetry.get("armed") or not STRAIGHT_AHEAD.search(text):
         return None
-    if _T4_LAND.search(text) or _T4_STOP.search(text) or is_urgent(text):
+    if telemetry_age_s is not None and telemetry_age_s > PEOPLE_FRESH_S:
+        return None  # may be a person who has gone: let the gate judge with live readings
+    if LAND_WORDS.search(text) or STOP_WORDS.search(text) or is_urgent(text):
         return None  # landing / stopping must still get through
-    d = [b[5] for b in (telemetry.get("people") or [])
-         if isinstance(b, (list, tuple)) and len(b) >= 6 and isinstance(b[5], (int, float))]
-    if not d:
+    if (dist := nearest_person_m(telemetry)) is None:
         return None
     ahead = _SAFETY.forward_check_min_m
-    parsed = fast_parse(text, telemetry)
-    if parsed and parsed.actions:
+    if (parsed := fast_parse(text, telemetry)) and parsed.actions:
         a = parsed.actions[0]
         if a.get("kind") != "move" or a.get("fwd", 0) <= 0 or a.get("right") or a.get("yaw_deg"):
             return None  # not a straight-ahead move: leave it to the LLM and the gate
         ahead = a["fwd"]
-    room = min(d) / (1 + _SAFETY.person_range_error)  # as edge/safety.py person_room
-    if room - ahead >= _SAFETY.person_close_m:
+    if path_blocked(Perception(person_m=dist), ahead, _SAFETY) is None:
         return None
-    return BrainResult(f"I'm not flying forward. There's a person {min(d):.1f} metres ahead "
-                       "of me. Safety first.", [], "person")
+    return _person_ahead_reply(dist, "person")
 
 
 def normalize(name: str, args: dict) -> dict | None:
@@ -325,13 +336,14 @@ class Brain:
             self.last_flight = [dict(a) for a in acts]
         return r
 
-    async def think(self, text: str, telemetry: dict | None = None) -> BrainResult:
+    async def think(self, text: str, telemetry: dict | None = None,
+                    telemetry_age_s: float | None = None) -> BrainResult:
         text = text.strip()
         if not text:
             return BrainResult("I didn't catch that.", source="rules")
         if (r := test4_refusal(text, telemetry, self.test4_armed)) is not None:  # before anything that can fly
             return r
-        if (r := person_refusal(text, telemetry)) is not None:  # no LLM call for a sure refusal
+        if (r := person_refusal(text, telemetry, telemetry_age_s)) is not None:  # no LLM call for a sure refusal
             return r
         if is_urgent(text):
             return rule_parse(text, telemetry)  # urgent: skip the LLM round trip (~0.7 s)

@@ -1905,3 +1905,8 @@ def test_brain_refuses_before_the_llm():
     b = Brain(NoLLM())
     r = asyncio.run(b.think("fly forward a bit", _tel(1.0)))
     assert r.source == "person" and r.actions == []
+
+
+def test_person_refusal_ignores_stale_telemetry():
+    assert person_refusal("go forward", _tel(1.0), telemetry_age_s=0.2) is not None
+    assert person_refusal("go forward", _tel(1.0), telemetry_age_s=2.0) is None
